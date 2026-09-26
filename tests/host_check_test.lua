@@ -147,6 +147,26 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
         not six_started and tostring(six_err):find("[::1]", 1, true) ~= nil,
         "a bracketed entry is refused, naming it: " .. tostring(six_err)
     )
+    -- The list is walked in order, so a map or a list with a hole would
+    -- start with names silently dropped, and a wildcard matches no Host.
+    for _, case in ipairs({
+        { { ["dev.test"] = true }, "a map is refused, naming allowed_hosts", { "allowed_hosts" } },
+        { { "a.test", nil, "b.test" }, "a list with a hole is refused", { "allowed_hosts" } },
+        { { "*.dev.test" }, "a wildcard entry is refused, naming it", { "wildcard", "*.dev.test" } },
+    }) do
+        local before = H.handle_count("tcp")
+        local started, res = pcall(server.start, { port = 0, root = root, allowed_hosts = case[1] })
+        local after = H.handle_count("tcp")
+        if started then
+            server.stop(res)
+        end
+        local named = not started
+        for _, needle in ipairs(case[3]) do
+            named = named and tostring(res):find(needle, 1, true) ~= nil
+        end
+        ok(named, case[2] .. ": " .. tostring(res))
+        eq(after, before, case[2] .. ", before any socket opens")
+    end
     local bare = serve({ allowed_hosts = { "fe80::1" } })
     eq(
         status(bare.port, "/", "[fe80::1]:" .. bare.port),
@@ -186,6 +206,21 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
         "a bind to an address this machine lacks raises: " .. tostring(err)
     )
     eq(H.handle_count("tcp"), tcps, "and leaves no handle open")
+    -- luv truncates a port it cannot hold, so 70000 or 8123.5 would listen
+    -- on another port while the start reports success.
+    for _, bad in ipairs({ 70000, 8123.5 }) do
+        local before = H.handle_count("tcp")
+        local port_started, res = pcall(server.start, { port = bad, root = root })
+        local after = H.handle_count("tcp")
+        if port_started then
+            server.stop(res)
+        end
+        ok(
+            not port_started and tostring(res):find("port", 1, true) ~= nil,
+            ("port = %s is refused, naming port: %s"):format(tostring(bad), tostring(res))
+        )
+        eq(after, before, ("port = %s opens no socket"):format(tostring(bad)))
+    end
 end)
 
 H.finish()

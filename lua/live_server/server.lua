@@ -1008,15 +1008,30 @@ end
 -- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, asset_root, allowed_hosts }
 function S.start(cfg)
     -- Checked before any handle opens, so a bad value leaks nothing.
+    -- An empty token is truthy and would pass the gate with no t= at all.
+    if cfg.token ~= nil and (type(cfg.token) ~= "string" or cfg.token == "") then
+        error("token must be a non-empty string", 0)
+    end
+    -- luv truncates a port it cannot hold and listens on another one.
+    local p = cfg.port
+    if type(p) ~= "number" or p ~= math.floor(p) or p < 0 or p > 65535 then
+        error("port must be an integer from 0 to 65535: " .. tostring(p), 0)
+    end
     local allowed = cfg.allowed_hosts
     local allowed_set = {}
     if allowed ~= nil and allowed ~= true then
-        if type(allowed) ~= "table" then
+        -- The list is walked with ipairs, which stops at a hole and skips
+        -- every key of a map, so either would drop names without a word.
+        if type(allowed) ~= "table" or not vim.islist(allowed) then
             error("allowed_hosts must be true or a list of hostnames", 0)
         end
         for _, name in ipairs(allowed) do
             if type(name) ~= "string" or name == "" then
                 error("allowed_hosts must be true or a list of hostnames", 0)
+            end
+            -- A wildcard reads as a reg-name and would match no Host.
+            if name:find("*", 1, true) then
+                error("allowed_hosts takes exact names, no wildcard: " .. name, 0)
             end
             -- The check reads a Host through host_name, so an entry must be
             -- what host_name would return for it: a port, brackets or a

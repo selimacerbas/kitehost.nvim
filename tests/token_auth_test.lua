@@ -122,5 +122,23 @@ server.stop(inst)
 r = http_get(("http://127.0.0.1:%d/"):format(port))
 eq(r.curl_exit, 7, "the port refuses connections after stop without a token")
 
+-- An empty token is truthy, so it would mark every request as the
+-- token's holder and pass the gate with no t= at all.
+H.case("a token is a non-empty string or nothing", function()
+    for _, bad in ipairs({ "", 42 }) do
+        local tcps = H.handle_count("tcp")
+        local started, res = pcall(server.start, { port = 0, root = tmpdir, token = bad })
+        local after = H.handle_count("tcp")
+        if started then
+            server.stop(res)
+        end
+        ok(
+            not started and tostring(res):find("token", 1, true) ~= nil,
+            ("token = %s is refused, naming token: %s"):format(vim.inspect(bad), tostring(res))
+        )
+        eq(after, tcps, ("token = %s opens no socket"):format(vim.inspect(bad)))
+    end
+end)
+
 -- ─── Summary ────────────────────────────────────────────────────────────────
 H.finish()
