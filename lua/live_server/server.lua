@@ -947,10 +947,15 @@ function S.start(cfg)
             if type(name) ~= "string" or name == "" then
                 error("allowed_hosts must be true or a list of hostnames", 0)
             end
-            if not host_name(name) and not host_name("[" .. name .. "]") then
+            -- The check reads a Host through host_name, so an entry must be
+            -- what host_name would return for it: a port, brackets or a
+            -- spelling the grammar rejects could never match and stay inert.
+            local key = (name:lower():gsub("%.$", ""))
+            local read = host_name(name) or host_name("[" .. name .. "]")
+            if read ~= key then
                 error("allowed_hosts entry is not a hostname: " .. name, 0)
             end
-            allowed_set[(name:lower():gsub("%.$", ""))] = true
+            allowed_set[key] = true
         end
     end
 

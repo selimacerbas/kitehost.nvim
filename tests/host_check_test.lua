@@ -135,6 +135,24 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
         "an entry no Host can match is refused, naming it: " .. tostring(typo_err)
     )
     eq(H.handle_count("tcp"), tcps, "and opens no socket either")
+    -- host_name drops a port and brackets from a Host, so an entry carrying
+    -- either could never equal what the check compares against.
+    local port_started, port_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "dev.test:80" } })
+    ok(
+        not port_started and tostring(port_err):find("dev.test:80", 1, true) ~= nil,
+        "an entry with a port is refused, naming it: " .. tostring(port_err)
+    )
+    local six_started, six_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "[::1]" } })
+    ok(
+        not six_started and tostring(six_err):find("[::1]", 1, true) ~= nil,
+        "a bracketed entry is refused, naming it: " .. tostring(six_err)
+    )
+    local bare = serve({ allowed_hosts = { "fe80::1" } })
+    eq(
+        status(bare.port, "/", "[fe80::1]:" .. bare.port),
+        200,
+        "an IPv6 entry written without brackets matches a bracketed Host"
+    )
 end)
 
 -- The check follows the address the socket reports, so no spelling of a
