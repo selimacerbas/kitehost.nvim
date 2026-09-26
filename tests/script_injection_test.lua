@@ -36,6 +36,10 @@ H.case("Section 1: only a page a browser shows gets the reload script", function
     ok(has_tag("/page.html", "iframe"), "a frame gets it")
     ok(has_tag("/page.html", nil), "a client that sends no Sec-Fetch-Dest keeps it")
     ok(not has_tag("/dir/", "empty"), "a listing a script fetches gets none")
+    -- The rule is an allowlist of what a browser shows: a destination it
+    -- never renders as a page (a script, an object) gets the bytes as written.
+    ok(not has_tag("/page.html", "script"), "HTML loaded as a script gets none")
+    ok(not has_tag("/page.html", "object"), "nor HTML loaded as an object")
 end)
 
 H.finish()
