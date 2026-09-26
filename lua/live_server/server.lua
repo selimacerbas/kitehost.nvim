@@ -891,9 +891,12 @@ local function handle_request(conn, req)
     local function refusal(path)
         local rel = root_rel(inst, path)
         if not rel then
-            -- default_index may sit outside the root by design; an index
-            -- name linked out of it would serve what the file route refuses.
-            if path ~= inst.default_index then
+            -- default_index may sit outside the root by design, and only /
+            -- names it: a link back to the root (/loop/) reaches it under a
+            -- path the first check read otherwise, past a ^/$ pattern. Any
+            -- other name linked out of the root would serve what the file
+            -- route refuses.
+            if path ~= inst.default_index or path_only ~= "/" then
                 return 404
             end
         elseif not authorized(rel) then

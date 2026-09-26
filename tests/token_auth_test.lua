@@ -233,6 +233,58 @@ else
     H.skip("and 404 with the token" .. why)
 end
 server.stop(listed)
+-- default_index may sit outside the root and is served for / alone: a link
+-- in the root back to the root reached it under a name the first check read
+-- as another path, past a ^/$ pattern.
+local outside_index = vim.fs.joinpath(H.tmpdir(), "outside.html")
+H.write_file(outside_index, "<html>outside the root</html>")
+local ws = H.tmpdir()
+local loop = vim.fs.joinpath(ws, "loop")
+local llinked, llink_err = uv.fs_symlink(ws, loop)
+local looped = llinked and uv.fs_stat(loop) ~= nil
+local loop_skip = " (" .. tostring(llink_err or "the link does not resolve") .. ")"
+local function ws_server(protected)
+    return server.start({
+        port = 0,
+        root = ws,
+        default_index = outside_index,
+        token = TOKEN,
+        protected_paths = protected,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+end
+local open_ws = ws_server({})
+r = http_get(("http://127.0.0.1:%d/"):format(open_ws.port))
+eq(r.status, 200, "/ serves a default_index outside the root")
+ok(r.body:find("outside the root", 1, true) ~= nil, "/ answers with that default_index's body")
+if looped then
+    eq(
+        http_get(("http://127.0.0.1:%d/loop/"):format(open_ws.port)).status,
+        404,
+        "a link to the root does not serve an outside default_index"
+    )
+else
+    H.skip("a link to the root does not serve an outside default_index" .. loop_skip)
+end
+server.stop(open_ws)
+local gated_ws = ws_server({ "^/$" })
+if looped then
+    eq(
+        http_get(("http://127.0.0.1:%d/loop/"):format(gated_ws.port)).status,
+        404,
+        "a link to the root is 404 past ^/$ without the token"
+    )
+else
+    H.skip("a link to the root is 404 past ^/$ without the token" .. loop_skip)
+end
+eq(http_get(("http://127.0.0.1:%d/"):format(gated_ws.port)).status, 401, "/ under ^/$ is 401 without the token")
+eq(
+    http_get(("http://127.0.0.1:%d/?t=%s"):format(gated_ws.port, TOKEN)).status,
+    200,
+    "/ under ^/$ is 200 with the token"
+)
+server.stop(gated_ws)
 
 server.stop(inst)
 -- Refused is curl 7: a listener left open after stop answers (curl 0) and
