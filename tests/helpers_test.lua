@@ -1157,5 +1157,53 @@ H.finish()]],
     1,
     "H.defer refuses a cleanup that is not a function"
 )
+ok(
+    blames_caller(function()
+        H.defer(nil)
+    end, "H%.defer: a function is required"),
+    "H.defer refuses nil at the suite's line"
+)
+-- H.finish() inside a case puts the ruling out mid-body, so the next
+-- assertion's raise must escape the xpcall and fail the run.
+eq(
+    child_exit(
+        [[
+H.case("inner finish", function()
+    H.ok(true, "a")
+    H.finish()
+    H.ok(true, "late")
+end)]],
+        "H%.ok after H%.finish%(%)"
+    ),
+    1,
+    "a raise after the ruling escapes H.case"
+)
+-- The order later suites rely on: a client closes before the server it
+-- talks to, one broken cleanup leaves the rest to run, and a case's
+-- cleanups finish before the suite goes on while the suite's own wait.
+local order, order_out = child_exit(
+    [[
+H.defer(function() io.stdout:write("outer\n") end)
+H.case("cleanup order", function()
+    H.defer(function() io.stdout:write("first\n") end)
+    H.defer(function()
+        io.stdout:write("second\n")
+        error("second broke")
+    end)
+    H.defer(function() io.stdout:write("third\n") end)
+end)
+H.ok(true, "x")
+H.finish()]],
+    "third\n.*FAIL: a cleanup raised: [^\n]*second broke\nfirst\n  PASS: x\nouter\n"
+)
+eq(order, 1, "cleanups run in reverse registration order")
+ok(
+    order_out:find("second broke\nfirst\n", 1, true) ~= nil,
+    "a cleanup that raises does not stop the ones registered before it"
+)
+ok(
+    order_out:find("first\n  PASS: x\nouter\n", 1, true) ~= nil,
+    "an H.case runs only its own cleanups, the suite's wait for H.finish"
+)
 
 H.finish()

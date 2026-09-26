@@ -548,13 +548,17 @@ end
 
 -- A section whose body runs under xpcall: a raise is one FAIL naming the
 -- section, the sections after it still run, and its cleanups run either
--- way.
+-- way. A raise after the ruling escapes, so it fails the run as an
+-- assertion after H.finish() does outside a case.
 function H.case(title, fn)
     open_ledger("H.case")
     H.section(title)
     local mark = #deferred
     local ok, err = xpcall(fn, debug.traceback)
     if not ok then
+        if verdict then
+            error(err, 0)
+        end
         failed = failed + 1
         H.write_line("  FAIL: " .. title .. " raised: " .. headline(tostring(err)))
     end
