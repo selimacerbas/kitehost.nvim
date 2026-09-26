@@ -200,10 +200,12 @@ end
 -- served. nil and the reason when the head is not HTTP/1.0 or 1.1.
 local function parse_head(head)
     local lines = vim.split(head, "\r?\n")
-    local method, target, version = lines[1]:match("^(%u+) (%S+) HTTP/(1%.[01])$")
+    local method, target, minor = lines[1]:match("^(%u+) (%S+) HTTP/1%.(%d+)$")
     if not method then
         return nil, "Cannot parse request line"
     end
+    -- RFC 9110 2.5: a higher minor version of HTTP/1 is answered as 1.1.
+    local version = minor == "0" and "1.0" or "1.1"
     local headers = {}
     for i = 2, #lines do
         local name, value = lines[i]:match("^([%w!#$%%&'*+.^_`|~-]+):(.*)$")
@@ -782,8 +784,10 @@ local function handle_request(conn, req)
     end
 end
 
--- A head larger than this is refused (431); browsers send a few KiB.
-local MAX_HEAD = 16 * 1024
+-- A head larger than this is refused (431). A browser's localhost cookie jar
+-- is shared by every dev server on the host and was measured near 20 KiB, so
+-- the cap sits well above it and still bounds a connection's memory.
+local MAX_HEAD = 64 * 1024
 
 -- Where the head ends: the first blank line, whether its two line ends are
 -- CRLF or bare LF in any mix (RFC 9112 2.2 lets a server accept a bare LF,
@@ -827,6 +831,13 @@ local function on_read(conn, err, chunk)
             end
             return
         end
+        -- A head cut off by the client's FIN still gets an answer; a connect
+        -- that sent nothing (markdown-preview's lock check) closes silently.
+        if not err and not conn.handled and conn.buf ~= "" then
+            conn.handled = true
+            conn.buf = ""
+            return http_400(sock, "Incomplete request head")
+        end
         sock:close()
         return
     end
@@ -836,9 +847,19 @@ local function on_read(conn, err, chunk)
         return
     end
     conn.buf = conn.buf .. chunk
+    -- A request line starts with a method token; anything else (a TLS
+    -- ClientHello on the plain port) is refused at once, never left waiting
+    -- for a blank line that will not come.
+    if not conn.buf:find("^[A-Z]") then
+        conn.handled = true
+        conn.buf = ""
+        return http_400(sock, "Cannot parse request line")
+    end
     -- A terminator of at most four bytes may straddle the previous read.
     local head_end = find_head_end(conn.buf, math.max(1, #conn.buf - #chunk - 3))
-    if (head_end or #conn.buf) > MAX_HEAD then
+    -- The cap judges the head's bytes: while no blank line is found, a
+    -- buffer within three bytes of the cap may hold a terminator's start.
+    if head_end and head_end > MAX_HEAD or not head_end and #conn.buf > MAX_HEAD + 3 then
         conn.handled = true
         conn.buf = ""
         return send_response(sock, 431, { ["Content-Type"] = "text/plain" }, "Request Header Fields Too Large")

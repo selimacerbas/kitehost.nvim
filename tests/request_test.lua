@@ -134,9 +134,48 @@ H.case("Section 2: one request per connection, read to the end of its head", fun
     eq(#res, 1, "a second request on a streaming connection gets no response")
     ok(res[1] ~= nil and res[1].body == big, "the streamed body arrives whole, nothing spliced in")
 
-    res = ask(port, "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 17 * 1024))
-    eq(res[1] and res[1].status, 431, "a head over 16 KiB with no end is 431")
+    -- The cap judges the head's bytes, never its terminator: a head of
+    -- exactly the cap is served and one byte more is refused, each with the
+    -- blank line in a second write.
+    local function head_of(size)
+        local prefix = "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: "
+        return prefix .. string.rep("a", size - #prefix)
+    end
+    for _, case in ipairs({ { 64 * 1024, 200, "served" }, { 64 * 1024 + 1, 431, "431" } }) do
+        c = assert(H.raw_connect(port))
+        assert(c:send(head_of(case[1])))
+        vim.wait(100)
+        assert(c:send("\r\n\r\n"))
+        res = H.responses((c:read(3000)))
+        c:close()
+        eq(res[1] and res[1].status, case[2], ("a head of %d bytes is %s"):format(case[1], case[3]))
+    end
+    res = ask(port, head_of(60 * 1024) .. "\r\n\r\n")
+    eq(res[1] and res[1].status, 200, "a 60 KiB head in one write is served")
+    res = ask(port, "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 70 * 1024))
+    eq(res[1] and res[1].status, 431, "a head over 64 KiB with no end is 431")
     eq(res[1] and res[1].reason, "Request Header Fields Too Large", "with its reason phrase")
+
+    c = assert(H.raw_connect(port))
+    assert(c:send("GET /hello.txt HTTP/1.0\r\n"))
+    assert(c:half_close())
+    res = H.responses((c:read(3000)))
+    c:close()
+    eq(res[1] and res[1].status, 400, "a head cut off by a FIN is answered 400")
+    -- Bare CR line ends never make a blank line; the FIN answers them.
+    c = assert(H.raw_connect(port))
+    assert(c:send("GET /hello.txt HTTP/1.0\r\r"))
+    assert(c:half_close())
+    res = H.responses((c:read(3000)))
+    c:close()
+    eq(res[1] and res[1].status, 400, "a head of bare CR line ends cut off by a FIN is answered 400")
+    -- markdown-preview's lock check connects and closes without a byte.
+    c = assert(H.raw_connect(port))
+    assert(c:half_close())
+    local data, eof = c:read(2000)
+    c:close()
+    eq(data, "", "a zero-byte connect and FIN gets no response")
+    eq(eof, true, "and is closed")
 
     -- The blank line's two line ends may mix CRLF and bare LF; before the
     -- buffering the old parser answered every mix, so the buffer must too.
@@ -159,6 +198,23 @@ H.case("Section 3: the head, parsed once", function()
     eq(res[1] and res[1].status, 400, "a request line without an HTTP version is 400")
     res = ask(port, "GET /style.css HTTP/2.0\r\nHost: 127.0.0.1\r\n\r\n")
     eq(res[1] and res[1].status, 400, "a version other than HTTP/1.0 or 1.1 is 400")
+    -- RFC 9110 2.5: a higher minor version of HTTP/1 is answered as 1.1.
+    res = ask(port, "GET /style.css HTTP/1.2\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 200, "HTTP/1.2 is served as 1.1")
+    res = ask(port, "GET /style.css HTTP/10.1\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "HTTP/10.1 is 400")
+    -- RFC 9112 3 lets a recipient refuse whitespace beyond one SP.
+    res = ask(port, "GET  /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "two spaces after the method are 400")
+    res = ask(port, "GET\t/style.css HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a tab separator is 400")
+    res = ask(port, "GET /style.css HTTP/1.1 \r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a trailing space after the version is 400")
+    -- A TLS ClientHello on the plain port starts with 0x16.
+    local t1 = vim.uv.hrtime()
+    res = ask(port, "\22\3\1\0\5hello")
+    eq(res[1] and res[1].status, 400, "bytes that cannot start a request line are refused at once")
+    ok((vim.uv.hrtime() - t1) / 1e6 < 500, "without waiting for a head")
     res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nno colon here\r\n\r\n")
     eq(res[1] and res[1].status, 400, "a header line without a colon is 400")
     res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: 1\r\n folded\r\n\r\n")
