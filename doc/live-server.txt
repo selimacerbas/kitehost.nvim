@@ -153,7 +153,7 @@ gates `/__live/asset` too.
     Watch files under the served root and push SSE reload events.
 
 `live_reload.inject_script` (boolean, default true)
-    Inject `<script src="/__live/script.js">` into HTML responses.
+    Inject `<script src="/__live/script.js">` into HTML a browser navigates to (a page, a frame, an object, an embed); HTML a page's script fetches is served as written.
 
 `live_reload.debounce` (number, default 120)
     Milliseconds to debounce rapid file changes before reloading.

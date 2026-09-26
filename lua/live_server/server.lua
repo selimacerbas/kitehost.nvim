@@ -203,7 +203,7 @@ local function host_name(value)
     return (name:lower():gsub("%.$", ""))
 end
 
--- The fields the origin check and the injection rule read, as sent.
+-- The Origin and Fetch Metadata fields a gate may read, as sent.
 local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Dest", "Sec-Fetch-Mode" }
 
 -- The request head, parsed once: method, target, version, and the header
@@ -532,13 +532,13 @@ end
 
 -- -------- HTML helpers (injection + templating) ---------------------------
 
--- A page's own fetch() or XHR of HTML (Sec-Fetch-Dest: empty) gets the
--- bytes as written; a navigation or a frame gets the reload script, and so
--- does a browser that sends no Sec-Fetch-Dest, as before.
+-- A navigation is what a browser shows: a page, a frame, an object, an
+-- embed or a service worker's pass-through, and a page's own fetch is
+-- never one. A client with no Fetch Metadata keeps the script.
 local function wants_injection(req)
-    local dest = req and req.headers["sec-fetch-dest"]
-    dest = dest and dest[1]
-    return dest == nil or dest == "document" or dest == "iframe" or dest == "frame"
+    local mode = req and req.headers["sec-fetch-mode"]
+    mode = mode and mode[1]
+    return mode == nil or mode == "navigate"
 end
 
 local function send_html_with_injection(inst, sock, html, extra_headers, req)
@@ -554,6 +554,16 @@ local function send_html_with_injection(inst, sock, html, extra_headers, req)
     for k, v in pairs(extra_headers or {}) do
         headers[k] = v
     end
+    -- The body differs by Sec-Fetch-Mode, so a cache must not answer a
+    -- navigation with a copy a page's fetch received.
+    local vary_key = "Vary"
+    for k in pairs(headers) do
+        if type(k) == "string" and k:lower() == "vary" then
+            vary_key = k
+        end
+    end
+    local vary = headers[vary_key]
+    headers[vary_key] = vary and (tostring(vary) .. ", Sec-Fetch-Mode") or "Sec-Fetch-Mode"
     send_response(sock, 200, headers, html)
 end
 
