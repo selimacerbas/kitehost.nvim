@@ -106,4 +106,52 @@ H.case("Section 2: network binds keep the token gate alone", function()
     eq(status(guarded.port, "/?t=" .. TOKEN, "my-laptop.local"), 200, "and the token opens it")
 end)
 
+H.case("Section 3: allowed_hosts adds names, true turns the check off", function()
+    local inst = serve({ allowed_hosts = { "My.Name." } })
+    eq(status(inst.port, "/", "my.name:8000"), 200, "a listed name is served, compared as the check compares")
+    eq(status(inst.port, "/", "other.name"), 421, "an unlisted one is still 421")
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    local open = serve({ allowed_hosts = true })
+    eq(status(open.port, "/", "attacker.example"), 200, "allowed_hosts = true serves any Host")
+    eq(#notes, 1, "and says so once")
+    ok(
+        notes[1] ~= nil and notes[1].level == vim.log.levels.WARN and notes[1].msg:find("allowed_hosts", 1, true) ~= nil,
+        "as a warning naming the option"
+    )
+    local tcps = H.handle_count("tcp")
+    local started, err = pcall(server.start, { port = 0, root = root, allowed_hosts = "my.name" })
+    ok(not started and tostring(err):find("allowed_hosts", 1, true) ~= nil, "a string is refused: " .. tostring(err))
+    eq(H.handle_count("tcp"), tcps, "before any socket opens")
+end)
+
+-- The check follows the address the socket reports, so no spelling of a
+-- loopback bind leaves it off.
+H.case("Section 4: the check follows the bound address, not its spelling", function()
+    local bound, six = pcall(serve, { host = "0:0:0:0:0:0:0:1" })
+    if bound then
+        eq(six.host_check, true, "a spelled-out IPv6 loopback bind keeps the check on")
+        eq(
+            H.http_get(("http://[::1]:%d/"):format(six.port), { "Host: attacker.example" }).status,
+            421,
+            "and refuses a foreign Host"
+        )
+    else
+        H.skip("a spelled-out IPv6 loopback bind keeps the check on (bind refused: " .. tostring(six) .. ")")
+        H.skip("and refuses a foreign Host (bind refused: " .. tostring(six) .. ")")
+    end
+    local mapped_bound, mapped = pcall(serve, { host = "::ffff:127.0.0.1" })
+    if mapped_bound then
+        eq(mapped.host_check, true, "an IPv4-mapped loopback bind keeps the check on")
+    else
+        H.skip("an IPv4-mapped loopback bind keeps the check on (bind refused: " .. tostring(mapped) .. ")")
+    end
+end)
+
 H.finish()

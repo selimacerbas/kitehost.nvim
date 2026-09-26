@@ -674,6 +674,11 @@ end
 
 -- 127.0.0.0/8 or ::1: the binds only this machine can reach.
 local function is_loopback_ip(ip)
+    -- A dual-stack bind reports an IPv4 address in its IPv6-mapped form.
+    local v4 = ip:match("^::[fF][fF][fF][fF]:(%d+%.%d+%.%d+%.%d+)$")
+    if v4 then
+        return is_loopback_ip(v4)
+    end
     return ip == "::1" or (is_ipv4(ip) and ip:match("^127%.") ~= nil)
 end
 
@@ -697,7 +702,7 @@ local function host_ok(inst, req)
     if not name then
         return false
     end
-    return is_loopback_name(name)
+    return is_loopback_name(name) or inst.allowed_hosts[name] == true
 end
 
 -- Answers one parsed request: the token gate, the routes and every
@@ -929,8 +934,23 @@ end
 
 -- -------- Public server API -----------------------------------------------
 
--- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, asset_root }
+-- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, asset_root, allowed_hosts }
 function S.start(cfg)
+    -- Checked before any handle opens, so a bad value leaks nothing.
+    local allowed = cfg.allowed_hosts
+    local allowed_set = {}
+    if allowed ~= nil and allowed ~= true then
+        if type(allowed) ~= "table" then
+            error("allowed_hosts must be true or a list of hostnames", 0)
+        end
+        for _, name in ipairs(allowed) do
+            if type(name) ~= "string" or name == "" then
+                error("allowed_hosts must be true or a list of hostnames", 0)
+            end
+            allowed_set[(name:lower():gsub("%.$", ""))] = true
+        end
+    end
+
     local tcp = uv.new_tcp()
     local host = cfg.host or "127.0.0.1"
     -- The caller shows the message to the user, so it carries no source
@@ -941,11 +961,15 @@ function S.start(cfg)
         error(bind_err or "bind failed", 0)
     end
 
-    -- Resolve actual port (needed when cfg.port == 0 for OS-assigned port)
-    local actual_port = cfg.port
-    if cfg.port == 0 then
-        actual_port = tcp:getsockname().port
+    -- The bound address, not the configured spelling, decides the Host
+    -- check: 0:0:0:0:0:0:0:1 and ::ffff:127.0.0.1 are loopback binds too.
+    -- It also carries the OS-assigned port when cfg.port is 0.
+    local bound, sockname_err = tcp:getsockname()
+    if not bound then
+        tcp:close()
+        error("getsockname failed: " .. tostring(sockname_err), 0)
     end
+    local actual_port = bound.port
 
     local root_real = uv.fs_realpath(cfg.root)
     if not root_real then
@@ -963,7 +987,10 @@ function S.start(cfg)
         host = host,
         -- Network binds are reached by names no default list knows; the
         -- token gates them.
-        host_check = is_loopback_ip(host),
+        host_check = is_loopback_ip(bound.ip) and allowed ~= true,
+        -- Names the user controls; one whose DNS an attacker controls
+        -- reopens rebinding (the Vite docs' warning).
+        allowed_hosts = allowed_set,
         root = cfg.root,
         root_real = root_real,
         default_index = cfg.default_index,
@@ -1017,6 +1044,13 @@ function S.start(cfg)
         error(bind_err or "listen failed", 0)
     end
 
+    if allowed == true then
+        util.notify(
+            "live-server: allowed_hosts = true turns the Host check off; a DNS-rebinding page can read this server",
+            { notify = true },
+            "WARN"
+        )
+    end
     return inst
 end
 
