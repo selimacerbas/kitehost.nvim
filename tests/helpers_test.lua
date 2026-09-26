@@ -1205,6 +1205,55 @@ ok(
     order_out:find("first\n  PASS: x\nouter\n", 1, true) ~= nil,
     "an H.case runs only its own cleanups, the suite's cleanups wait for H.finish"
 )
+-- H.finish empties the list once and rules, so a cleanup registered from
+-- its drain on, by a cleanup or by a callback the drain runs, would never
+-- run; a case's drain is followed by more of the suite, so there it runs.
+eq(
+    child_exit(
+        [[
+H.defer(function() H.defer(function() end) end)
+H.ok(true, "x")
+H.finish()]],
+        "H%.defer during a cleanup drain"
+    ),
+    1,
+    "a cleanup that registers a cleanup at H.finish time fails the suite"
+)
+eq(
+    child_exit(
+        [[
+H.ok(true, "x")
+vim.schedule(function() H.defer(function() end) end)
+H.finish()]],
+        "H%.defer during a cleanup drain"
+    ),
+    1,
+    "a callback that registers a cleanup during H.finish's drain fails the suite"
+)
+eq(
+    child_exit(
+        [[
+H.case("nested", function()
+    H.defer(function() H.defer(function() io.stdout:write("nested ran\n") end) end)
+end)
+H.ok(true, "x")
+H.finish()]],
+        "nested ran\n.*Results: 1 passed, 0 failed"
+    ),
+    0,
+    "a cleanup that registers a cleanup at a case's end runs it"
+)
+eq(
+    child_exit(
+        [[
+H.defer(function() vim.cmd("cquit 3") end)
+H.ok(true, "x")
+H.finish()]],
+        "inside H%.finish%(%)'s drain"
+    ),
+    1,
+    "a quit from a cleanup at H.finish time is named as the drain's"
+)
 
 -- A peer that keeps every byte it reads and notes the client's FIN or
 -- reset: it shows what the raw client put on the wire. It answers at the
@@ -1351,6 +1400,8 @@ H.case("the counters", function()
     -- callback, so a count settles through H.wait_for before it is compared.
     local fds = H.fd_count()
     if fds then
+        ok(type(fds) == "number", "off Windows the listing exists and counts")
+        ok(not pcall(H.fd_count, vim.fs.joinpath(H.tmpdir(), "no-such-listing")), "a listing that fails raises")
         local probe_file = vim.fs.joinpath(H.tmpdir(), "fd-probe")
         H.write_file(probe_file, "x")
         local fd = assert(uv.fs_open(probe_file, "r", 438))

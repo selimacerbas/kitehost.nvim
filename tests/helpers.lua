@@ -9,7 +9,9 @@ local H = {}
 local passed, failed, skipped = 0, 0, 0
 -- nil until H.finish() rules, then "pass" or "fail".
 local verdict
--- Set while H.finish() runs, so a quit its own drain runs is named as such.
+-- Set once H.finish() starts its drain, so a quit a cleanup or a callback
+-- runs from there is named as the drain's, and H.defer refuses a cleanup
+-- that would never run.
 local finishing = false
 local errors = {}
 local tests_dir = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))
@@ -546,12 +548,13 @@ end
 -- macOS (20 raw connections add 40, a client and an accepted socket each,
 -- and their closes give them back, measured on macOS). A leak the ledger
 -- cannot see shows here. nil on Windows, which has neither; a listing that
--- fails elsewhere raises, so a leak row never skips by accident.
-function H.fd_count()
+-- fails elsewhere raises, so a leak row never skips by accident. dir is for
+-- the rows: a missing directory proves the raise.
+function H.fd_count(dir)
     if is_win then
         return nil
     end
-    local dir = uv.fs_stat("/proc/self/fd") and "/proc/self/fd" or "/dev/fd"
+    dir = dir or (uv.fs_stat("/proc/self/fd") and "/proc/self/fd" or "/dev/fd")
     local handle, err = uv.fs_scandir(dir)
     if not handle then
         error("H.fd_count: " .. tostring(err), 2)
@@ -791,6 +794,11 @@ end
 
 function H.defer(fn)
     open_ledger("H.defer")
+    -- The drain in H.finish empties the list once and rules, so a cleanup
+    -- registered from then on would never run.
+    if finishing then
+        error("H.defer during a cleanup drain: the list is being emptied", 2)
+    end
     if type(fn) ~= "function" then
         error("H.defer: a function is required", 2)
     end
@@ -829,8 +837,8 @@ end
 -- (measured), so a cq that raises or returns falls through to the real exit.
 function H.finish()
     open_ledger("H.finish")
-    run_deferred(0)
     finishing = true
+    run_deferred(0)
     for _, e in ipairs(H.errors()) do
         failed = failed + 1
         H.write_line("  FAIL: error reported: " .. headline(e))
