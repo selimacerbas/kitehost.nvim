@@ -292,6 +292,12 @@ end
 local function normalize_path(req_path)
     local raw = req_path:match("^([^?#]*)") or req_path
     raw = util.url_decode(raw)
+    -- libuv cuts a path at its first NUL (fs_realpath, fs_stat, fs_open), so
+    -- the gate would match one name and the mapper open another; Windows
+    -- takes a backslash as a separator this lexical walk never sees.
+    if raw:find("%z") or raw:find("\\", 1, true) then
+        return nil
+    end
     local parts = {}
     for seg in raw:gmatch("[^/]+") do
         if seg == ".." then
@@ -818,6 +824,9 @@ local function handle_request(conn, req)
     -- and file mapping all use this same string so an encoded or
     -- slash-padded variant can't reach a protected file ungated.
     local path_only = normalize_path(req.path)
+    if not path_only then
+        return http_400(sock, "Bad request path")
+    end
     local query = req.path:match("%?(.*)$") or ""
 
     -- Pull a query-string parameter by key. Anchored to either
@@ -886,7 +895,7 @@ local function handle_request(conn, req)
         -- Relative paths only: reject absolute paths, drive
         -- letters / URL schemes (':'), and backslashes outright;
         -- realpath containment below handles '..' traversal.
-        if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") then
+        if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") or rel:find("%z") then
             return http_404(sock, "/__live/asset")
         end
         local aroot_real = uv.fs_realpath(aroot)

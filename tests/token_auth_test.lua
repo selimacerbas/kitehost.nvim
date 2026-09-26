@@ -19,6 +19,8 @@ local f1 = vim.fs.joinpath(tmpdir, "index.html")
 local f2 = vim.fs.joinpath(tmpdir, "content.md")
 H.write_file(f1, "<html><body>hi</body></html>")
 H.write_file(f2, "# secret content")
+local uv = vim.uv
+H.write_file(vim.fs.joinpath(tmpdir, "asset_root"), "/some/dir")
 
 -- ─── Section 1: random_token / secure_compare ───────────────────────────────
 H.section("Section 1: helpers")
@@ -40,7 +42,7 @@ local inst = server.start({
     root = tmpdir,
     default_index = f1,
     token = TOKEN,
-    protected_paths = { "^/content%.md$" },
+    protected_paths = { "^/content%.md$", "^/asset_root$" },
     live = { inject_script = false },
     features = { dirlist = { enabled = false } },
 })
@@ -94,6 +96,32 @@ eq(r.status, 401, "/sub/../content.md (traversal) with wrong token is 401")
 -- And the normalized/encoded form still serves with the correct token.
 r = http_get(("http://127.0.0.1:%d//content.md?t=%s"):format(port, TOKEN))
 eq(r.status, 200, "//content.md with correct token still serves")
+-- libuv cuts a path at its first NUL, so the gate matched the whole
+-- string while the mapper opened the file before the NUL.
+r = http_get(("http://127.0.0.1:%d/content.md%%00"):format(port))
+eq(r.status, 400, "/content.md%00 is 400")
+r = http_get(("http://127.0.0.1:%d/asset_root%%00"):format(port))
+eq(r.status, 400, "/asset_root%00 is 400")
+r = http_get(("http://127.0.0.1:%d/..%%00"):format(port))
+eq(r.status, 400, "/..%00 is 400, not left to the containment check")
+r = http_get(("http://127.0.0.1:%d/content%%5Cmd"):format(port))
+eq(r.status, 400, "a backslash (%5C) in the path is 400")
+local nul = H.response(
+    assert(H.raw_request(port, ("GET /content.md\0.txt HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
+)
+eq(nul.status, 400, "a raw NUL byte in the request line is 400")
+local gated_root = server.start({
+    port = 0,
+    root = tmpdir,
+    default_index = f1,
+    token = TOKEN,
+    protected_paths = { "^/$" },
+    live = { inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+eq(http_get(("http://127.0.0.1:%d/%%00"):format(gated_root.port)).status, 400, "/%00 on a server that gates / is 400")
+eq(http_get(("http://127.0.0.1:%d/"):format(gated_root.port)).status, 401, "and / itself is 401 there")
+server.stop(gated_root)
 
 server.stop(inst)
 -- Refused is curl 7: a listener left open after stop answers (curl 0) and

@@ -53,6 +53,11 @@ eq(http_get(base .. "/__live/asset?p=/etc/hosts&t=" .. TOKEN).status, 404, "abso
 eq(http_get(base .. "/__live/asset?p=c:%5Cwin&t=" .. TOKEN).status, 404, "drive letter / backslash is 404")
 eq(http_get(base .. "/__live/asset?p=missing.png&t=" .. TOKEN).status, 404, "missing file is 404")
 eq(http_get(base .. "/__live/asset?t=" .. TOKEN).status, 404, "missing p param is 404")
+eq(
+    http_get(base .. "/__live/asset?p=pic.png%00.txt&t=" .. TOKEN).status,
+    404,
+    "a NUL in p is 404 (libuv would open the name before it)"
+)
 -- Containment is by the resolved path, not the spelling: a link inside the
 -- asset root that points above it was served by a lexical check (measured on
 -- a mutant). The target is written with the platform's separator, since
