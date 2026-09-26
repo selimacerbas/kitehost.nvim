@@ -78,14 +78,18 @@ H.case("Section 2: every HTML response says it varies by Sec-Fetch-Mode", functi
     local root = H.tmpdir()
     H.write_file(root .. "/page.html", PAGE)
     local port = serve(root).port
-    eq(fetch(port, "/page.html", "navigate", "document").headers.vary, "Sec-Fetch-Mode", "an injected page names it")
-    eq(fetch(port, "/page.html", "cors", "empty").headers.vary, "Sec-Fetch-Mode", "and so does one as written")
-    local own = serve(root, { headers = { Vary = "Accept-Encoding" } })
-    eq(
-        fetch(own.port, "/page.html").headers.vary,
-        "Accept-Encoding, Sec-Fetch-Mode",
-        "a configured Vary is kept and joined"
-    )
+    local injected = fetch(port, "/page.html", "navigate", "document")
+    eq(injected.status, 200, "an injected page is served")
+    eq(injected.headers.vary, "Sec-Fetch-Mode", "and names it")
+    local written = fetch(port, "/page.html", "cors", "empty")
+    eq(written.status, 200, "one as written is served")
+    eq(written.headers.vary, "Sec-Fetch-Mode", "and names it too")
+    local own = fetch(serve(root, { headers = { Vary = "Accept-Encoding" } }).port, "/page.html")
+    eq(own.status, 200, "a configured Vary is served")
+    eq(own.headers.vary, "Accept-Encoding, Sec-Fetch-Mode", "kept and joined")
+    local both = fetch(serve(root, { headers = { Vary = "Accept-Encoding", vary = "Accept" } }).port, "/page.html")
+    eq(both.status, 200, "two spellings of the name are served")
+    eq(both.headers.vary, "Accept, Accept-Encoding, Sec-Fetch-Mode", "as one field")
 end)
 
 H.finish()

@@ -555,15 +555,18 @@ local function send_html_with_injection(inst, sock, html, extra_headers, req)
         headers[k] = v
     end
     -- The body differs by Sec-Fetch-Mode, so a cache must not answer a
-    -- navigation with a copy a page's fetch received.
-    local vary_key = "Vary"
-    for k in pairs(headers) do
+    -- navigation with a copy a page's fetch received. A configured Vary
+    -- under any spelling of the name joins the one field sent.
+    local vary = {}
+    for k, v in pairs(headers) do
         if type(k) == "string" and k:lower() == "vary" then
-            vary_key = k
+            table.insert(vary, tostring(v))
+            headers[k] = nil
         end
     end
-    local vary = headers[vary_key]
-    headers[vary_key] = vary and (tostring(vary) .. ", Sec-Fetch-Mode") or "Sec-Fetch-Mode"
+    table.sort(vary)
+    table.insert(vary, "Sec-Fetch-Mode")
+    headers.Vary = table.concat(vary, ", ")
     send_response(sock, 200, headers, html)
 end
 
