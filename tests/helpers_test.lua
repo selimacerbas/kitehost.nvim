@@ -1256,6 +1256,19 @@ H.finish()]],
     1,
     "a quit from a cleanup at H.finish time is named as the drain's"
 )
+-- The refusal comes before uv.new_tcp, so a client refused here was never
+-- made: the child cannot count its handles after the ruling, and needs not.
+eq(
+    child_exit(
+        [[
+H.defer(function() H.raw_connect(1) end)
+H.ok(true, "x")
+H.finish()]],
+        "H%.raw_connect during a cleanup drain"
+    ),
+    1,
+    "an H.raw_connect from a cleanup at H.finish time fails the suite"
+)
 
 -- A peer that keeps every byte it reads and notes the client's FIN or
 -- reset: it shows what the raw client put on the wire. It answers at the
@@ -1304,30 +1317,50 @@ local function recorder(reply)
     return assert(srv:getsockname()).port, rec
 end
 
--- A peer that accepts, never reads, and resets the connection ms after the
--- accept: a send it never takes and a read it cuts short both end in that
--- reset. A reset at the accept itself raced the client's connect callback,
--- which then read ECONNRESET (measured, one run in three).
-local function resetter(ms)
+-- A peer that accepts, never reads, and resets the connection when the row
+-- calls the reset it returns with the port: a reset at the accept raced the
+-- client's connect callback, which then read ECONNRESET (measured, one run
+-- in three), and a row calls it once H.raw_connect has returned. The accept
+-- runs on the same loop before the row goes on, and reset waits for it
+-- should it not have. on_bytes resets at the first bytes instead, for
+-- H.raw_request, which gives a row no turn between its connect and its read.
+local function resetter(on_bytes)
     local srv = assert(uv.new_tcp())
     assert(srv:bind("127.0.0.1", 0))
-    assert(srv:listen(8, function()
-        local c = assert(uv.new_tcp())
-        assert(srv:accept(c))
-        local function reset()
-            if not c:is_closing() then
-                assert(c:close_reset())
-            end
+    local c
+    local function reset()
+        assert(
+            H.wait_for(function()
+                return c ~= nil
+            end, 2000),
+            "the peer never accepted"
+        )
+        if not c:is_closing() then
+            assert(c:close_reset())
         end
-        H.defer(reset)
-        vim.defer_fn(reset, ms)
+    end
+    assert(srv:listen(8, function()
+        c = assert(uv.new_tcp())
+        assert(srv:accept(c))
+        H.defer(function()
+            if not c:is_closing() then
+                c:close()
+            end
+        end)
+        if on_bytes then
+            assert(c:read_start(function(_, data)
+                if data and not c:is_closing() then
+                    assert(c:close_reset())
+                end
+            end))
+        end
     end))
     H.defer(function()
         if not srv:is_closing() then
             srv:close()
         end
     end)
-    return assert(srv:getsockname()).port
+    return assert(srv:getsockname()).port, reset
 end
 
 H.case("the raw client", function()
@@ -1422,7 +1455,9 @@ H.case("the raw client", function()
     ok((uv.hrtime() - t0) / 1e6 < 500, "a stop_when that holds ends the read before its bound")
     rc:close()
 
-    rc = assert(H.raw_connect(resetter(300)))
+    local sink_port, sink_reset = resetter()
+    rc = assert(H.raw_connect(sink_port))
+    sink_reset()
     local sent, send_err = rc:send(("x"):rep(64 * 1024 * 1024))
     ok(
         sent == nil and type(send_err) == "string",
@@ -1443,11 +1478,13 @@ H.case("the raw client", function()
         "and returns the end and no error after a FIN: " .. tostring(answer_err)
     )
 
-    rc = assert(H.raw_connect(resetter(100)))
+    local cut_port, cut_reset = resetter()
+    rc = assert(H.raw_connect(cut_port))
+    cut_reset()
     local _, cut_eof = rc:read(2000)
     ok(cut_eof == true and rc.err == "ECONNRESET", "a reset reads as the end with ECONNRESET: " .. tostring(rc.err))
     rc:close()
-    local _, _, cut_err = H.raw_request(resetter(200), "GET / HTTP/1.1\r\n\r\n")
+    local _, _, cut_err = H.raw_request((resetter(true)), "GET / HTTP/1.1\r\n\r\n")
     eq(cut_err, "ECONNRESET", "H.raw_request returns the reset as its third value")
 end)
 
@@ -1564,6 +1601,16 @@ H.finish()]],
         0,
         "H.raw_connect's client closes when its case ends"
     )
+    -- A suite that never counts still sheds its closed handles as it makes
+    -- new ones.
+    for _ = 1, 200 do
+        assert(uv.new_tcp()):close()
+    end
+    vim.wait(10)
+    for _ = 1, 64 do
+        assert(uv.new_tcp()):close()
+    end
+    ok(H._registry_size() < 200, "the registry prunes closed handles as it grows: " .. H._registry_size())
     ok(
         H.wait_for(function()
             return true

@@ -380,6 +380,11 @@ local RAW_CONNECT_MS, RAW_STEP_MS = 5000, 2000
 
 function H.raw_connect(port, host)
     open_ledger("H.raw_connect")
+    -- Its deferred close would be refused once the drain has begun, so the
+    -- refusal comes before any handle exists.
+    if finishing then
+        error("H.raw_connect during a cleanup drain: connect before H.finish()", 2)
+    end
     if type(port) ~= "number" or port ~= math.floor(port) or port < 1 or port > 65535 then
         error("H.raw_connect: port must be an integer from 1 to 65535, got " .. tostring(port), 2)
     end
@@ -628,6 +633,16 @@ end
 -- is_closing() on it segfaults (measured on 0.10.0 and 0.12.5).
 local handles = {}
 local HANDLE_KINDS = { "tcp", "timer", "fs_event", "pipe", "udp", "fs_poll" }
+-- Every 64th registration drops the closed handles, so a suite that never
+-- counts does not hold every handle it made until it exits.
+local registered = 0
+local function prune()
+    for h in pairs(handles) do
+        if h:is_closing() then
+            handles[h] = nil
+        end
+    end
+end
 for _, kind in ipairs(HANDLE_KINDS) do
     local make = uv["new_" .. kind]
     if make then
@@ -635,6 +650,10 @@ for _, kind in ipairs(HANDLE_KINDS) do
             local h, err = make(...)
             if h then
                 handles[h] = kind
+                registered = registered + 1
+                if registered % 64 == 0 then
+                    prune()
+                end
             end
             return h, err
         end
@@ -651,13 +670,22 @@ function H.handle_count(kind)
     if not vim.tbl_contains(HANDLE_KINDS, kind) then
         error("H.handle_count: unknown kind " .. tostring(kind), 2)
     end
+    prune()
     local n = 0
-    for h, k in pairs(handles) do
-        if h:is_closing() then
-            handles[h] = nil
-        elseif k == kind then
+    for _, k in pairs(handles) do
+        if k == kind then
             n = n + 1
         end
+    end
+    return n
+end
+
+-- The registry's entries, open or not yet pruned: the rows' window onto
+-- its pruning, never a count a suite should rule on.
+function H._registry_size()
+    local n = 0
+    for _ in pairs(handles) do
+        n = n + 1
     end
     return n
 end
