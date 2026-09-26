@@ -521,8 +521,17 @@ end
 
 -- -------- HTML helpers (injection + templating) ---------------------------
 
-local function send_html_with_injection(inst, sock, html, extra_headers)
-    if inst.inject_script then
+-- A page's own fetch() or XHR of HTML (Sec-Fetch-Dest: empty) gets the
+-- bytes as written; a navigation or a frame gets the reload script, and so
+-- does a browser that sends no Sec-Fetch-Dest, as before.
+local function wants_injection(req)
+    local dest = req and req.headers["sec-fetch-dest"]
+    dest = dest and dest[1]
+    return dest == nil or dest == "document" or dest == "iframe" or dest == "frame"
+end
+
+local function send_html_with_injection(inst, sock, html, extra_headers, req)
+    if inst.inject_script and wants_injection(req) then
         local tag = '<script src="/__live/script.js"></script>'
         if html:find("</body>", 1, true) then
             html = html:gsub("</body>", tag .. "</body>", 1)
@@ -537,12 +546,12 @@ local function send_html_with_injection(inst, sock, html, extra_headers)
     send_response(sock, 200, headers, html)
 end
 
-local function serve_html_file_with_injection(inst, sock, abs_path, extra_headers)
+local function serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req)
     local body = read_file_all(abs_path)
     if not body then
         return http_404(sock, abs_path)
     end
-    send_html_with_injection(inst, sock, body, extra_headers)
+    send_html_with_injection(inst, sock, body, extra_headers, req)
 end
 
 -- -------- Directory listing -----------------------------------------------
@@ -664,10 +673,10 @@ local function stream_file(sock, abs_path, extra_headers)
     read_chunk()
 end
 
-local function serve_path(inst, sock, abs_path, req_path, extra_headers)
+local function serve_path(inst, sock, abs_path, req, extra_headers)
     local mime = guess_mime(abs_path)
     if mime:find("^text/html") then
-        return serve_html_file_with_injection(inst, sock, abs_path, extra_headers)
+        return serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req)
     else
         return stream_file(sock, abs_path, extra_headers)
     end
@@ -870,16 +879,16 @@ local function handle_request(conn, req)
             end
         end
         if candidate and uv.fs_stat(candidate) then
-            return serve_path(inst, sock, candidate, req.path, inst.headers)
+            return serve_path(inst, sock, candidate, req, inst.headers)
         end
         if inst.dir_enabled then
             local html = dir_listing_html(inst, mapped, req.path)
-            return send_html_with_injection(inst, sock, html, inst.headers)
+            return send_html_with_injection(inst, sock, html, inst.headers, req)
         else
             return http_404(sock, req.path .. " (no index)")
         end
     elseif st and st.type == "file" then
-        return serve_path(inst, sock, mapped, req.path, inst.headers)
+        return serve_path(inst, sock, mapped, req, inst.headers)
     else
         return http_404(sock, req.path)
     end
