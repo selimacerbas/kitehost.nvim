@@ -203,6 +203,9 @@ local function host_name(value)
     return (name:lower():gsub("%.$", ""))
 end
 
+-- The fields the origin check and the injection rule read, as sent.
+local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Dest", "Sec-Fetch-Mode" }
+
 -- The request head, parsed once: method, target, version, and the header
 -- fields by lowercased name, each the list of its values in order, so a
 -- check can refuse a repeated field instead of reading one copy. The
@@ -256,6 +259,14 @@ local function parse_head(head)
     local hosts = headers.host
     if hosts and #hosts > 1 then
         return nil, "More than one Host header"
+    end
+    -- A browser sends each of these once; a gate must not read one copy
+    -- while another reads the next.
+    for _, field in ipairs(SINGLE_FIELDS) do
+        local values = headers[field:lower()]
+        if values and #values > 1 then
+            return nil, "More than one " .. field .. " header"
+        end
     end
     if version == "1.1" and not hosts then
         return nil, "HTTP/1.1 request without Host"

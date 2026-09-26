@@ -296,6 +296,30 @@ H.case("Section 4: HTTP/1.1 names its host, once", function()
     eq(res[1] and res[1].status, 400, "two Host lines are 400 on HTTP/1.0 too, whatever their case")
     res = ask(port, "GET /hello.txt HTTP/1.1\r\nHost: 127.0.0.1\r\nHost : evil.example\r\n\r\n")
     eq(res[1] and res[1].status, 400, "a second Host with a space before its colon is 400")
+    -- The origin check and the injection rule read these; a second copy
+    -- would let a proxy or a later check read the other one.
+    for _, pair in ipairs({
+        { "Origin", "http://127.0.0.1", "https://evil.example" },
+        { "Sec-Fetch-Site", "same-origin", "cross-site" },
+        { "Sec-Fetch-Dest", "document", "empty" },
+        { "Sec-Fetch-Mode", "navigate", "cors" },
+    }) do
+        local name = pair[1]
+        res = ask(
+            port,
+            ("GET /hello.txt HTTP/1.1\r\nHost: 127.0.0.1\r\n%s: %s\r\n%s: %s\r\n\r\n"):format(
+                name,
+                pair[2],
+                name,
+                pair[3]
+            )
+        )
+        local r = res[1]
+        ok(
+            r ~= nil and r.status == 400 and r.body:find("More than one " .. name .. " header", 1, true) ~= nil,
+            ("two %s lines are 400 naming %s (got %s)"):format(name, name, tostring(r and r.status))
+        )
+    end
     -- markdown-preview's remote.lua sends exactly this: a portless Host.
     res = ask(
         port,
