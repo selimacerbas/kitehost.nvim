@@ -542,6 +542,43 @@ function H.responses(data)
     return list
 end
 
+-- Open descriptors of this process: /proc/self/fd on Linux, /dev/fd on
+-- macOS (15 to 55 to 15 measured with 20 raw connections), nil on Windows,
+-- which has neither. A leak the ledger cannot see shows here.
+function H.fd_count()
+    if is_win then
+        return nil
+    end
+    local dir = uv.fs_stat("/proc/self/fd") and "/proc/self/fd" or "/dev/fd"
+    local handle = uv.fs_scandir(dir)
+    if not handle then
+        return nil
+    end
+    local n = 0
+    while uv.fs_scandir_next(handle) do
+        n = n + 1
+    end
+    return n
+end
+
+-- Live luv handles of one kind: "tcp", "timer", "fs_event". A handle left
+-- open after a server stops, or after a start that raised, is a leak no
+-- ledger line would otherwise show.
+function H.handle_count(kind)
+    local n = 0
+    uv.walk(function(h)
+        if h:get_type() == kind and not h:is_closing() then
+            n = n + 1
+        end
+    end)
+    return n
+end
+
+-- Waits up to ms for pred() to hold; whether it did.
+function H.wait_for(pred, ms)
+    return vim.wait(ms, pred, 5) == true
+end
+
 -- An error raised in a libuv or vim.schedule callback, where every server
 -- handler runs, prints a traceback and leaves the exit code at 0; v:errmsg is
 -- the one trace of it a script can read, and it holds only the latest

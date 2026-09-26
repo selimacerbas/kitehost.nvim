@@ -1346,4 +1346,40 @@ H.case("the response reader", function()
     eq(#H.responses("HTTP/1.1 2000 OK\r\nContent-Length: 0\r\n\r\n"), 0, "a four-digit status is no response")
 end)
 
+H.case("the counters", function()
+    -- A close is asynchronous, so a count settles through H.wait_for before
+    -- it is compared.
+    local fds = H.fd_count()
+    if fds then
+        local probe_file = vim.fs.joinpath(H.tmpdir(), "fd-probe")
+        H.write_file(probe_file, "x")
+        local fd = assert(uv.fs_open(probe_file, "r", 438))
+        eq(H.fd_count(), fds + 1, "an open file counts as one descriptor")
+        uv.fs_close(fd)
+        ok(
+            H.wait_for(function()
+                return H.fd_count() == fds
+            end, 1000),
+            "and its close gives it back"
+        )
+    else
+        H.skip("an open file counts as one descriptor (no descriptor listing on this platform)")
+        H.skip("and its close gives it back (no descriptor listing on this platform)")
+    end
+    local tcps = H.handle_count("tcp")
+    local extra = uv.new_tcp()
+    eq(H.handle_count("tcp"), tcps + 1, "an open TCP handle is counted")
+    extra:close()
+    eq(H.handle_count("tcp"), tcps, "a closing one is not")
+    ok(
+        H.wait_for(function()
+            return true
+        end, 10),
+        "H.wait_for returns true when the condition holds"
+    )
+    ok(not H.wait_for(function()
+        return false
+    end, 50), "and false when the bound runs out")
+end)
+
 H.finish()
