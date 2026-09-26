@@ -205,7 +205,7 @@ local function parse_head(head)
     while #lines > 1 and lines[1] == "" do
         table.remove(lines, 1)
     end
-    local method, target, minor = lines[1]:match("^(%u+) (%S+) HTTP/1%.(%d+)$")
+    local method, target, minor = lines[1]:match("^(%u+) (%S+) HTTP/1%.(%d)$")
     if not method then
         return nil, "Cannot parse request line"
     end
@@ -855,7 +855,7 @@ local function on_read(conn, err, chunk)
     -- A request line, after any empty lines, starts with a method token;
     -- anything else (a TLS ClientHello on the plain port) is refused at once,
     -- never left waiting for a blank line that will not come.
-    local first = conn.buf:match("^[\r\n]*(.)")
+    local first = conn.buf:match("^[\r\n]*([^\r\n])")
     if first and not first:find("^[A-Z]") then
         conn.handled = true
         conn.buf = ""
