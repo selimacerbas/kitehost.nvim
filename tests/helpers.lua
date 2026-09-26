@@ -13,6 +13,9 @@ local verdict
 -- runs from there is named as the drain's, and H.defer refuses a cleanup
 -- that would never run.
 local finishing = false
+-- The guard every ledger entry point runs, defined with the ledger below;
+-- the raw client, which comes first, runs it too.
+local open_ledger
 local errors = {}
 local tests_dir = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))
 
@@ -361,18 +364,30 @@ function H.http_get(url, headers)
 end
 
 -- A raw TCP client for the requests curl cannot send: a request line split
--- across writes, a missing or doubled Host, a NUL byte, a half-close, an
--- abort, an event stream read with a bound. Every luv call's nil, err is
--- read, never hidden in a pcall around a closure, and every wait has its
--- own bound. The connect bound sits above Windows's two-second retry of a
--- refused loopback connect (the H.http_get comment's measurement). host is
--- an IP literal: luv raises on a name instead of returning nil, err, and
--- that raise is the suite's own defect.
+-- across writes, a NUL byte, a half-close, an abort, an event stream read
+-- with a bound. Every luv call's nil, err is read, never hidden in a pcall
+-- around a closure, and every wait has its own bound. The connect bound
+-- sits above Windows's two-second retry of a refused loopback connect (the
+-- H.http_get comment's measurement). The port and host are checked before
+-- any handle exists, a refusal at the suite's line: luv truncates a
+-- fraction or an out-of-range port onto another port, and raises on a host
+-- name, where an IP literal returns nil, err.
 local Raw = {}
 Raw.__index = Raw
 local RAW_CONNECT_MS, RAW_STEP_MS = 5000, 2000
 
 function H.raw_connect(port, host)
+    open_ledger("H.raw_connect")
+    if type(port) ~= "number" or port ~= math.floor(port) or port < 1 or port > 65535 then
+        error("H.raw_connect: port must be an integer from 1 to 65535, got " .. tostring(port), 2)
+    end
+    -- An IPv6 literal carries colons.
+    if
+        host ~= nil
+        and not (type(host) == "string" and (host:match("^%d+%.%d+%.%d+%.%d+$") or host:find(":", 1, true)))
+    then
+        error("H.raw_connect: host must be an IP literal, got " .. tostring(host), 2)
+    end
     local tcp, terr = uv.new_tcp()
     if not tcp then
         return nil, terr
@@ -413,7 +428,9 @@ function H.raw_connect(port, host)
     return c
 end
 
--- Writes bytes and waits for libuv to take them.
+-- Writes bytes and waits for libuv to take them. A peer that closes early
+-- fails the send with EPIPE; a row that expects a refusal reads that error,
+-- never a reply.
 function Raw:send(bytes)
     local done, werr = false, nil
     local req, err = self.tcp:write(bytes, function(e)
@@ -453,10 +470,11 @@ function Raw:half_close()
     return true
 end
 
--- An RST where a test needs a reset; a closing handle has none to send.
+-- An RST where a test needs a reset. A closing handle has none to send, so
+-- it answers nil and says so, never true for a reset that did not go out.
 function Raw:abort()
     if self.tcp:is_closing() then
-        return true
+        return nil, "already closing"
     end
     local r, err = self.tcp:close_reset()
     if not r then
@@ -484,7 +502,9 @@ function Raw:read(ms, stop_when)
     return bytes(), self.eof
 end
 
--- One request on a fresh connection, read until the server closes it.
+-- One request on a fresh connection, read until the server closes it: the
+-- bytes, whether the peer ended, and the read's error, nil after a FIN and
+-- ECONNRESET after a reset.
 function H.raw_request(port, bytes, ms)
     local c, err = H.raw_connect(port)
     if not c then
@@ -497,15 +517,33 @@ function H.raw_request(port, bytes, ms)
     end
     local data, eof = c:read(ms or 3000)
     c:close()
-    return data, eof
+    return data, eof, c.err
+end
+
+-- Whether a head's lines split as header lines: each ends in CRLF, never a
+-- bare CR or LF, and each after the status line carries a colon.
+local function head_splits(head)
+    if head:gsub("\r\n", ""):find("[\r\n]") then
+        return false
+    end
+    for line in head:gmatch("\r\n([^\r\n]+)") do
+        if not line:find(":", 1, true) then
+            return false
+        end
+    end
+    return true
 end
 
 -- Splits raw bytes into HTTP/1.1 responses. A body runs for its
 -- Content-Length, or to the end of the bytes when there is none (an event
 -- stream), so a status line spliced into a streamed body shows as a body
--- that differs from the file, never as a second response. Bytes that do not
--- parse stop the split and return the responses read so far, so a row that
--- asserts a header is absent checks the count or the status first.
+-- that differs from the file, never as a second response; a 1xx, 204 or 304
+-- has none (RFC 9112 6.3). complete says whether a body holds its whole
+-- Content-Length. Bytes that do not parse, a head with a bare CR or LF or a
+-- header line without a colon among them, stop the split: the responses
+-- read so far come back with the unparsed tail as a second value, "" when
+-- everything parsed, so a row that asserts a header is absent reads through
+-- H.response.
 function H.responses(data)
     local list, pos = {}, 1
     while pos <= #data do
@@ -515,7 +553,7 @@ function H.responses(data)
         end
         local head = data:sub(pos, head_end - 1)
         local code, rest = head:match("^HTTP/1%.1 (%d%d%d)([^\r\n]*)")
-        if not code or (rest ~= "" and rest:sub(1, 1) ~= " ") then
+        if not code or (rest ~= "" and rest:sub(1, 1) ~= " ") or not head_splits(head) then
             break
         end
         local reason = rest:sub(2)
@@ -532,16 +570,31 @@ function H.responses(data)
         -- A negative length moves pos backwards and loops forever; hex or a
         -- fraction reads a length the server never writes, so digits only.
         local len = tonumber((r.headers["content-length"] or ""):match("^%d+$"))
-        if len then
+        if (r.status >= 100 and r.status < 200) or r.status == 204 or r.status == 304 then
+            r.body, r.complete = "", true
+            pos = body_start
+        elseif len then
             r.body = data:sub(body_start, body_start + len - 1)
+            r.complete = #r.body == len
             pos = body_start + len
         else
             r.body = data:sub(body_start)
+            r.complete = true
             pos = #data + 1
         end
         table.insert(list, r)
     end
-    return list
+    return list, data:sub(pos)
+end
+
+-- The first response of the bytes, or a raise: a row that asserts a header
+-- is absent must fail when nothing parsed, never pass on an empty list.
+function H.response(data)
+    local r = H.responses(data)[1]
+    if not r then
+        error("H.response: no response parsed from " .. vim.inspect(data:sub(1, 80)), 2)
+    end
+    return r
 end
 
 -- Open descriptors of this process: /proc/self/fd on Linux, /dev/fd on
@@ -670,7 +723,7 @@ function H.expect_error(pattern, fn)
 end
 
 -- An assertion after the ruling would never reach the exit code.
-local function open_ledger(caller)
+open_ledger = function(caller)
     if verdict then
         error(caller .. " after H.finish(): the ruling is already out", 3)
     end
