@@ -129,6 +129,12 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
     local started, err = pcall(server.start, { port = 0, root = root, allowed_hosts = "my.name" })
     ok(not started and tostring(err):find("allowed_hosts", 1, true) ~= nil, "a string is refused: " .. tostring(err))
     eq(H.handle_count("tcp"), tcps, "before any socket opens")
+    local typo_started, typo_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "a b" } })
+    ok(
+        not typo_started and tostring(typo_err):find("a b", 1, true) ~= nil,
+        "an entry no Host can match is refused, naming it: " .. tostring(typo_err)
+    )
+    eq(H.handle_count("tcp"), tcps, "and opens no socket either")
 end)
 
 -- The check follows the address the socket reports, so no spelling of a
@@ -142,9 +148,11 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
             421,
             "and refuses a foreign Host"
         )
+        eq(six.host, "::1", "inst.host is the bound address, canonical")
     else
         H.skip("a spelled-out IPv6 loopback bind keeps the check on (bind refused: " .. tostring(six) .. ")")
         H.skip("and refuses a foreign Host (bind refused: " .. tostring(six) .. ")")
+        H.skip("inst.host is the bound address, canonical (bind refused: " .. tostring(six) .. ")")
     end
     local mapped_bound, mapped = pcall(serve, { host = "::ffff:127.0.0.1" })
     if mapped_bound then
@@ -152,6 +160,14 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
     else
         H.skip("an IPv4-mapped loopback bind keeps the check on (bind refused: " .. tostring(mapped) .. ")")
     end
+    -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
+    local tcps = H.handle_count("tcp")
+    local started, err = pcall(server.start, { port = 0, root = root, host = "192.0.2.1" })
+    ok(
+        not started and tostring(err):find("192.0.2.1", 1, true) ~= nil,
+        "a bind to an address this machine lacks raises: " .. tostring(err)
+    )
+    eq(H.handle_count("tcp"), tcps, "and leaves no handle open")
 end)
 
 H.finish()

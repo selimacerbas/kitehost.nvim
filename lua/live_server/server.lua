@@ -947,27 +947,34 @@ function S.start(cfg)
             if type(name) ~= "string" or name == "" then
                 error("allowed_hosts must be true or a list of hostnames", 0)
             end
+            if not host_name(name) and not host_name("[" .. name .. "]") then
+                error("allowed_hosts entry is not a hostname: " .. name, 0)
+            end
             allowed_set[(name:lower():gsub("%.$", ""))] = true
         end
     end
 
     local tcp = uv.new_tcp()
     local host = cfg.host or "127.0.0.1"
-    -- The caller shows the message to the user, so it carries no source
-    -- position: bind is called directly under pcall, which adds none, and the
-    -- raise is at level 0.
-    local ok, bind_err = pcall(tcp.bind, tcp, host, cfg.port)
-    if not ok then
-        error(bind_err or "bind failed", 0)
+    -- luv returns a failed bind as nil, err, which a pcall alone never sees,
+    -- and listen binds an unbound socket to every interface. It raises only
+    -- on an address it cannot parse, which the pcall catches. The caller
+    -- shows the message to the user, so the raise is at level 0.
+    local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, cfg.port)
+    if not called or not bound_ok then
+        tcp:close()
+        local reason = called and bind_err or bound_ok
+        error("Failed to bind " .. host .. ":" .. tostring(cfg.port) .. ": " .. tostring(reason), 0)
     end
 
     -- The bound address, not the configured spelling, decides the Host
     -- check: 0:0:0:0:0:0:0:1 and ::ffff:127.0.0.1 are loopback binds too.
-    -- It also carries the OS-assigned port when cfg.port is 0.
+    -- It also carries the OS-assigned port when cfg.port is 0. libuv holds
+    -- a bind's EADDRINUSE until here, so a failure reads as the bind's.
     local bound, sockname_err = tcp:getsockname()
     if not bound then
         tcp:close()
-        error("getsockname failed: " .. tostring(sockname_err), 0)
+        error("Failed to bind " .. host .. ":" .. tostring(cfg.port) .. ": " .. tostring(sockname_err), 0)
     end
     local actual_port = bound.port
 
@@ -984,7 +991,9 @@ function S.start(cfg)
     local inst = {
         handle = tcp,
         port = actual_port,
-        host = host,
+        -- A later reader compares it to the loopback rule, and the configured
+        -- spelling may differ; cfg.host keeps what was asked for.
+        host = bound.ip,
         -- Network binds are reached by names no default list knows; the
         -- token gates them.
         host_check = is_loopback_ip(bound.ip) and allowed ~= true,
@@ -1027,21 +1036,20 @@ function S.start(cfg)
         start_fs_watch(inst)
     end
 
-    ok, bind_err = pcall(function()
-        tcp:listen(128, function(err_listen)
-            if err_listen then
-                return
-            end
-            local sock = uv.new_tcp()
-            tcp:accept(sock)
-            local conn = new_conn(inst, sock)
-            sock:read_start(function(err_read, chunk)
-                on_read(conn, err_read, chunk)
-            end)
+    local listening, listen_err = tcp:listen(128, function(err_listen)
+        if err_listen then
+            return
+        end
+        local sock = uv.new_tcp()
+        tcp:accept(sock)
+        local conn = new_conn(inst, sock)
+        sock:read_start(function(err_read, chunk)
+            on_read(conn, err_read, chunk)
         end)
     end)
-    if not ok then
-        error(bind_err or "listen failed", 0)
+    if not listening then
+        tcp:close()
+        error("Failed to listen on " .. host .. ":" .. tostring(actual_port) .. ": " .. tostring(listen_err), 0)
     end
 
     if allowed == true then
