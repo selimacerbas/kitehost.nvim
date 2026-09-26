@@ -539,6 +539,10 @@ local function run_deferred(mark)
 end
 
 function H.defer(fn)
+    open_ledger("H.defer")
+    if type(fn) ~= "function" then
+        error("H.defer: a function is required", 2)
+    end
     table.insert(deferred, fn)
 end
 
@@ -546,6 +550,7 @@ end
 -- section, the sections after it still run, and its cleanups run either
 -- way.
 function H.case(title, fn)
+    open_ledger("H.case")
     H.section(title)
     local mark = #deferred
     local ok, err = xpcall(fn, debug.traceback)

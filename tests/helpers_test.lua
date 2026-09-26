@@ -1122,5 +1122,40 @@ H.finish()]],
     1,
     "a cleanup that raises fails the suite"
 )
+-- H.case and H.defer run the guard every entry point runs, so a suite
+-- defect after the ruling exits 1 instead of reading as a pass.
+eq(
+    child_exit(
+        [[
+H.ok(true, "x")
+H.finish()
+H.case("late", function() H.ok(true, "y") end)]],
+        "H%.case after H%.finish%(%)"
+    ),
+    1,
+    "an H.case after H.finish() exits 1"
+)
+eq(
+    child_exit(
+        [[
+H.ok(true, "x")
+H.finish()
+H.defer(function() end)]],
+        "H%.defer after H%.finish%(%)"
+    ),
+    1,
+    "an H.defer after H.finish() exits 1"
+)
+eq(
+    child_exit(
+        [[
+H.defer(nil)
+H.ok(true, "x")
+H.finish()]],
+        "a function is required"
+    ),
+    1,
+    "H.defer refuses a cleanup that is not a function"
+)
 
 H.finish()
