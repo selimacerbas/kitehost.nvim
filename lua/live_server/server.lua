@@ -110,6 +110,88 @@ local function http_400(sock, msg)
     )
 end
 
+-- RFC 3986 IPv4address: four dec-octets, 0 to 255, none with a leading
+-- zero.
+local function is_ipv4(s)
+    local octets = { s:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$") }
+    if #octets ~= 4 then
+        return false
+    end
+    for _, o in ipairs(octets) do
+        if #o > 3 or tonumber(o) > 255 or (#o > 1 and o:sub(1, 1) == "0") then
+            return false
+        end
+    end
+    return true
+end
+
+-- The 16-bit groups on one side of an IPv6 address's "::", or nil when a
+-- field is not one to four hex digits. The last field of the right side
+-- may be an IPv4 address, which fills two groups.
+local function ipv6_groups(side, may_end_in_ipv4)
+    if side == "" then
+        return 0
+    end
+    local fields = vim.split(side, ":", { plain = true })
+    local n = 0
+    for i, field in ipairs(fields) do
+        if may_end_in_ipv4 and i == #fields and field:find(".", 1, true) then
+            if not is_ipv4(field) then
+                return nil
+            end
+            n = n + 2
+        elseif field:match("^%x%x?%x?%x?$") then
+            n = n + 1
+        else
+            return nil
+        end
+    end
+    return n
+end
+
+-- RFC 3986 IPv6address: eight groups, or fewer around one "::" that
+-- stands for at least one zero group. No zone and no IPvFuture: no
+-- browser sends either in Host.
+local function is_ipv6(s)
+    local i, j = s:find("::", 1, true)
+    if not i then
+        return ipv6_groups(s, true) == 8
+    end
+    local left, right = ipv6_groups(s:sub(1, i - 1), false), ipv6_groups(s:sub(j + 1), true)
+    return left ~= nil and right ~= nil and left + right <= 7
+end
+
+-- RFC 3986 reg-name in the shape DNS resolves: unreserved, sub-delims and
+-- pct-encoded characters, each "%" followed by two hex digits, in labels
+-- that are never empty but for one trailing dot, the root. An IPv4
+-- address has this shape too.
+local function is_reg_name(s)
+    if s:find("[^%w%-%._~%%!%$&'%(%)%*%+,;=]") or s:gsub("%%%x%x", ""):find("%", 1, true) then
+        return false
+    end
+    local labels = s:gsub("%.$", "")
+    return labels ~= "" and not labels:find("^%.") and not labels:find("%.%.") and not labels:find("%.$")
+end
+
+-- The hostname in a Host value or an absolute-form authority, RFC 9110
+-- 7.2's uri-host [":" port]: lowercased, without its brackets or one
+-- trailing dot, the port dropped. nil when the value is not a host: an
+-- unbracketed IPv6 address with a port cannot be split, and a check that
+-- guessed would read a name never sent. An escape is kept as sent.
+local function host_name(value)
+    local name, port = value:match("^%[([^%]]*)%](.*)$")
+    if name then
+        name = is_ipv6(name) and name or nil
+    else
+        name, port = value:match("^([^:]*)(.*)$")
+        name = is_reg_name(name) and name or nil
+    end
+    if not name or not (port == "" or port:match("^:%d*$")) then
+        return nil
+    end
+    return (name:lower():gsub("%.$", ""))
+end
+
 -- The request head, parsed once: method, target, version, and the header
 -- fields by lowercased name, each the list of its values in order, so a
 -- check can refuse a repeated field instead of reading one copy. The
@@ -156,6 +238,14 @@ local function parse_head(head)
     end
     if version == "1.1" and not hosts then
         return nil, "HTTP/1.1 request without Host"
+    end
+    -- RFC 9112 3.2: a Host that is not a host is 400 on every bind, HTTP/1.0
+    -- too; a check that guessed at one would read a name never sent.
+    if hosts and not host_name(hosts[1]) then
+        return nil, "Invalid Host header"
+    end
+    if authority and not host_name(authority) then
+        return nil, "Invalid request target authority"
     end
     return { method = method, path = target, version = version, headers = headers, authority = authority }
 end

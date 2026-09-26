@@ -188,4 +188,35 @@ H.case("Section 4: HTTP/1.1 names its host, once", function()
     eq(res[1] and res[1].status, 400, "a NUL inside a header value is 400")
 end)
 
+H.case("Section 4b: a Host value that is not a host is 400 on every bind", function()
+    local function status(port, value, version)
+        local r = ask(port, ("GET /style.css HTTP/%s\r\nHost: %s\r\n\r\n"):format(version or "1.1", value))
+        return r[1] and r[1].status
+    end
+    for _, bind in ipairs({ "127.0.0.1", "0.0.0.0" }) do
+        local inst = serve({ host = bind })
+        local port = inst.port
+        eq(status(port, "::1:" .. port), 400, bind .. ": an unbracketed IPv6 address with a port is 400")
+        eq(status(port, "[::::]"), 400, bind .. ": brackets around what is no IPv6 address are 400")
+        eq(status(port, "[::1"), 400, bind .. ": an unclosed bracket is 400")
+        eq(status(port, "%ZZ"), 400, bind .. ": a % not followed by two hex digits is 400")
+        eq(status(port, "a..example"), 400, bind .. ": an empty label is 400")
+        eq(status(port, "a b"), 400, bind .. ": a space inside the value is 400")
+        eq(status(port, "user@127.0.0.1"), 400, bind .. ": userinfo is 400")
+        eq(status(port, "127.0.0.1:80a"), 400, bind .. ": a port that is not digits is 400")
+        eq(status(port, ""), 400, bind .. ": an empty value is 400")
+        eq(status(port, "a b", "1.0"), 400, bind .. ": HTTP/1.0 too")
+        eq(status(port, "[::1]:" .. port), 200, bind .. ": a bracketed IPv6 address is served")
+        eq(status(port, "localhost:"), 200, bind .. ": an empty port is served")
+    end
+    -- The grammar's other accepted forms, on a network bind, where no Host
+    -- check follows to refuse a name that is not loopback.
+    local wide = serve({ host = "0.0.0.0" })
+    eq(status(wide.port, "[::ffff:127.0.0.1]:" .. wide.port), 200, "an IPv6 address ending in an IPv4 one is served")
+    eq(status(wide.port, "a%41.example"), 200, "a % followed by two hex digits is served")
+    local inst = serve()
+    local res = ask(inst.port, "GET http://user@127.0.0.1/style.css HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "an absolute-form authority that is not a host is 400")
+end)
+
 H.finish()
