@@ -1217,13 +1217,22 @@ local function recorder(reply)
     assert(srv:listen(8, function()
         local c = assert(uv.new_tcp())
         assert(srv:accept(c))
+        -- The accepted socket is the case's to close as well, so a row that
+        -- never reads the peer's end leaves no handle for a counter to see.
+        H.defer(function()
+            if not c:is_closing() then
+                c:close()
+            end
+        end)
         assert(c:read_start(function(err, data)
             if data then
                 rec.bytes = rec.bytes .. data
             else
                 rec.ended = err or "EOF"
+                -- A reset leaves nothing writable, so the answer goes out on a
+                -- FIN alone; a raise here would leave the socket open.
                 if not c:is_closing() then
-                    if reply then
+                    if reply and not err then
                         assert(c:write(reply, function()
                             if not c:is_closing() then
                                 c:close()
@@ -1290,7 +1299,8 @@ H.case("the raw client", function()
     rc = assert(H.raw_connect(rport))
     assert(rc:send("GET"))
     vim.wait(100)
-    ok(rc:abort() == true, "abort reports the reset it sent")
+    local reset, reset_err = rc:abort()
+    ok(reset == true, "abort reports the reset it sent: " .. tostring(reset_err))
     vim.wait(2000, function()
         return rec.ended ~= nil
     end, 5)
