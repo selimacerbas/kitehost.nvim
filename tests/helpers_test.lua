@@ -1316,4 +1316,18 @@ H.case("the raw client", function()
     rc:close()
 end)
 
+H.case("the response reader", function()
+    local two = H.responses(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 3\r\nX-A: 1\r\nx-a: 2\r\n\r\nabc"
+            .. "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 1000\n\n"
+    )
+    eq(#two, 2, "two responses back to back parse as two")
+    eq(two[1] and two[1].reason, "Unauthorized", "the reason phrase is read")
+    eq(two[1] and two[1].body, "abc", "a body runs for its Content-Length")
+    eq(two[1] and two[1].count["x-a"], 2, "a repeated header is counted, whatever its case")
+    eq(two[2] and two[2].headers["content-type"], "text/event-stream", "header names are lowercased")
+    eq(two[2] and two[2].body, "retry: 1000\n\n", "a body without Content-Length runs to the end")
+    eq(#H.responses("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n"), 0, "a head without its blank line is no response")
+end)
+
 H.finish()

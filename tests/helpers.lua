@@ -498,6 +498,42 @@ function H.raw_request(port, bytes, ms)
     return data, eof
 end
 
+-- Splits raw bytes into HTTP/1.1 responses. A body runs for its
+-- Content-Length, or to the end of the bytes when there is none (an event
+-- stream), so a status line spliced into a streamed body shows as a body
+-- that differs from the file, never as a second response.
+function H.responses(data)
+    local list, pos = {}, 1
+    while pos <= #data do
+        local head_end = data:find("\r\n\r\n", pos, true)
+        if not head_end then
+            break
+        end
+        local head = data:sub(pos, head_end - 1)
+        local code, reason = head:match("^HTTP/1%.1 (%d%d%d) ?([^\r\n]*)")
+        if not code then
+            break
+        end
+        local r = { status = tonumber(code), reason = reason, headers = {}, count = {} }
+        for name, value in head:gmatch("\r\n([^:\r\n]+):[ \t]*([^\r\n]*)") do
+            name = name:lower()
+            r.count[name] = (r.count[name] or 0) + 1
+            r.headers[name] = r.headers[name] or value
+        end
+        local body_start = head_end + 4
+        local len = tonumber(r.headers["content-length"])
+        if len then
+            r.body = data:sub(body_start, body_start + len - 1)
+            pos = body_start + len
+        else
+            r.body = data:sub(body_start)
+            pos = #data + 1
+        end
+        table.insert(list, r)
+    end
+    return list
+end
+
 -- An error raised in a libuv or vim.schedule callback, where every server
 -- handler runs, prints a traceback and leaves the exit code at 0; v:errmsg is
 -- the one trace of it a script can read, and it holds only the latest
