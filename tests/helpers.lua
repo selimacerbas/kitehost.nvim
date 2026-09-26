@@ -563,16 +563,44 @@ function H.fd_count()
     return n
 end
 
--- Live luv handles of one kind: "tcp", "timer", "fs_event". A handle left
--- open after a server stops, or after a start that raised, is a leak no
--- ledger line would otherwise show.
+-- Handles counted by creation, never by uv.walk: the walk segfaults every
+-- Neovim 0.10.x, the floor, and on 0.12 it visits luv's handles alone. A
+-- handle stays in the table until a count finds it closing, never weakly:
+-- LuaJIT keeps a finalized handle's weak key for one more collection, and
+-- is_closing() on it segfaults (measured on 0.10.0 and 0.12.5).
+local handles = {}
+local HANDLE_KINDS = { "tcp", "timer", "fs_event", "pipe", "udp", "fs_poll" }
+for _, kind in ipairs(HANDLE_KINDS) do
+    local make = uv["new_" .. kind]
+    if make then
+        uv["new_" .. kind] = function(...)
+            local h, err = make(...)
+            if h then
+                handles[h] = kind
+            end
+            return h, err
+        end
+    end
+end
+
+-- Live handles of one kind created since the harness loaded: "tcp",
+-- "timer", "fs_event", "pipe", "udp", "fs_poll". A kind outside that list
+-- raises, so a leak row with a misspelt kind never counts zero on both
+-- sides and passes. A handle stays counted until close() marks it closing,
+-- and a peer's close runs in a later callback, so a baseline is taken
+-- after H.wait_for settles the previous case's sockets.
 function H.handle_count(kind)
+    if not vim.tbl_contains(HANDLE_KINDS, kind) then
+        error("H.handle_count: unknown kind " .. tostring(kind), 2)
+    end
     local n = 0
-    uv.walk(function(h)
-        if h:get_type() == kind and not h:is_closing() then
+    for h, k in pairs(handles) do
+        if h:is_closing() then
+            handles[h] = nil
+        elseif k == kind then
             n = n + 1
         end
-    end)
+    end
     return n
 end
 

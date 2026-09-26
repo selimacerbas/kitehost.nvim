@@ -1367,10 +1367,39 @@ H.case("the counters", function()
         H.skip("and its close gives it back (no descriptor listing on this platform)")
     end
     local tcps = H.handle_count("tcp")
+    local timers_before = H.handle_count("timer")
     local extra = uv.new_tcp()
     eq(H.handle_count("tcp"), tcps + 1, "an open TCP handle is counted")
+    eq(H.handle_count("timer"), timers_before, "a tcp is not counted as a timer")
     extra:close()
     eq(H.handle_count("tcp"), tcps, "a closing one is not")
+    local events = H.handle_count("fs_event")
+    local w = assert(uv.new_fs_event())
+    eq(H.handle_count("fs_event"), events + 1, "an open fs_event handle is counted")
+    w:close()
+    eq(H.handle_count("fs_event"), events, "and a closing one is not")
+    ok(not pcall(H.handle_count, "tcpp"), "an unknown kind raises rather than counting zero")
+    -- The client the case never closes is the one raw_connect defers, so a
+    -- row that forgets it leaves no socket for the next case to count.
+    eq(
+        child_exit(
+            [[
+local uv = vim.uv
+local before = H.handle_count("tcp")
+H.case("a client left open", function()
+    local srv = assert(uv.new_tcp())
+    assert(srv:bind("127.0.0.1", 0))
+    assert(srv:listen(8, function() end))
+    H.defer(function() srv:close() end)
+    H.ok(H.raw_connect(assert(srv:getsockname()).port) ~= nil, "the client connects")
+end)
+H.eq(H.handle_count("tcp"), before, "the case's end closed the client")
+H.finish()]],
+            "Results: 2 passed"
+        ),
+        0,
+        "H.raw_connect's client closes when its case ends"
+    )
     ok(
         H.wait_for(function()
             return true
