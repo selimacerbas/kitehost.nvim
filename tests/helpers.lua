@@ -520,7 +520,9 @@ function H.responses(data)
         local r = { status = tonumber(code), reason = reason, headers = {}, count = {} }
         for name, value in head:gmatch("\r\n([^:\r\n]+):[ \t]*([^\r\n]*)") do
             name = name:lower()
-            value = value:gsub("[ \t]+$", "")
+            -- Trailing blanks go through one greedy match: an anchored gsub
+            -- rescans a run of blanks from every start and turns quadratic.
+            value = value:match("^(.*[^ \t])") or ""
             r.count[name] = (r.count[name] or 0) + 1
             r.headers[name] = r.headers[name] or value
         end
