@@ -211,7 +211,7 @@ All under the which-key group **`<leader>l`**:
 * **Index resolution**: root directory → `default_index` (if starting from a file) → `index_names` in order → directory listing. Subdirectories always use their own index files.
 * **Port 0 (OS-assigned)**: pass `port = 0` to let the OS pick a free port. The actual port is available via `inst.port` after `server.start()`.
 * **Same port, new path**: reusing the same port retargets the server → same URL, so browsers typically reuse the same tab.
-* **Event injection**: `GET /__live/inject?event=<type>&data=<json>` lets external processes broadcast SSE events to connected clients. A browser request from another site, or from another port of the same host, is refused (403) by its `Sec-Fetch-Site` or `Origin` header, on loopback binds too; a request that sends neither, such as curl's, is served on a loopback bind, so set `token` when other programs on this machine must not inject. A browser sends neither header to a plain-http LAN address, so a network bind without a `token` (and a loopback bind reached by an `allowed_hosts` name) fires events only for a request that sends `Sec-Fetch-Site: same-origin` or `none` (a typed URL, which no page can send); an `Origin` refuses a request from another origin and admits none, because a page's own `Origin` rides on its WebSocket handshakes and POSTs, so the token is that bind's boundary.
+* **Event injection**: `GET /__live/inject?event=<type>&data=<json>` lets external processes broadcast SSE events to connected clients. A browser request from another site, or from another port of the same host, is refused (403) by its `Sec-Fetch-Site` or `Origin` header, on loopback binds too; a request that sends neither, such as curl's, is served on a loopback bind, so set `token` when other programs on this machine must not inject. A browser sends no Fetch Metadata to a plain-http LAN address (an `Origin` still rides on a cors fetch and a WebSocket handshake), so a network bind without a `token` (and a loopback bind reached by an `allowed_hosts` name) fires events only for a request that sends `Sec-Fetch-Site: same-origin` or `none` (a typed URL, which no page can send); an `Origin` refuses a request from another origin and admits none, because a page's own `Origin` rides on its WebSocket handshake, so the token is that bind's boundary.
 * **Graceful exit**: all servers are automatically stopped on `VimLeavePre`.
 
 ---
@@ -282,7 +282,7 @@ External processes can inject SSE events via HTTP:
 GET /__live/inject?event=<type>&data=<url-encoded-json>[&t=<token>]
 ```
 
-This broadcasts the event to all connected SSE clients. Used by [markdown-preview.nvim](https://github.com/selimacerbas/markdown-preview.nvim) for cross-instance scroll sync. The `t=<token>` parameter is required when the server was started with `cfg.token`. The request must come from this server's origin as the Design notes' event-injection bullet says; a browser request from another site is refused with 403.
+This broadcasts the event to all connected SSE clients. Used by [markdown-preview.nvim](https://github.com/selimacerbas/markdown-preview.nvim) for cross-instance scroll sync. The `t=<token>` parameter is required when the server was started with `cfg.token`. The endpoint refuses a browser request from another site (403); a request without browser headers is served on a loopback bind, and on a network bind only with the token (Design notes).
 
 ### Token auth (optional)
 
@@ -297,7 +297,7 @@ Static assets (`index.html`, `style.css`, etc.) are intentionally not gated beca
 
 `util.random_token(byte_len)` generates a hex token (default 16 bytes = 128 bits) from `/dev/urandom`, falling back to `math.random` seeded from `uv.hrtime` + `os.time` + pid. `util.secure_compare(a, b)` is a constant-time-ish string compare for token validation.
 
-Token auth is opt-in. When `cfg.token` is nil (the default), no token is required; the Host check on loopback binds and the inject endpoint's origin check (Design notes) apply on every server.
+Token auth is opt-in. When `cfg.token` is nil (the default), no token is required; the Host check on loopback binds (unless `allowed_hosts = true`) and the inject endpoint's origin check (Design notes) apply on every server.
 
 ---
 

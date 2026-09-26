@@ -762,7 +762,7 @@ end
 -- same-origin or none (a typed URL or an extension, the user's own act),
 -- nil otherwise. An Origin refuses and never admits: Sec-Fetch-Site is a
 -- header no page controls, while a page's own Origin rides on a WebSocket
--- handshake and a POST, so under a rebinding name it names this server.
+-- handshake, so under a rebinding name it names this server.
 local function request_site(req)
     local site = req.headers["sec-fetch-site"]
     site = site and site[1]
@@ -1055,7 +1055,8 @@ function S.start(cfg)
             if type(name) ~= "string" or name == "" then
                 error("allowed_hosts must be true or a list of hostnames", 0)
             end
-            -- A wildcard reads as a reg-name and would match no Host.
+            -- A wildcard reads as a reg-name and matches no subdomain, only
+            -- that literal name.
             if name:find("*", 1, true) then
                 error("allowed_hosts takes exact names, no wildcard: " .. name, 0)
             end

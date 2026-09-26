@@ -181,7 +181,8 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
         "a bracketed entry is refused, naming it: " .. tostring(six_err)
     )
     -- The list is walked in order, so a map or a list with a hole would
-    -- start with names silently dropped, and a wildcard matches no Host.
+    -- start with names silently dropped, and a wildcard matches no
+    -- subdomain, only that literal name.
     for _, case in ipairs({
         { { ["dev.test"] = true }, "a map is refused, naming allowed_hosts", { "allowed_hosts" } },
         { { "a.test", nil, "b.test" }, "a list with a hole is refused", { "allowed_hosts" } },
@@ -286,8 +287,9 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
         "a bind to an address this machine lacks raises: " .. tostring(err)
     )
     eq(H.handle_count("tcp"), tcps, "and leaves no handle open")
-    -- macOS shares a port across different local addresses, so both binds
-    -- name the same one, 127.0.0.1.
+    -- Distinct specific addresses share a port on every OS, and macOS lets a
+    -- specific address share one a wildcard listener holds, so both binds
+    -- name the same address, 127.0.0.1.
     local a = serve()
     local busy_before = H.handle_count("tcp")
     local busy_started, busy_err = pcall(server.start, { port = a.port, root = root })
