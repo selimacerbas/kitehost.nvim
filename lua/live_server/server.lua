@@ -21,6 +21,7 @@ S.features = {
     token_auth = true,
     host_binding = true,
     asset_route = true,
+    host_check = true,
 }
 
 local MIME = {
@@ -59,6 +60,7 @@ local REASONS = {
     [401] = "Unauthorized",
     [404] = "Not Found",
     [405] = "Method Not Allowed",
+    [421] = "Misdirected Request",
     [431] = "Request Header Fields Too Large",
     [500] = "Internal Server Error",
 }
@@ -670,10 +672,46 @@ local function serve_path(inst, sock, abs_path, req_path, extra_headers)
     end
 end
 
+-- 127.0.0.0/8 or ::1: the binds only this machine can reach.
+local function is_loopback_ip(ip)
+    return ip == "::1" or (is_ipv4(ip) and ip:match("^127%.") ~= nil)
+end
+
+-- localhost, a *.localhost name or a loopback address: the names only this
+-- machine answers to.
+local function is_loopback_name(name)
+    return name == "localhost" or name:sub(-10) == ".localhost" or is_loopback_ip(name)
+end
+
+-- A DNS-rebinding page reaches a loopback bind under its own name, so the
+-- name must be one only this machine answers to. The port is never
+-- compared: an ssh -L tunnel sends localhost:<its own port>. A request
+-- with no Host (HTTP/1.0) passes: every browser sends one. parse_head has
+-- refused a value host_name cannot read; a nil here still refuses.
+local function host_ok(inst, req)
+    local value = req.authority or (req.headers.host and req.headers.host[1])
+    if not value then
+        return true
+    end
+    local name = host_name(value)
+    if not name then
+        return false
+    end
+    return is_loopback_name(name)
+end
+
 -- Answers one parsed request: the token gate, the routes and every
 -- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
     local inst, sock = conn.inst, conn.sock
+    if inst.host_check and not host_ok(inst, req) then
+        return send_response(
+            sock,
+            421,
+            { ["Content-Type"] = "text/plain" },
+            "Misdirected Request: this Host is no loopback name (see allowed_hosts)"
+        )
+    end
     if req.method ~= "GET" then
         return send_response(sock, 405, { ["Content-Type"] = "text/plain" }, "Method Not Allowed")
     end
@@ -923,6 +961,9 @@ function S.start(cfg)
         handle = tcp,
         port = actual_port,
         host = host,
+        -- Network binds are reached by names no default list knows; the
+        -- token gates them.
+        host_check = is_loopback_ip(host),
         root = cfg.root,
         root_real = root_real,
         default_index = cfg.default_index,
