@@ -1180,7 +1180,7 @@ end)]],
 )
 -- The order later suites rely on: a client closes before the server it
 -- talks to, one broken cleanup leaves the rest to run, and a case's
--- cleanups finish before the suite goes on while the suite's own wait.
+-- cleanups finish before the suite goes on while the suite's own cleanups wait.
 local order, order_out = child_exit(
     [[
 H.defer(function() io.stdout:write("outer\n") end)
@@ -1203,7 +1203,7 @@ ok(
 )
 ok(
     order_out:find("first\n  PASS: x\nouter\n", 1, true) ~= nil,
-    "an H.case runs only its own cleanups, the suite's wait for H.finish"
+    "an H.case runs only its own cleanups, the suite's cleanups wait for H.finish"
 )
 
 H.finish()
