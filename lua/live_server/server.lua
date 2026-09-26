@@ -525,6 +525,151 @@ local function serve_path(inst, sock, abs_path, req_path, extra_headers)
     end
 end
 
+-- Answers one parsed request. The body is the listen callback's, moved as
+-- it was, so each pipeline step after this lands as its own small diff.
+local function handle_request(conn, req)
+    local inst, sock = conn.inst, conn.sock
+    if req.method ~= "GET" then
+        return send_response(sock, 405, { ["Content-Type"] = "text/plain" }, "Method Not Allowed")
+    end
+
+    -- Canonicalize the path once; auth matching, endpoint dispatch,
+    -- and file mapping all use this same string so an encoded or
+    -- slash-padded variant can't reach a protected file ungated.
+    local path_only = normalize_path(req.path)
+    local query = req.path:match("%?(.*)$") or ""
+
+    -- Pull a query-string parameter by key. Anchored to either
+    -- the start of the query or just after an '&' so we don't
+    -- accidentally match a key as a substring of another (e.g.
+    -- 't' inside 'event').
+    local function qparam(key)
+        return query:match("^" .. key .. "=([^&]*)") or query:match("&" .. key .. "=([^&]*)")
+    end
+
+    -- Auth gate. When inst.token is set, the SSE stream, the event
+    -- injection endpoint, and any path in inst.protected_paths
+    -- require a matching ?t=<token>. Static assets (/index.html,
+    -- /style.css, /favicon.ico, etc.) are intentionally NOT gated
+    -- because the browser bootstraps from them before any JS runs
+    -- and cannot append query strings to <link>/<img> tags it
+    -- discovers itself. Protect the user content (caller passes
+    -- protected_paths) and the live-reload control plane.
+    if inst.token then
+        local function path_needs_auth(p)
+            if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
+                return true
+            end
+            for _, pat in ipairs(inst.protected_paths) do
+                if p:find(pat) then
+                    return true
+                end
+            end
+            return false
+        end
+        if path_needs_auth(path_only) then
+            local req_token = qparam("t")
+            local decoded = req_token and util.url_decode(req_token) or ""
+            if not util.secure_compare(decoded, inst.token) then
+                return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
+            end
+        end
+    end
+
+    -- Special endpoints
+    if path_only == "/__live/script.js" then
+        return send_response(sock, 200, { ["Content-Type"] = "application/javascript; charset=utf-8" }, CLIENT_JS)
+    elseif path_only == "/__live/events" then
+        return sse_accept(inst, sock)
+    elseif path_only == "/__live/inject" then
+        local event = qparam("event")
+        local data = qparam("data")
+        if event then
+            local decoded = data and util.url_decode(data) or "{}"
+            sse_broadcast(inst, event, decoded)
+        end
+        return send_response(sock, 200, { ["Content-Type"] = "text/plain" }, "ok")
+    elseif path_only == "/__live/asset" then
+        local aroot = inst.asset_root
+        if type(aroot) == "function" then
+            local ok_root, res = pcall(aroot)
+            aroot = ok_root and res or nil
+        end
+        local rel = qparam("p")
+        rel = rel and util.url_decode(rel) or ""
+        -- Relative paths only: reject absolute paths, drive
+        -- letters / URL schemes (':'), and backslashes outright;
+        -- realpath containment below handles '..' traversal.
+        if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") then
+            return http_404(sock, "/__live/asset")
+        end
+        local aroot_real = uv.fs_realpath(aroot)
+        if not aroot_real then
+            return http_404(sock, "/__live/asset")
+        end
+        local ok_real, real = pcall(uv.fs_realpath, util.joinpath(aroot_real, rel))
+        if not ok_real or not real or not util.path_has_prefix(real, aroot_real) then
+            return http_404(sock, "/__live/asset")
+        end
+        return stream_file(sock, real, inst.headers)
+    end
+
+    -- Map path
+    local mapped = sanitize_and_map(path_only, inst.root_real)
+    if not mapped then
+        return http_404(sock, req.path)
+    end
+
+    local st = uv.fs_stat(mapped)
+    if st and st.type == "directory" then
+        local candidate
+        if inst.default_index and mapped == inst.root_real then
+            candidate = inst.default_index
+        else
+            for _, iname in ipairs(inst.index_names) do
+                local try = util.joinpath(mapped, iname)
+                if uv.fs_stat(try) then
+                    candidate = try
+                    break
+                end
+            end
+        end
+        if candidate and uv.fs_stat(candidate) then
+            return serve_path(inst, sock, candidate, req.path, inst.headers)
+        end
+        if inst.dir_enabled then
+            local html = dir_listing_html(inst, mapped, req.path)
+            return send_html_with_injection(inst, sock, html, inst.headers)
+        else
+            return http_404(sock, req.path .. " (no index)")
+        end
+    elseif st and st.type == "file" then
+        return serve_path(inst, sock, mapped, req.path, inst.headers)
+    else
+        return http_404(sock, req.path)
+    end
+end
+
+-- One accepted socket's state; the pipeline steps add the read buffer,
+-- the flags and the timers.
+local function new_conn(inst, sock)
+    return { inst = inst, sock = sock }
+end
+
+-- Every read on an accepted socket lands here.
+local function on_read(conn, err, chunk)
+    local sock = conn.sock
+    if err or not chunk then
+        sock:close()
+        return
+    end
+    local req = parse_request(chunk)
+    if not req then
+        return http_400(sock, "Cannot parse request")
+    end
+    return handle_request(conn, req)
+end
+
 -- -------- Public server API -----------------------------------------------
 
 -- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, asset_root }
@@ -602,144 +747,9 @@ function S.start(cfg)
             end
             local sock = uv.new_tcp()
             tcp:accept(sock)
+            local conn = new_conn(inst, sock)
             sock:read_start(function(err_read, chunk)
-                if err_read then
-                    sock:close()
-                    return
-                end
-                if not chunk then
-                    sock:close()
-                    return
-                end
-
-                local req = parse_request(chunk)
-                if not req then
-                    return http_400(sock, "Cannot parse request")
-                end
-                if req.method ~= "GET" then
-                    return send_response(sock, 405, { ["Content-Type"] = "text/plain" }, "Method Not Allowed")
-                end
-
-                -- Canonicalize the path once; auth matching, endpoint dispatch,
-                -- and file mapping all use this same string so an encoded or
-                -- slash-padded variant can't reach a protected file ungated.
-                local path_only = normalize_path(req.path)
-                local query = req.path:match("%?(.*)$") or ""
-
-                -- Pull a query-string parameter by key. Anchored to either
-                -- the start of the query or just after an '&' so we don't
-                -- accidentally match a key as a substring of another (e.g.
-                -- 't' inside 'event').
-                local function qparam(key)
-                    return query:match("^" .. key .. "=([^&]*)") or query:match("&" .. key .. "=([^&]*)")
-                end
-
-                -- Auth gate. When inst.token is set, the SSE stream, the event
-                -- injection endpoint, and any path in inst.protected_paths
-                -- require a matching ?t=<token>. Static assets (/index.html,
-                -- /style.css, /favicon.ico, etc.) are intentionally NOT gated
-                -- because the browser bootstraps from them before any JS runs
-                -- and cannot append query strings to <link>/<img> tags it
-                -- discovers itself. Protect the user content (caller passes
-                -- protected_paths) and the live-reload control plane.
-                if inst.token then
-                    local function path_needs_auth(p)
-                        if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
-                            return true
-                        end
-                        for _, pat in ipairs(inst.protected_paths) do
-                            if p:find(pat) then
-                                return true
-                            end
-                        end
-                        return false
-                    end
-                    if path_needs_auth(path_only) then
-                        local req_token = qparam("t")
-                        local decoded = req_token and util.url_decode(req_token) or ""
-                        if not util.secure_compare(decoded, inst.token) then
-                            return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
-                        end
-                    end
-                end
-
-                -- Special endpoints
-                if path_only == "/__live/script.js" then
-                    return send_response(
-                        sock,
-                        200,
-                        { ["Content-Type"] = "application/javascript; charset=utf-8" },
-                        CLIENT_JS
-                    )
-                elseif path_only == "/__live/events" then
-                    return sse_accept(inst, sock)
-                elseif path_only == "/__live/inject" then
-                    local event = qparam("event")
-                    local data = qparam("data")
-                    if event then
-                        local decoded = data and util.url_decode(data) or "{}"
-                        sse_broadcast(inst, event, decoded)
-                    end
-                    return send_response(sock, 200, { ["Content-Type"] = "text/plain" }, "ok")
-                elseif path_only == "/__live/asset" then
-                    local aroot = inst.asset_root
-                    if type(aroot) == "function" then
-                        local ok_root, res = pcall(aroot)
-                        aroot = ok_root and res or nil
-                    end
-                    local rel = qparam("p")
-                    rel = rel and util.url_decode(rel) or ""
-                    -- Relative paths only: reject absolute paths, drive
-                    -- letters / URL schemes (':'), and backslashes outright;
-                    -- realpath containment below handles '..' traversal.
-                    if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") then
-                        return http_404(sock, "/__live/asset")
-                    end
-                    local aroot_real = uv.fs_realpath(aroot)
-                    if not aroot_real then
-                        return http_404(sock, "/__live/asset")
-                    end
-                    local ok_real, real = pcall(uv.fs_realpath, util.joinpath(aroot_real, rel))
-                    if not ok_real or not real or not util.path_has_prefix(real, aroot_real) then
-                        return http_404(sock, "/__live/asset")
-                    end
-                    return stream_file(sock, real, inst.headers)
-                end
-
-                -- Map path
-                local mapped = sanitize_and_map(path_only, inst.root_real)
-                if not mapped then
-                    return http_404(sock, req.path)
-                end
-
-                local st = uv.fs_stat(mapped)
-                if st and st.type == "directory" then
-                    local candidate
-                    if inst.default_index and mapped == inst.root_real then
-                        candidate = inst.default_index
-                    else
-                        for _, iname in ipairs(inst.index_names) do
-                            local try = util.joinpath(mapped, iname)
-                            if uv.fs_stat(try) then
-                                candidate = try
-                                break
-                            end
-                        end
-                    end
-                    if candidate and uv.fs_stat(candidate) then
-                        return serve_path(inst, sock, candidate, req.path, inst.headers)
-                    end
-                    if inst.dir_enabled then
-                        local html = dir_listing_html(inst, mapped, req.path)
-                        return send_html_with_injection(inst, sock, html, inst.headers)
-                    else
-                        return http_404(sock, req.path .. " (no index)")
-                    end
-                elseif st and st.type == "file" then
-                    return serve_path(inst, sock, mapped, req.path, inst.headers)
-                else
-                    return http_404(sock, req.path)
-                end
+                on_read(conn, err_read, chunk)
             end)
         end)
     end)
