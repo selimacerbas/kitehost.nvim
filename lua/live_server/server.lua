@@ -55,6 +55,7 @@ local function write_headers(sock, status, headers)
         [400] = "Bad Request",
         [404] = "Not Found",
         [405] = "Method Not Allowed",
+        [431] = "Request Header Fields Too Large",
         [500] = "Internal Server Error",
     })[status] or "OK"
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
@@ -649,10 +650,25 @@ local function handle_request(conn, req)
     end
 end
 
+-- A head larger than this is refused (431); browsers send a few KiB.
+local MAX_HEAD = 16 * 1024
+
+-- Where the head ends: the first blank line, CRLF or bare LF (RFC 9112 2.2
+-- lets a server accept a bare LF, and this server always answered one).
+-- The index of the head's last byte, or nil while it is incomplete.
+local function find_head_end(buf)
+    local crlf = buf:find("\r\n\r\n", 1, true)
+    local lf = buf:find("\n\n", 1, true)
+    if crlf and (not lf or crlf < lf) then
+        return crlf - 1
+    end
+    return lf and lf - 1 or nil
+end
+
 -- One accepted socket's state; the pipeline steps add the read buffer,
 -- the flags and the timers.
 local function new_conn(inst, sock)
-    return { inst = inst, sock = sock }
+    return { inst = inst, sock = sock, buf = "", handled = false }
 end
 
 -- Every read on an accepted socket lands here.
@@ -669,12 +685,23 @@ local function on_read(conn, err, chunk)
         sock:close()
         return
     end
-    -- A stream's socket stays read for its end only; what a client sends on
-    -- it is ignored, as the swapped callback ignored it.
-    if conn.sse then
+    -- One request per connection: bytes after the head (a pipelined request,
+    -- a late chunk, anything on an event stream) are never parsed again.
+    if conn.handled then
         return
     end
-    local req = parse_request(chunk)
+    conn.buf = conn.buf .. chunk
+    local head_end = find_head_end(conn.buf)
+    if (head_end or #conn.buf) > MAX_HEAD then
+        conn.handled = true
+        return send_response(sock, 431, { ["Content-Type"] = "text/plain" }, "Request Header Fields Too Large")
+    end
+    if not head_end then
+        return
+    end
+    conn.handled = true
+    local req = parse_request(conn.buf:sub(1, head_end))
+    conn.buf = ""
     if not req then
         return http_400(sock, "Cannot parse request")
     end

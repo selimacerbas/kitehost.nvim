@@ -102,4 +102,41 @@ H.case("Section 1: the behaviour the pipeline refactor keeps", function()
     )
 end)
 
+H.case("Section 2: one request per connection, read to the end of its head", function()
+    local inst = serve()
+    local port = inst.port
+    local c = assert(H.raw_connect(port))
+    assert(c:send("GET /sty"))
+    vim.wait(150)
+    assert(c:send(("le.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
+    local res = H.responses((c:read(3000)))
+    eq(#res, 1, "a request line split across writes gets one response")
+    eq(res[1] and res[1].status, 200, "for the whole path")
+    eq(res[1] and res[1].body, "body{color:red}", "the body is /style.css")
+
+    c = assert(H.raw_connect(port))
+    assert(c:send("GET /index.html HTTP/1.1\r\nHo"))
+    vim.wait(100)
+    assert(c:send(("st: 127.0.0.1:%d\r\n\r\n"):format(port)))
+    res = H.responses((c:read(3000)))
+    eq(#res, 1, "headers split across writes get one response")
+    eq(res[1] and res[1].status, 200, "and it is served")
+
+    -- A late chunk used to be parsed as a new request and its 400 spliced
+    -- into the streaming body (measured at byte 131176).
+    c = assert(H.raw_connect(port))
+    assert(c:send(get("/big.bin", port)))
+    c:read(3000, function(d)
+        return #d > 1024
+    end)
+    assert(c:send(get("/style.css", port)))
+    res = H.responses((c:read(10000)))
+    eq(#res, 1, "a second request on a streaming connection gets no response")
+    ok(res[1] ~= nil and res[1].body == big, "the streamed body arrives whole, nothing spliced in")
+
+    res = ask(port, "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 17 * 1024))
+    eq(res[1] and res[1].status, 431, "a head over 16 KiB with no end is 431")
+    eq(res[1] and res[1].reason, "Request Header Fields Too Large", "with its reason phrase")
+end)
+
 H.finish()
