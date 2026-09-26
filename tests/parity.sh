@@ -2,8 +2,10 @@
 # The files live-server.nvim and markdown-preview.nvim share, compared with
 # the sibling checkout's copy. live-server's copy is the source: a change
 # lands there first and is copied. The list below is the one statement of
-# what is shared. A Lua file is compared by diff -w, since StyLua indents
-# with tabs in one repository and spaces in the other, after the lines
+# what is shared. A Lua file is compared exactly once each line's leading
+# indentation is stripped, since StyLua indents with tabs in one
+# repository and spaces in the other (diff -w also ignored a space inside a
+# string or a pattern), after the lines
 # from a "-- parity: own lines begin" line to its "-- parity: own lines end"
 # line are dropped (helpers.lua's H.rtp and markdown-preview's floor tag,
 # markdown-preview's lazy.lua section of parse_test.lua); every other file
@@ -54,7 +56,9 @@ while read -r how path; do
         lua)
             own "$path" "$tmp/here" || { echo "parity: $path has an own-lines marker without its pair" >&2; exit 2; }
             own "$sib/$path" "$tmp/there" || { echo "parity: $sib/$path has an own-lines marker without its pair" >&2; exit 2; }
-            diff -w "$tmp/here" "$tmp/there" >"$tmp/diff"
+            sed 's/^[[:space:]]*//' "$tmp/here" >"$tmp/here.s" || { echo "parity: $path could not be stripped (sed failed)" >&2; exit 2; }
+            sed 's/^[[:space:]]*//' "$tmp/there" >"$tmp/there.s" || { echo "parity: $sib/$path could not be stripped (sed failed)" >&2; exit 2; }
+            diff "$tmp/here.s" "$tmp/there.s" >"$tmp/diff"
             rc=$?
             ;;
         *)
