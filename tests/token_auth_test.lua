@@ -125,6 +125,38 @@ local gated_root = server.start({
 eq(http_get(("http://127.0.0.1:%d/%%00"):format(gated_root.port)).status, 400, "/%00 on a server that gates / is 400")
 eq(http_get(("http://127.0.0.1:%d/"):format(gated_root.port)).status, 401, "and / itself is 401 there")
 server.stop(gated_root)
+-- realpath returns the name the disk holds: on a case-folding volume
+-- (APFS, NTFS) /CONTENT.MD reached content.md past the gate.
+for _, variant in ipairs({ "/CONTENT.MD", "/Content.md" }) do
+    r = http_get(("http://127.0.0.1:%d%s"):format(port, variant))
+    if H.fs_folds_case then
+        eq(r.status, 401, variant .. " without the token is 401")
+    else
+        eq(r.status, 404, variant .. " names no file on a case-sensitive volume (the 401 row is vacuous here)")
+    end
+end
+if H.fs_folds_case then
+    eq(
+        http_get(("http://127.0.0.1:%d/CONTENT.MD?t=%s"):format(port, TOKEN)).status,
+        200,
+        "/CONTENT.MD with the token serves"
+    )
+else
+    H.skip("/CONTENT.MD with the token serves (a case-sensitive volume has no such file)")
+end
+local alias = vim.fs.joinpath(tmpdir, "alias.md")
+local linked, link_err = uv.fs_symlink("content.md", alias)
+if linked and uv.fs_stat(alias) then
+    eq(
+        http_get(("http://127.0.0.1:%d/alias.md"):format(port)).status,
+        401,
+        "a link to content.md without the token is 401"
+    )
+else
+    H.skip(
+        "a link to content.md without the token is 401 (" .. tostring(link_err or "the link does not resolve") .. ")"
+    )
+end
 
 server.stop(inst)
 -- Refused is curl 7: a listener left open after stop answers (curl 0) and

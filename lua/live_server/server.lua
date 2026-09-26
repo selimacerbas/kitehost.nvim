@@ -804,6 +804,31 @@ local function unmarked_ok(inst, req)
     return value == nil or (name ~= nil and is_loopback_name(name))
 end
 
+-- Whether a path needs ?t=<token>: the live endpoints and any
+-- protected_paths pattern.
+local function needs_auth(inst, p)
+    if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
+        return true
+    end
+    for _, pat in ipairs(inst.protected_paths) do
+        if p:find(pat) then
+            return true
+        end
+    end
+    return false
+end
+
+-- A file's path under the root as the filesystem spells it (realpath: the
+-- case on disk, links followed), or nil when it resolves outside the root.
+local function root_rel(inst, path)
+    local ok_real, real = pcall(uv.fs_realpath, path)
+    if not ok_real or not real or not util.path_has_prefix(real, inst.root_real) then
+        return nil
+    end
+    local rel = real:sub(#inst.root_real + 1):gsub("\\", "/")
+    return rel == "" and "/" or rel
+end
+
 -- Answers one parsed request: the token gate, the routes and every
 -- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
@@ -845,25 +870,32 @@ local function handle_request(conn, req)
     -- and cannot append query strings to <link>/<img> tags it
     -- discovers itself. Protect the user content (caller passes
     -- protected_paths) and the live-reload control plane.
-    if inst.token then
-        local function path_needs_auth(p)
-            if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
-                return true
-            end
-            for _, pat in ipairs(inst.protected_paths) do
-                if p:find(pat) then
-                    return true
-                end
-            end
-            return false
+    local function authorized(p)
+        if not inst.token or not needs_auth(inst, p) then
+            return true
         end
-        if path_needs_auth(path_only) then
-            local req_token = qparam("t")
-            local decoded = req_token and util.url_decode(req_token) or ""
-            if not util.secure_compare(decoded, inst.token) then
-                return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
-            end
+        local req_token = qparam("t")
+        return util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)
+    end
+    if not authorized(path_only) then
+        return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
+    end
+
+    -- The check above reads the request's spelling; the filesystem may serve
+    -- another name for it: /CONTENT.MD on a case-folding volume, or a link,
+    -- is content.md. The file about to be served is checked
+    -- again by its path under the root as realpath spells it.
+    local function refusal(path)
+        local rel = root_rel(inst, path)
+        if rel and not authorized(rel) then
+            return 401
         end
+    end
+    local function refuse(status)
+        if status == 401 then
+            return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
+        end
+        return http_404(sock, req.path)
     end
 
     -- Special endpoints
@@ -931,6 +963,10 @@ local function handle_request(conn, req)
             end
         end
         if candidate and uv.fs_stat(candidate) then
+            local status = refusal(candidate)
+            if status then
+                return refuse(status)
+            end
             return serve_path(inst, sock, candidate, req, inst.headers)
         end
         if inst.dir_enabled then
@@ -940,6 +976,10 @@ local function handle_request(conn, req)
             return http_404(sock, req.path .. " (no index)")
         end
     elseif st and st.type == "file" then
+        local status = refusal(mapped)
+        if status then
+            return refuse(status)
+        end
         return serve_path(inst, sock, mapped, req, inst.headers)
     else
         return http_404(sock, req.path)
