@@ -80,6 +80,21 @@ H.case("Section 1: a loopback bind answers only loopback names", function()
     eq(status(port, "/", "2130706433"), 421, "a one-label numeric name is no loopback address")
     eq(status(port, "/", "0x7f.0.0.1"), 421, "a hex octet is no loopback address")
     eq(status(port, "/", "127.0.0.01"), 421, "a leading-zero octet is no loopback address")
+    eq(status(port, "/", "localhost.attacker.example"), 421, "a name that merely contains localhost is 421")
+    eq(status(port, "/", "evillocalhost"), 421, "the suffix needs its dot")
+    eq(status(port, "/", "10.0.0.1"), 421, "a non-loopback address is 421")
+    -- The check runs before the token gate and the method check, so a
+    -- rebinding page learns nothing from a 401 or a 405.
+    eq(
+        status(port, "/content.md", "rebind.example"),
+        421,
+        "a foreign Host on a protected path without the token is 421, not 401"
+    )
+    eq(
+        raw_status(port, "POST / HTTP/1.1\r\nHost: attacker.example\r\n\r\n"),
+        421,
+        "and before the method check, not 405"
+    )
     eq(
         raw_status(port, "GET http://evil.example/ HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
         421,
@@ -232,6 +247,9 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
             "and refuses a foreign Host"
         )
         eq(six.host, "::1", "inst.host is the bound address, canonical")
+    elseif not tostring(six):find("Failed to bind", 1, true) then
+        -- Only a refused bind means no IPv6 here; any other raise is a fault.
+        error(six, 0)
     else
         H.skip("a spelled-out IPv6 loopback bind keeps the check on (bind refused: " .. tostring(six) .. ")")
         H.skip("and refuses a foreign Host (bind refused: " .. tostring(six) .. ")")
@@ -240,6 +258,8 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
     local mapped_bound, mapped = pcall(serve, { host = "::ffff:127.0.0.1" })
     if mapped_bound then
         eq(mapped.host_check, true, "an IPv4-mapped loopback bind keeps the check on")
+    elseif not tostring(mapped):find("Failed to bind", 1, true) then
+        error(mapped, 0)
     else
         H.skip("an IPv4-mapped loopback bind keeps the check on (bind refused: " .. tostring(mapped) .. ")")
     end
@@ -251,6 +271,20 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
         "a bind to an address this machine lacks raises: " .. tostring(err)
     )
     eq(H.handle_count("tcp"), tcps, "and leaves no handle open")
+    -- macOS shares a port across different local addresses, so both binds
+    -- name the same one, 127.0.0.1.
+    local a = serve()
+    local busy_before = H.handle_count("tcp")
+    local busy_started, busy_err = pcall(server.start, { port = a.port, root = root })
+    local busy_after = H.handle_count("tcp")
+    if busy_started then
+        server.stop(busy_err)
+    end
+    ok(
+        not busy_started and tostring(busy_err):find(tostring(a.port), 1, true) ~= nil,
+        "a start on a port in use raises, naming the port: " .. tostring(busy_err)
+    )
+    eq(busy_after, busy_before, "and leaves no handle open")
     -- luv truncates a port it cannot hold, so 70000 or 8123.5 would listen
     -- on another port while the start reports success.
     for _, bad in ipairs({ 70000, 8123.5 }) do
