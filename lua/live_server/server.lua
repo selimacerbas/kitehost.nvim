@@ -203,8 +203,8 @@ local function host_name(value)
     return (name:lower():gsub("%.$", ""))
 end
 
--- The Origin and Fetch Metadata fields a gate may read, as sent.
-local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Dest", "Sec-Fetch-Mode" }
+-- The Origin and Fetch Metadata fields the gates read, as sent, each once.
+local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Mode" }
 
 -- The request head, parsed once: method, target, version, and the header
 -- fields by lowercased name, each the list of its values in order, so a

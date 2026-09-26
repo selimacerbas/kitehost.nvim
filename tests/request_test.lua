@@ -301,7 +301,6 @@ H.case("Section 4: HTTP/1.1 names its host, once", function()
     for _, pair in ipairs({
         { "Origin", "http://127.0.0.1", "https://evil.example" },
         { "Sec-Fetch-Site", "same-origin", "cross-site" },
-        { "Sec-Fetch-Dest", "document", "empty" },
         { "Sec-Fetch-Mode", "navigate", "cors" },
     }) do
         local name = pair[1]
@@ -393,6 +392,20 @@ H.case("Section 5: every status the server sends has its reason phrase", functio
     end
     ok(seen["401"] and seen["431"], "the status literals were read from the source")
     eq(#missing, 0, "every status literal the server sends has a reason entry: " .. table.concat(missing, ","))
+    -- A status passed through a variable escapes the reads above, so every
+    -- call passes a literal; the two definitions and send_response's own
+    -- forward to write_headers are the exceptions.
+    local forward = "write_headers(sock, status, h)"
+    local non_literal = {}
+    for _, fn in ipairs({ "send_response", "write_headers" }) do
+        for pos, token in src:gmatch("()" .. fn .. "%(%s*[%w_.]+,%s*([^,%s]+)") do
+            local definition = src:sub(pos - 9, pos - 1) == "function "
+            if not definition and src:sub(pos, pos + #forward - 1) ~= forward and not token:match("^%d%d%d$") then
+                table.insert(non_literal, fn .. " " .. token)
+            end
+        end
+    end
+    eq(#non_literal, 0, "every status reaches a send as a three-digit literal: " .. table.concat(non_literal, ", "))
 end)
 
 H.finish()
