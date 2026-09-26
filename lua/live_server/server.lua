@@ -967,8 +967,13 @@ local function handle_request(conn, req)
             candidate = inst.default_index
         else
             for _, iname in ipairs(inst.index_names) do
-                local try = util.joinpath(mapped, iname)
-                if uv.fs_stat(try) then
+                -- Resolved as a file request is: a linked index.html that
+                -- points outside the root is not this directory's, a directory
+                -- named index.html is no page, and a FIFO so named would
+                -- block the editor's loop.
+                local try = sanitize_and_map((path_only == "/" and "" or path_only) .. "/" .. iname, inst.root_real)
+                local tst = try and uv.fs_stat(try)
+                if tst and tst.type == "file" then
                     candidate = try
                     break
                 end

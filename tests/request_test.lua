@@ -412,4 +412,49 @@ H.case("Section 5: every status the server sends has its reason phrase", functio
     eq(#non_literal, 0, "every status reaches a send as a three-digit literal: " .. table.concat(non_literal, ", "))
 end)
 
+-- The index a directory falls back to is resolved as a file request is:
+-- inside the root by realpath, and a regular file. A directory named
+-- index.html was taken for the index and answered with a 404 page naming
+-- its path on disk (measured), where /sub/ lists sub/ or is a plain 404.
+H.case("Section 6: a directory's index resolves inside the root", function()
+    local uv = vim.uv
+    local tree = H.tmpdir()
+    vim.fn.mkdir(tree .. "/sub/index.html", "p")
+    H.write_file(tree .. "/sub/index.html/page.txt", "page")
+    local on_disk = assert(uv.fs_realpath(tree))
+    local listed = serve({ root = tree, features = { dirlist = { enabled = true } } })
+    local r = H.http_get(("http://127.0.0.1:%d/sub/"):format(listed.port))
+    eq(r.status, 200, "/sub/ whose index.html is a directory is listed")
+    ok(r.body:find('href="/sub/index.html/"', 1, true) ~= nil, "and the listing names index.html as a directory")
+    r = H.http_get(("http://127.0.0.1:%d/sub/"):format(serve({ root = tree }).port))
+    eq(r.status, 404, "with the listing off, /sub/ is 404")
+    ok(not r.body:find(on_disk, 1, true), "and its page does not name the directory's path on disk")
+
+    -- A linked index.html pointing out of the root is refused twice: by this
+    -- resolution and by the gate's read of the name on disk.
+    local base = H.tmpdir()
+    vim.fn.mkdir(base .. "/site/sub", "p")
+    vim.fn.mkdir(base .. "/outside", "p")
+    H.write_file(base .. "/outside/secret.html", "<html><body>OUTSIDE</body></html>")
+    H.write_file(base .. "/site/index.html", "<html><body>in</body></html>")
+    local link = base .. "/site/sub/index.html"
+    local linked, link_err = uv.fs_symlink("../../outside/secret.html", link)
+    if not (linked and uv.fs_stat(link)) then
+        local why = " (" .. tostring(link_err or "the link does not resolve") .. ")"
+        H.skip("/sub/ whose index links outside the root is 404" .. why)
+        H.skip("and its body is not the outside file" .. why)
+        H.skip("the link asked for by name stays 404" .. why)
+        return
+    end
+    local inst = serve({ root = base .. "/site" })
+    r = H.http_get(("http://127.0.0.1:%d/sub/"):format(inst.port))
+    eq(r.status, 404, "/sub/ whose index links outside the root is 404")
+    ok(not r.body:find("OUTSIDE", 1, true), "and its body is not the outside file")
+    eq(
+        H.http_get(("http://127.0.0.1:%d/sub/index.html"):format(inst.port)).status,
+        404,
+        "the link asked for by name stays 404"
+    )
+end)
+
 H.finish()
