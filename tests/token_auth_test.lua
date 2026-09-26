@@ -285,6 +285,32 @@ eq(
     "/ under ^/$ is 200 with the token"
 )
 server.stop(gated_ws)
+-- The root's own index, with no default_index set, is judged like any
+-- candidate: a link out of the root answers 404 at / too.
+local root_index = vim.fs.joinpath(ws, "index.html")
+local rlinked, rlink_err = uv.fs_symlink(outside_index, root_index)
+local root_linked = rlinked and uv.fs_stat(root_index) ~= nil
+local bare_ws = server.start({
+    port = 0,
+    root = ws,
+    token = TOKEN,
+    protected_paths = {},
+    live = { enabled = false, inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+if root_linked then
+    eq(
+        http_get(("http://127.0.0.1:%d/"):format(bare_ws.port)).status,
+        404,
+        "the root's index linked out of the root is 404"
+    )
+    eq(http_get(("http://127.0.0.1:%d/?t=%s"):format(bare_ws.port, TOKEN)).status, 404, "and 404 with the token")
+else
+    local why = " (" .. tostring(rlink_err or "the link does not resolve") .. ")"
+    H.skip("the root's index linked out of the root is 404" .. why)
+    H.skip("and 404 with the token" .. why)
+end
+server.stop(bare_ws)
 
 server.stop(inst)
 -- Refused is curl 7: a listener left open after stop answers (curl 0) and
