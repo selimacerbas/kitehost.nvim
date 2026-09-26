@@ -1041,7 +1041,7 @@ function S.start(cfg)
     -- luv truncates a port it cannot hold and listens on another one.
     local p = cfg.port
     if type(p) ~= "number" or p ~= math.floor(p) or p < 0 or p > 65535 then
-        error("port must be an integer from 0 to 65535: " .. tostring(p), 0)
+        error(("port must be an integer from 0 to 65535, got %s (%s)"):format(tostring(p), type(p)), 0)
     end
     local allowed = cfg.allowed_hosts
     local allowed_set = {}
@@ -1171,8 +1171,13 @@ function S.start(cfg)
 
     -- Scheduled, so a start from a fast event (a luv callback) cannot raise
     -- after the socket is serving; a network bind has no check to turn off.
+    -- S.stop closes the handle, and a server stopped before the loop ran
+    -- turned nothing off that is still reachable.
     if allowed == true and is_loopback_ip(bound.ip) then
         vim.schedule(function()
+            if inst.handle:is_closing() then
+                return
+            end
             util.notify(
                 "live-server: allowed_hosts = true turns the Host check off; a DNS-rebinding page can read this server",
                 { notify = true },

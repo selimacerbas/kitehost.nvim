@@ -149,6 +149,15 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
     serve({ host = "0.0.0.0", allowed_hosts = true })
     vim.wait(200)
     eq(#notes, 1, "a network bind adds no warning: it had no check to turn off")
+    -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
+    local failed = pcall(server.start, { port = 0, root = root, host = "192.0.2.1", allowed_hosts = true })
+    vim.wait(100)
+    ok(not failed, "a start with allowed_hosts = true that cannot bind raises")
+    eq(#notes, 1, "and warns nothing: no server turned the check off")
+    local quick = server.start({ port = 0, root = root, allowed_hosts = true, live = { enabled = false } })
+    server.stop(quick)
+    vim.wait(100)
+    eq(#notes, 1, "a server stopped before the warning ran warns nothing")
     local tcps = H.handle_count("tcp")
     local started, err = pcall(server.start, { port = 0, root = root, allowed_hosts = "my.name" })
     ok(not started and tostring(err):find("allowed_hosts", 1, true) ~= nil, "a string is refused: " .. tostring(err))
@@ -235,6 +244,13 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
     )
 end)
 
+-- Only the OS refusing the address means no IPv6 here; any other raise,
+-- one before the OS saw the address included, is a fault.
+local function refused_by_os(err)
+    err = tostring(err)
+    return err:find("EADDRNOTAVAIL", 1, true) ~= nil or err:find("EAFNOSUPPORT", 1, true) ~= nil
+end
+
 -- The check follows the address the socket reports, so no spelling of a
 -- loopback bind leaves it off.
 H.case("Section 4: the check follows the bound address, not its spelling", function()
@@ -247,8 +263,7 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
             "and refuses a foreign Host"
         )
         eq(six.host, "::1", "inst.host is the bound address, canonical")
-    elseif not tostring(six):find("Failed to bind", 1, true) then
-        -- Only a refused bind means no IPv6 here; any other raise is a fault.
+    elseif not refused_by_os(six) then
         error(six, 0)
     else
         H.skip("a spelled-out IPv6 loopback bind keeps the check on (bind refused: " .. tostring(six) .. ")")
@@ -258,7 +273,7 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
     local mapped_bound, mapped = pcall(serve, { host = "::ffff:127.0.0.1" })
     if mapped_bound then
         eq(mapped.host_check, true, "an IPv4-mapped loopback bind keeps the check on")
-    elseif not tostring(mapped):find("Failed to bind", 1, true) then
+    elseif not refused_by_os(mapped) then
         error(mapped, 0)
     else
         H.skip("an IPv4-mapped loopback bind keeps the check on (bind refused: " .. tostring(mapped) .. ")")
@@ -287,7 +302,7 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
     eq(busy_after, busy_before, "and leaves no handle open")
     -- luv truncates a port it cannot hold, so 70000 or 8123.5 would listen
     -- on another port while the start reports success.
-    for _, bad in ipairs({ 70000, 8123.5 }) do
+    for _, bad in ipairs({ 70000, 8123.5, 65536, -1 }) do
         local before = H.handle_count("tcp")
         local port_started, res = pcall(server.start, { port = bad, root = root })
         local after = H.handle_count("tcp")
@@ -299,6 +314,39 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
             ("port = %s is refused, naming port: %s"):format(tostring(bad), tostring(res))
         )
         eq(after, before, ("port = %s opens no socket"):format(tostring(bad)))
+    end
+    local text_started, text_err = pcall(server.start, { port = "8765", root = root })
+    if text_started then
+        server.stop(text_err)
+    end
+    ok(
+        not text_started and tostring(text_err):find("(string)", 1, true) ~= nil,
+        "a port given as text is refused, naming its type: " .. tostring(text_err)
+    )
+    -- The warning reads the bound address, so a spelled-out IPv6 loopback
+    -- bind with the check off says so.
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    local warned_bound, warned = pcall(serve, { host = "0:0:0:0:0:0:0:1", allowed_hosts = true })
+    if warned_bound then
+        H.wait_for(function()
+            return #notes >= 1
+        end, 1000)
+        eq(#notes, 1, "a spelled-out IPv6 loopback bind with allowed_hosts = true warns once")
+    elseif not refused_by_os(warned) then
+        error(warned, 0)
+    else
+        H.skip(
+            "a spelled-out IPv6 loopback bind with allowed_hosts = true warns once (bind refused: "
+                .. tostring(warned)
+                .. ")"
+        )
     end
 end)
 
