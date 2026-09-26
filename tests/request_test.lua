@@ -396,9 +396,13 @@ H.case("Section 5: every status the server sends has its reason phrase", functio
     -- call passes a literal; the two definitions and send_response's own
     -- forward to write_headers are the exceptions.
     local forward = "write_headers(sock, status, h)"
+    local _, forwards = src:gsub(vim.pesc(forward), "")
+    eq(forwards, 1, "send_response's forward is the one send that passes a status through")
     local non_literal = {}
     for _, fn in ipairs({ "send_response", "write_headers" }) do
-        for pos, token in src:gmatch("()" .. fn .. "%(%s*[%w_.]+,%s*([^,%s]+)") do
+        -- The whole argument up to its comma or the closing paren, so an
+        -- expression around a literal is read as the expression it is.
+        for pos, token in src:gmatch("()" .. fn .. "%(%s*[%w_.]+,%s*([^,%)]-)%s*[,%)]") do
             local definition = src:sub(pos - 9, pos - 1) == "function "
             if not definition and src:sub(pos, pos + #forward - 1) ~= forward and not token:match("^%d%d%d$") then
                 table.insert(non_literal, fn .. " " .. token)

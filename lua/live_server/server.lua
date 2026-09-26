@@ -558,8 +558,8 @@ local function send_html_with_injection(inst, sock, html, extra_headers, req)
     -- With the script on, the body differs by Sec-Fetch-Mode, so a cache
     -- must not answer a navigation with a copy a page's fetch received. A
     -- configured Vary under any spelling of the name joins the one field
-    -- sent, a list with no empty member and each member once (RFC 9110
-    -- 5.6.1).
+    -- sent, with no empty member (RFC 9110 5.6.1 forbids generating one)
+    -- and each member once, since a repeated member adds nothing.
     if inst.inject_script then
         local configured = {}
         for k, v in pairs(headers) do

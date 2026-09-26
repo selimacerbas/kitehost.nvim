@@ -99,7 +99,8 @@ H.case("Section 2: every page the server renders carries Vary", function()
     eq(both.status, 200, "two spellings of the name are served")
     eq(both.headers.vary, "Accept, Accept-Encoding, Sec-Fetch-Mode", "as one field")
     eq(both.count.vary, 1, "on one line")
-    -- RFC 9110 5.6.1: a list carries no empty element and names a member once.
+    -- RFC 9110 5.6.1 forbids generating an empty list element; a repeated
+    -- member adds nothing, so a member is named once.
     local empty = fetch(serve(root, { headers = { Vary = "" } }).port, "/page.html")
     eq(empty.status, 200, "an empty configured Vary is served")
     eq(empty.headers.vary, "Sec-Fetch-Mode", "and adds no empty element")
