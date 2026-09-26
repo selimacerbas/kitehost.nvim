@@ -4,7 +4,7 @@
 -- 421 for any other, before the token gate and any dispatch. Network binds
 -- are reached by LAN, mDNS and Tailscale names; the token gates them.
 --
--- Run: nvim --headless -u NONE -l tests/host_check_test.lua
+-- Run: nvim --headless -u NONE -l "$PWD/tests/host_check_test.lua"
 
 local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "helpers.lua"))
 H.isolate()

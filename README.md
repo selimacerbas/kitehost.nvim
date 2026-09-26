@@ -282,7 +282,7 @@ External processes can inject SSE events via HTTP:
 GET /__live/inject?event=<type>&data=<url-encoded-json>[&t=<token>]
 ```
 
-This broadcasts the event to all connected SSE clients. Used by [markdown-preview.nvim](https://github.com/selimacerbas/markdown-preview.nvim) for cross-instance scroll sync. The `t=<token>` parameter is required when the server was started with `cfg.token`.
+This broadcasts the event to all connected SSE clients. Used by [markdown-preview.nvim](https://github.com/selimacerbas/markdown-preview.nvim) for cross-instance scroll sync. The `t=<token>` parameter is required when the server was started with `cfg.token`. The request must come from this server's origin as the Design notes' event-injection bullet says; a browser request from another site is refused with 403.
 
 ### Token auth (optional)
 
@@ -297,7 +297,7 @@ Static assets (`index.html`, `style.css`, etc.) are intentionally not gated beca
 
 `util.random_token(byte_len)` generates a hex token (default 16 bytes = 128 bits) from `/dev/urandom`, falling back to `math.random` seeded from `uv.hrtime` + `os.time` + pid. `util.secure_compare(a, b)` is a constant-time-ish string compare for token validation.
 
-Token auth is opt-in. When `cfg.token` is nil (the default), no auth is applied and all endpoints behave as before.
+Token auth is opt-in. When `cfg.token` is nil (the default), no token is required; the Host check on loopback binds and the inject endpoint's origin check (Design notes) apply on every server.
 
 ---
 

@@ -1058,8 +1058,8 @@ function S.start(cfg)
     local tcp = uv.new_tcp()
     local host = cfg.host or "127.0.0.1"
     -- luv returns a failed bind as nil, err, which a pcall alone never sees,
-    -- and listen binds an unbound socket to every interface. It raises only
-    -- on an address it cannot parse, which the pcall catches. The caller
+    -- and listen binds an unbound socket to every interface. bind raises
+    -- only on an address it cannot parse, which the pcall catches. The caller
     -- shows the message to the user, so the raise is at level 0.
     local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, cfg.port)
     if not called or not bound_ok then

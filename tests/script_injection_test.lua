@@ -5,7 +5,7 @@
 -- (a page, a frame, an object, an embed, a service worker's pass-through)
 -- and a page's fetch never does; a client with no Fetch Metadata keeps it.
 --
--- Run: nvim --headless -u NONE -l tests/script_injection_test.lua
+-- Run: nvim --headless -u NONE -l "$PWD/tests/script_injection_test.lua"
 
 local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "helpers.lua"))
 H.isolate()

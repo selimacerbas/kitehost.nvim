@@ -5,7 +5,7 @@
 -- Section 1 pins the behaviour the buffered pipeline keeps from the server
 -- before it; each later section holds one change made on top of it.
 --
--- Run: nvim --headless -u NONE -l tests/request_test.lua
+-- Run: nvim --headless -u NONE -l "$PWD/tests/request_test.lua"
 
 local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "helpers.lua"))
 H.isolate()
@@ -369,19 +369,23 @@ H.case("Section 5: every status the server sends has its reason phrase", functio
     -- go out with an empty reason, which RFC 9112 allows; this row makes
     -- that omission a red run instead of a silent status line.
     local src = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n")
+    -- Only the table's own entries count, so a bracketed status elsewhere
+    -- in the source cannot stand in for a missing reason.
+    local block = assert(src:match("REASONS%s*=%s*(%b{})"), "the reason table was found in the source")
     local reasons = {}
-    for code in src:gmatch('%[(%d%d%d)%] = "') do
+    for code in block:gmatch('%[(%d%d%d)%] = "') do
         reasons[code] = true
     end
     ok(reasons["200"] and reasons["404"], "the reason table was read from the source")
     local missing, seen = {}, {}
-    for code in src:gmatch("send_response%(%s*sock,%s*(%d%d%d)") do
+    -- Any socket variable: a send through conn.sock is a send too.
+    for code in src:gmatch("send_response%(%s*[%w_.]+,%s*(%d%d%d)") do
         seen[code] = true
         if not reasons[code] then
             table.insert(missing, code)
         end
     end
-    for code in src:gmatch("write_headers%(%s*sock,%s*(%d%d%d)") do
+    for code in src:gmatch("write_headers%(%s*[%w_.]+,%s*(%d%d%d)") do
         seen[code] = true
         if not reasons[code] then
             table.insert(missing, code)

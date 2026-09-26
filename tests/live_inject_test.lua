@@ -7,7 +7,7 @@
 -- sends to a plain-http LAN address, so there, without a token, only a
 -- request the browser marks as this origin fires events.
 --
--- Run: nvim --headless -u NONE -l tests/live_inject_test.lua
+-- Run: nvim --headless -u NONE -l "$PWD/tests/live_inject_test.lua"
 
 local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "helpers.lua"))
 H.isolate()
