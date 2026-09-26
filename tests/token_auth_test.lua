@@ -106,6 +106,9 @@ r = http_get(("http://127.0.0.1:%d/..%%00"):format(port))
 eq(r.status, 400, "/..%00 is 400, not left to the containment check")
 r = http_get(("http://127.0.0.1:%d/content%%5Cmd"):format(port))
 eq(r.status, 400, "a backslash (%5C) in the path is 400")
+-- One segment to the gate's patterns, a parent step to a Win32 path read.
+r = http_get(("http://127.0.0.1:%d/x%%5C..%%5Ccontent.md"):format(port))
+eq(r.status, 400, "a backslash traversal is 400 before the gate, not a file")
 local nul = H.response(
     assert(H.raw_request(port, ("GET /content.md\0.txt HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
 )

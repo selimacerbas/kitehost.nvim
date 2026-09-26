@@ -893,8 +893,9 @@ local function handle_request(conn, req)
         local rel = qparam("p")
         rel = rel and util.url_decode(rel) or ""
         -- Relative paths only: reject absolute paths, drive
-        -- letters / URL schemes (':'), and backslashes outright;
-        -- realpath containment below handles '..' traversal.
+        -- letters / URL schemes (':'), backslashes and a NUL (libuv cuts
+        -- a name at it) outright; realpath containment below handles
+        -- '..' traversal.
         if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") or rel:find("%z") then
             return http_404(sock, "/__live/asset")
         end
