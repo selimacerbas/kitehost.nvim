@@ -210,19 +210,17 @@ local function sse_accept(inst, sock)
     write_headers(sock, 200, h)
     sock:write("retry: 1000\n\n")
     table.insert(inst.sse_clients, sock)
-    sock:read_start(function(err, chunk)
-        if err or not chunk then
-            for i, cl in ipairs(inst.sse_clients) do
-                if cl == sock then
-                    table.remove(inst.sse_clients, i)
-                    break
-                end
-            end
-            pcall(function()
-                sock:close()
-            end)
+end
+
+-- The one place a stream leaves the client list besides stop: its socket
+-- reported its end.
+local function sse_drop(inst, sock)
+    for i, cl in ipairs(inst.sse_clients) do
+        if cl == sock then
+            table.remove(inst.sse_clients, i)
+            return
         end
-    end)
+    end
 end
 
 local function sse_broadcast(inst, event, payload)
@@ -580,6 +578,7 @@ local function handle_request(conn, req)
     if path_only == "/__live/script.js" then
         return send_response(sock, 200, { ["Content-Type"] = "application/javascript; charset=utf-8" }, CLIENT_JS)
     elseif path_only == "/__live/events" then
+        conn.sse = true
         return sse_accept(inst, sock)
     elseif path_only == "/__live/inject" then
         local event = qparam("event")
@@ -660,7 +659,19 @@ end
 local function on_read(conn, err, chunk)
     local sock = conn.sock
     if err or not chunk then
+        if conn.sse then
+            sse_drop(conn.inst, sock)
+            if not sock:is_closing() then
+                sock:close()
+            end
+            return
+        end
         sock:close()
+        return
+    end
+    -- A stream's socket stays read for its end only; what a client sends on
+    -- it is ignored, as the swapped callback ignored it.
+    if conn.sse then
         return
     end
     local req = parse_request(chunk)
