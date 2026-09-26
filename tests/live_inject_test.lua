@@ -92,6 +92,13 @@ H.case("Section 1: a cross-site request cannot fire events", function()
         200,
         "and an Origin is compared against the authority"
     )
+    eq(
+        H.response(
+            assert(H.raw_request(port, "GET /__live/inject?event=x HTTP/1.0\r\nOrigin: https://evil.example\r\n\r\n"))
+        ).status,
+        403,
+        "an Origin with no Host to compare it against is 403"
+    )
 end)
 
 H.case("Section 2: a refused request broadcasts nothing", function()
@@ -179,6 +186,43 @@ H.case("Section 5: a loopback bind reached by a name a browser does not mark", f
         inject(inst.port, "event=reload", "Sec-Fetch-Site: same-origin\r\n", host).status,
         200,
         "and is served with Sec-Fetch-Site: same-origin"
+    )
+end)
+
+H.case("Section 6: a loopback bind with the Host check off keeps the inject door", function()
+    -- allowed_hosts = true lets a rebinding name reach the bind, so only
+    -- the origin check stands between its page and the event stream.
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    local inst = serve({ allowed_hosts = true })
+    vim.wait(50)
+    local port = inst.port
+    local host = "rebind.test:" .. port
+    local handshake = (
+        "GET /__live/inject?event=forged HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\n"
+        .. "Upgrade: websocket\r\nOrigin: http://%s\r\nSec-WebSocket-Version: 13\r\n"
+        .. "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+    ):format(host, host)
+    eq(
+        H.response(assert(H.raw_request(port, handshake))).status,
+        403,
+        "with the Host check off, a rebinding page's WebSocket handshake is 403"
+    )
+    eq(
+        inject(port, "event=reload", "Sec-Fetch-Site: same-origin\r\n", host).status,
+        200,
+        "Sec-Fetch-Site: same-origin under that name is served"
+    )
+    eq(
+        inject(port, "event=reload", nil, host).status,
+        403,
+        "neither header under a name that is no loopback name is 403"
     )
 end)
 
