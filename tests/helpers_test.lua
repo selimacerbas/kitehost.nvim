@@ -1347,15 +1347,15 @@ H.case("the response reader", function()
 end)
 
 H.case("the counters", function()
-    -- A close is asynchronous, so a count settles through H.wait_for before
-    -- it is compared.
+    -- A handle's release is asynchronous and a peer's close runs in a later
+    -- callback, so a count settles through H.wait_for before it is compared.
     local fds = H.fd_count()
     if fds then
         local probe_file = vim.fs.joinpath(H.tmpdir(), "fd-probe")
         H.write_file(probe_file, "x")
         local fd = assert(uv.fs_open(probe_file, "r", 438))
         eq(H.fd_count(), fds + 1, "an open file counts as one descriptor")
-        uv.fs_close(fd)
+        assert(uv.fs_close(fd))
         ok(
             H.wait_for(function()
                 return H.fd_count() == fds

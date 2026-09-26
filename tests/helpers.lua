@@ -543,16 +543,18 @@ function H.responses(data)
 end
 
 -- Open descriptors of this process: /proc/self/fd on Linux, /dev/fd on
--- macOS (15 to 55 to 15 measured with 20 raw connections), nil on Windows,
--- which has neither. A leak the ledger cannot see shows here.
+-- macOS (20 raw connections add 40, a client and an accepted socket each,
+-- and their closes give them back, measured on macOS). A leak the ledger
+-- cannot see shows here. nil on Windows, which has neither; a listing that
+-- fails elsewhere raises, so a leak row never skips by accident.
 function H.fd_count()
     if is_win then
         return nil
     end
     local dir = uv.fs_stat("/proc/self/fd") and "/proc/self/fd" or "/dev/fd"
-    local handle = uv.fs_scandir(dir)
+    local handle, err = uv.fs_scandir(dir)
     if not handle then
-        return nil
+        error("H.fd_count: " .. tostring(err), 2)
     end
     local n = 0
     while uv.fs_scandir_next(handle) do
