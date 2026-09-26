@@ -2,8 +2,8 @@
 -- The request pipeline, driven over raw TCP: split writes, a missing or
 -- doubled Host, a NUL byte, a half-close and a truncated head, which curl
 -- cannot send.
--- Section 1 pins the behaviour the pipeline refactor must keep; each later
--- section holds one change made on top of it.
+-- Section 1 pins the behaviour the buffered pipeline keeps from the server
+-- before it; each later section holds one change made on top of it.
 --
 -- Run: nvim --headless -u NONE -l tests/request_test.lua
 
@@ -49,7 +49,7 @@ local function get(path, port, extra)
     return ("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(path, port, extra or "")
 end
 
-H.case("Section 1: the behaviour the pipeline refactor keeps", function()
+H.case("Section 1: the behaviour the buffered pipeline keeps", function()
     local inst = serve({ token = "tok", protected_paths = { "^/content%.md$" } })
     local port = inst.port
     local res, tail, _, closed = ask(port, get("/style.css", port))

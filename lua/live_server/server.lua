@@ -177,7 +177,8 @@ end
 -- 7.2's uri-host [":" port]: lowercased, without its brackets or one
 -- trailing dot, the port dropped. nil when the value is not a host: an
 -- unbracketed IPv6 address with a port cannot be split, and a check that
--- guessed would read a name never sent. An escape is kept as sent.
+-- guessed would read a name never sent. An escape is never decoded; the
+-- whole name is lowercased, its hex digits included.
 local function host_name(value)
     local name, port = value:match("^%[([^%]]*)%](.*)$")
     if name then
@@ -197,7 +198,7 @@ end
 -- check can refuse a repeated field instead of reading one copy. The
 -- target is a path (origin-form) or an http URL (absolute-form, RFC 9112
 -- 3.2.2), whose authority is kept for the Host check and whose path is
--- served. nil and the reason when the head is not HTTP/1.0 or 1.1.
+-- served. nil and the reason for any head it refuses.
 local function parse_head(head)
     local lines = vim.split(head, "\r?\n")
     local method, target, minor = lines[1]:match("^(%u+) (%S+) HTTP/1%.(%d+)$")
@@ -347,8 +348,8 @@ local function sse_accept(inst, sock)
     table.insert(inst.sse_clients, sock)
 end
 
--- The one place a stream leaves the client list besides stop: its socket
--- reported its end.
+-- A stream whose socket reported its end leaves the client list here;
+-- stop and a failed broadcast write remove theirs.
 local function sse_drop(inst, sock)
     for i, cl in ipairs(inst.sse_clients) do
         if cl == sock then
@@ -658,8 +659,8 @@ local function serve_path(inst, sock, abs_path, req_path, extra_headers)
     end
 end
 
--- Answers one parsed request. The body is the listen callback's, moved as
--- it was, so each pipeline step after this lands as its own small diff.
+-- Answers one parsed request: the token gate, the routes and every
+-- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
     local inst, sock = conn.inst, conn.sock
     if req.method ~= "GET" then
@@ -815,7 +816,7 @@ local function find_head_end(buf, from)
     return last, spelling
 end
 
--- One accepted socket's state, the one place a later step adds a field to.
+-- One accepted socket's state.
 local function new_conn(inst, sock)
     return { inst = inst, sock = sock, buf = "", handled = false }
 end
