@@ -1206,4 +1206,96 @@ ok(
     "an H.case runs only its own cleanups, the suite's cleanups wait for H.finish"
 )
 
+-- A peer that keeps every byte it reads, notes the client's FIN or reset,
+-- and answers once a head is complete: it shows what the raw client put on
+-- the wire.
+local function recorder(reply)
+    local rec = { bytes = "" }
+    local srv = uv.new_tcp()
+    srv:bind("127.0.0.1", 0)
+    srv:listen(8, function()
+        local c = uv.new_tcp()
+        srv:accept(c)
+        c:read_start(function(err, data)
+            if data then
+                rec.bytes = rec.bytes .. data
+                if reply and rec.bytes:find("\r\n\r\n", 1, true) then
+                    c:write(reply)
+                    reply = nil
+                end
+            else
+                rec.ended = err or "EOF"
+                if not c:is_closing() then
+                    c:close()
+                end
+            end
+        end)
+    end)
+    H.defer(function()
+        if not srv:is_closing() then
+            srv:close()
+        end
+    end)
+    return srv:getsockname().port, rec
+end
+
+local gone = uv.new_tcp()
+gone:bind("127.0.0.1", 0)
+local gone_port = gone:getsockname().port
+gone:close()
+local nobody, nobody_err = H.raw_connect(gone_port)
+ok(nobody == nil and nobody_err ~= nil, "a refused port yields no client and an error: " .. tostring(nobody_err))
+
+local rport, rec = recorder(nil)
+local rc = assert(H.raw_connect(rport))
+rc:send("GET /sty")
+vim.wait(50)
+rc:send("le.css HTTP/1.1\r\n\r\n")
+vim.wait(2000, function()
+    return rec.bytes:find("\r\n\r\n", 1, true) ~= nil
+end, 5)
+eq(rec.bytes, "GET /style.css HTTP/1.1\r\n\r\n", "two writes arrive in order as one byte stream")
+rc:close()
+
+rport, rec = recorder(nil)
+rc = assert(H.raw_connect(rport))
+rc:send("GET /a\0b HTTP/1.1\r\n\r\n")
+vim.wait(2000, function()
+    return rec.bytes:find("\r\n\r\n", 1, true) ~= nil
+end, 5)
+eq(rec.bytes, "GET /a\0b HTTP/1.1\r\n\r\n", "a NUL byte goes on the wire as written")
+rc:close()
+
+rport, rec = recorder("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi")
+rc = assert(H.raw_connect(rport))
+rc:send("GET / HTTP/1.1\r\n\r\n")
+ok(rc:half_close() == true, "half_close sends a FIN")
+vim.wait(2000, function()
+    return rec.ended ~= nil
+end, 5)
+eq(rec.ended, "EOF", "the peer reads the FIN as the end of the request")
+local got = rc:read(2000, function(d)
+    return d:find("hi$") ~= nil
+end)
+ok(got:find("hi$") ~= nil, "the client still reads the answer after its FIN")
+rc:close()
+
+rport, rec = recorder(nil)
+rc = assert(H.raw_connect(rport))
+rc:send("GET")
+vim.wait(100)
+rc:abort()
+vim.wait(2000, function()
+    return rec.ended ~= nil
+end, 5)
+ok(rec.ended ~= nil and rec.ended ~= "EOF", "abort resets the connection: " .. tostring(rec.ended))
+
+rport = recorder(nil)
+rc = assert(H.raw_connect(rport))
+local t0 = uv.hrtime()
+local silent, eof = rc:read(300)
+ok(silent == "" and eof == false, "a silent peer reads nothing and no end")
+ok((uv.hrtime() - t0) / 1e6 < 2000, "within the read bound")
+rc:close()
+
 H.finish()

@@ -358,6 +358,135 @@ function H.http_get(url, headers)
     return { status = tonumber(status) or 0, body = body or "", curl_exit = 0 }
 end
 
+-- A raw TCP client for the requests curl cannot send: a request line split
+-- across writes, a missing or doubled Host, a NUL byte, a half-close, an
+-- abort, an event stream read with a bound. Every luv call's nil, err is
+-- read, never hidden in a pcall around a closure, and every wait has its
+-- own bound. The connect bound sits above Windows's two-second retry of a
+-- refused loopback connect (the H.http_get comment's measurement).
+local Raw = {}
+Raw.__index = Raw
+local RAW_CONNECT_MS, RAW_STEP_MS = 5000, 2000
+
+function H.raw_connect(port, host)
+    local tcp = uv.new_tcp()
+    local done, conn_err = false, nil
+    local req, err = tcp:connect(host or "127.0.0.1", port, function(e)
+        conn_err, done = e, true
+    end)
+    if not req then
+        tcp:close()
+        return nil, err
+    end
+    if not vim.wait(RAW_CONNECT_MS, function()
+        return done
+    end, 5) then
+        tcp:close()
+        return nil, "connect timed out"
+    end
+    if conn_err then
+        tcp:close()
+        return nil, conn_err
+    end
+    local c = setmetatable({ tcp = tcp, chunks = {}, eof = false }, Raw)
+    local reading, rerr = tcp:read_start(function(e, chunk)
+        if chunk then
+            table.insert(c.chunks, chunk)
+        else
+            c.eof, c.err = true, e
+        end
+    end)
+    if not reading then
+        tcp:close()
+        return nil, rerr
+    end
+    H.defer(function()
+        c:close()
+    end)
+    return c
+end
+
+-- Writes bytes and waits for libuv to take them.
+function Raw:send(bytes)
+    local done, werr = false, nil
+    local req, err = self.tcp:write(bytes, function(e)
+        werr, done = e, true
+    end)
+    if not req then
+        return nil, err
+    end
+    if not vim.wait(RAW_STEP_MS, function()
+        return done
+    end, 5) then
+        return nil, "write timed out"
+    end
+    if werr then
+        return nil, werr
+    end
+    return true
+end
+
+-- Ends the write side (a FIN) and keeps reading.
+function Raw:half_close()
+    local done, serr = false, nil
+    local req, err = self.tcp:shutdown(function(e)
+        serr, done = e, true
+    end)
+    if not req then
+        return nil, err
+    end
+    if not vim.wait(RAW_STEP_MS, function()
+        return done
+    end, 5) then
+        return nil, "shutdown timed out"
+    end
+    if serr then
+        return nil, serr
+    end
+    return true
+end
+
+-- Resets the connection (an RST) instead of closing it.
+function Raw:abort()
+    if not self.tcp:is_closing() then
+        self.tcp:close_reset()
+    end
+end
+
+function Raw:close()
+    if not self.tcp:is_closing() then
+        self.tcp:close()
+    end
+end
+
+-- The bytes received so far, after waiting up to ms for the peer's end or
+-- for stop_when(bytes) to hold; eof says whether the peer ended.
+function Raw:read(ms, stop_when)
+    local function bytes()
+        return table.concat(self.chunks)
+    end
+    vim.wait(ms, function()
+        return self.eof or (stop_when ~= nil and stop_when(bytes()))
+    end, 5)
+    return bytes(), self.eof
+end
+
+-- One request on a fresh connection, read until the server closes it.
+function H.raw_request(port, bytes, ms)
+    local c, err = H.raw_connect(port)
+    if not c then
+        return nil, err
+    end
+    local sent, serr = c:send(bytes)
+    if not sent then
+        c:close()
+        return nil, serr
+    end
+    local data, eof = c:read(ms or 3000)
+    c:close()
+    return data, eof
+end
+
 -- An error raised in a libuv or vim.schedule callback, where every server
 -- handler runs, prints a traceback and leaves the exit code at 0; v:errmsg is
 -- the one trace of it a script can read, and it holds only the latest
