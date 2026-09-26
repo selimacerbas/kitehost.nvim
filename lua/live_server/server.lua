@@ -201,6 +201,10 @@ end
 -- served. nil and the reason for any head it refuses.
 local function parse_head(head)
     local lines = vim.split(head, "\r?\n")
+    -- RFC 9112 2.2: empty lines before the request line are ignored; an empty head is refused.
+    while #lines > 1 and lines[1] == "" do
+        table.remove(lines, 1)
+    end
     local method, target, minor = lines[1]:match("^(%u+) (%S+) HTTP/1%.(%d+)$")
     if not method then
         return nil, "Cannot parse request line"
@@ -848,10 +852,11 @@ local function on_read(conn, err, chunk)
         return
     end
     conn.buf = conn.buf .. chunk
-    -- A request line starts with a method token; anything else (a TLS
-    -- ClientHello on the plain port) is refused at once, never left waiting
-    -- for a blank line that will not come.
-    if not conn.buf:find("^[A-Z]") then
+    -- A request line, after any empty lines, starts with a method token;
+    -- anything else (a TLS ClientHello on the plain port) is refused at once,
+    -- never left waiting for a blank line that will not come.
+    local first = conn.buf:match("^[\r\n]*(.)")
+    if first and not first:find("^[A-Z]") then
         conn.handled = true
         conn.buf = ""
         return http_400(sock, "Cannot parse request line")
