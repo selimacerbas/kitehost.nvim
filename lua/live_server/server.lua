@@ -110,16 +110,40 @@ local function http_400(sock, msg)
     )
 end
 
-local function parse_request(buf)
-    local line = buf:match("([^\r\n]+)")
-    if not line then
-        return nil
+-- The request head, parsed once: method, target, version, and the header
+-- fields by lowercased name, each the list of its values in order, so a
+-- check can refuse a repeated field instead of reading one copy. The
+-- target is a path (origin-form) or an http URL (absolute-form, RFC 9112
+-- 3.2.2), whose authority is kept for the Host check and whose path is
+-- served. nil and the reason when the head is not HTTP/1.0 or 1.1.
+local function parse_head(head)
+    local lines = vim.split(head, "\r?\n")
+    local method, target, version = lines[1]:match("^(%u+) (%S+) HTTP/(1%.[01])$")
+    if not method then
+        return nil, "Cannot parse request line"
     end
-    local m, path = line:match("^(%u+)%s+([^%s]+)")
-    if not m or not path then
-        return nil
+    local headers = {}
+    for i = 2, #lines do
+        local name, value = lines[i]:match("^([%w!#$%%&'*+.^_`|~-]+):[ \t]*(.-)[ \t]*$")
+        if not name then
+            return nil, "Malformed header line"
+        end
+        name = name:lower()
+        headers[name] = headers[name] or {}
+        table.insert(headers[name], value)
     end
-    return { method = m, path = path }
+    local authority
+    if target:sub(1, 1) ~= "/" then
+        local rest = target:match("^[hH][tT][tT][pP]://(.*)$")
+        if not rest then
+            return nil, "Unsupported request target"
+        end
+        authority, target = rest:match("^([^/?#]*)(.*)$")
+        if target:sub(1, 1) ~= "/" then
+            target = "/" .. target
+        end
+    end
+    return { method = method, path = target, version = version, headers = headers, authority = authority }
 end
 
 -- -------- Path mapping & file read ----------------------------------------
@@ -710,10 +734,10 @@ local function on_read(conn, err, chunk)
         return
     end
     conn.handled = true
-    local req = parse_request(conn.buf:sub(1, head_end))
+    local req, why = parse_head(conn.buf:sub(1, head_end))
     conn.buf = ""
     if not req then
-        return http_400(sock, "Cannot parse request")
+        return http_400(sock, why)
     end
     return handle_request(conn, req)
 end

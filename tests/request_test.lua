@@ -146,4 +146,23 @@ H.case("Section 2: one request per connection, read to the end of its head", fun
     eq(res[1] and res[1].status, 200, "a head ended by CRLF then a bare LF is served")
 end)
 
+H.case("Section 3: the head, parsed once", function()
+    local inst = serve()
+    local port = inst.port
+    local res =
+        ask(port, ("GET http://127.0.0.1:%d/style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port, port))
+    eq(res[1] and res[1].status, 200, "an absolute-form target is served from its path")
+    eq(res[1] and res[1].body, "body{color:red}", "the path after the authority names the file")
+    res = ask(port, "GET javascript:alert(1)//%2e%2e? HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a target that is neither a path nor an http URL is 400")
+    res = ask(port, "GET /style.css\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a request line without an HTTP version is 400")
+    res = ask(port, "GET /style.css HTTP/2.0\r\nHost: 127.0.0.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a version other than HTTP/1.0 or 1.1 is 400")
+    res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nno colon here\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a header line without a colon is 400")
+    res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: 1\r\n folded\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "an obsolete folded header line is 400")
+end)
+
 H.finish()
