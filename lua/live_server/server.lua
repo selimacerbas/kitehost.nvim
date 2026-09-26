@@ -708,8 +708,9 @@ end
 
 -- How a browser marked this request: "cross" when Sec-Fetch-Site or Origin
 -- names another site or another port, "same" when either names this
--- server's origin, nil when it carries neither ("none", a typed URL, names
--- no page). A no-cors GET carries no Origin, so Origin alone misses it.
+-- server's origin or the site is "none" (a typed URL or an extension, the
+-- user's own act, which no page can send), nil when it carries neither.
+-- A no-cors GET carries no Origin, so Origin alone misses it.
 local function request_site(req)
     local site = req.headers["sec-fetch-site"]
     site = site and site[1]
@@ -725,7 +726,7 @@ local function request_site(req)
         end
         return "same"
     end
-    return site == "same-origin" and "same" or nil
+    return (site == "same-origin" or site == "none") and "same" or nil
 end
 
 -- Whether a request no browser marked may fire events. Browsers mark every

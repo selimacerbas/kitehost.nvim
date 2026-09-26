@@ -59,6 +59,13 @@ H.case("Section 1: a cross-site request cannot fire events", function()
     )
     eq(inject(port, "event=reload", "Origin: " .. own .. "\r\n").status, 200, "the server's own Origin is served")
     eq(inject(port, "event=reload").status, 200, "a request with neither header is served on a loopback bind")
+    -- The two marks are read on their own: a site that passes does not
+    -- excuse an Origin that names another server.
+    eq(
+        inject(port, "event=reload", "Sec-Fetch-Site: same-origin\r\nOrigin: https://evil.example\r\n").status,
+        403,
+        "same-origin beside a foreign Origin is 403"
+    )
 end)
 
 H.case("Section 2: a refused request broadcasts nothing", function()
@@ -70,12 +77,14 @@ H.case("Section 2: a refused request broadcasts nothing", function()
         return d:find("retry: 1000\n\n", 1, true) ~= nil
     end)
     inject(port, "event=forged", "Sec-Fetch-Site: cross-site\r\n")
+    inject(port, "event=forged2", "Origin: https://evil.example\r\n")
     inject(port, "event=real", "Sec-Fetch-Site: same-origin\r\n")
     local data = c:read(2000, function(d)
         return d:find("event: real", 1, true) ~= nil
     end)
     ok(data:find("event: real", 1, true) ~= nil, "the allowed event arrives")
-    ok(not data:find("event: forged", 1, true), "the refused one never does")
+    ok(not data:find("event: forged\n", 1, true), "the site-refused one never does")
+    ok(not data:find("event: forged2", 1, true), "nor the Origin-refused one")
 end)
 
 H.case("Section 3: the token does not stand in for the site check", function()
@@ -102,6 +111,9 @@ H.case("Section 4: a tokenless network bind fires events only for its own origin
         "Sec-Fetch-Site: same-origin is served"
     )
     eq(inject(port, "event=reload", "Sec-Fetch-Site: cross-site\r\n").status, 403, "Sec-Fetch-Site: cross-site is 403")
+    -- A typed URL or an extension is the user's own act, and no page can
+    -- send that mark, so it counts as the server's own on a network bind too.
+    eq(inject(port, "event=reload", "Sec-Fetch-Site: none\r\n").status, 200, "Sec-Fetch-Site: none is served")
     local gated = serve({ host = "0.0.0.0", token = "tok" })
     eq(inject(gated.port, "event=reload&t=tok").status, 200, "with a token, a request with neither header is served")
 end)
