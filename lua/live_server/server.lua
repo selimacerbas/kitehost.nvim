@@ -58,6 +58,7 @@ local REASONS = {
     [302] = "Found",
     [400] = "Bad Request",
     [401] = "Unauthorized",
+    [403] = "Forbidden",
     [404] = "Not Found",
     [405] = "Method Not Allowed",
     [421] = "Misdirected Request",
@@ -705,6 +706,46 @@ local function host_ok(inst, req)
     return is_loopback_name(name) or inst.allowed_hosts[name] == true
 end
 
+-- How a browser marked this request: "cross" when Sec-Fetch-Site or Origin
+-- names another site or another port, "same" when either names this
+-- server's origin, nil when it carries neither ("none", a typed URL, names
+-- no page). A no-cors GET carries no Origin, so Origin alone misses it.
+local function request_site(req)
+    local site = req.headers["sec-fetch-site"]
+    site = site and site[1]
+    if site and site ~= "same-origin" and site ~= "none" then
+        return "cross"
+    end
+    local origin = req.headers.origin
+    origin = origin and origin[1]
+    if origin then
+        local host = req.authority or (req.headers.host and req.headers.host[1])
+        if host == nil or origin:lower() ~= ("http://" .. host):lower() then
+            return "cross"
+        end
+        return "same"
+    end
+    return site == "same-origin" and "same" or nil
+end
+
+-- Whether a request no browser marked may fire events. Browsers mark every
+-- request to a loopback address, localhost or *.localhost, so an unmarked
+-- one on a loopback bind under such a name came from a program on this
+-- machine (curl, markdown-preview's raw sender). A page on any site reaches
+-- a LAN address, or a name of the user's own, over plain http unmarked, so
+-- there only the token, checked before dispatch, tells it apart.
+local function unmarked_ok(inst, req)
+    if inst.token then
+        return true
+    end
+    if not is_loopback_ip(inst.host) then
+        return false
+    end
+    local value = req.authority or (req.headers.host and req.headers.host[1])
+    local name = value and host_name(value)
+    return value == nil or (name ~= nil and is_loopback_name(name))
+end
+
 -- Answers one parsed request: the token gate, the routes and every
 -- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
@@ -771,6 +812,10 @@ local function handle_request(conn, req)
         conn.sse = true
         return sse_accept(inst, sock)
     elseif path_only == "/__live/inject" then
+        local site = request_site(req)
+        if site == "cross" or (site == nil and not unmarked_ok(inst, req)) then
+            return send_response(sock, 403, { ["Content-Type"] = "text/plain" }, "Forbidden")
+        end
         local event = qparam("event")
         local data = qparam("data")
         if event then

@@ -211,7 +211,7 @@ All under the which-key group **`<leader>l`**:
 * **Index resolution**: root directory → `default_index` (if starting from a file) → `index_names` in order → directory listing. Subdirectories always use their own index files.
 * **Port 0 (OS-assigned)**: pass `port = 0` to let the OS pick a free port. The actual port is available via `inst.port` after `server.start()`.
 * **Same port, new path**: reusing the same port retargets the server → same URL, so browsers typically reuse the same tab.
-* **Event injection**: `GET /__live/inject?event=<type>&data=<json>` lets external processes broadcast SSE events to connected clients.
+* **Event injection**: `GET /__live/inject?event=<type>&data=<json>` lets external processes broadcast SSE events to connected clients. A browser request from another site, or from another port of the same host, is refused (403) by its `Sec-Fetch-Site` or `Origin` header, on loopback binds too; a request that sends neither, such as curl's, is served on a loopback bind, so set `token` when other programs on this machine must not inject. A browser sends neither header to a plain-http LAN address, so a network bind without a `token` (and a loopback bind reached by an `allowed_hosts` name) fires events only for a request that sends `Sec-Fetch-Site: same-origin` or the server's own `Origin`: a page opened at a LAN address cannot fire events until `token` is set.
 * **Graceful exit**: all servers are automatically stopped on `VimLeavePre`.
 
 ---
