@@ -1143,12 +1143,16 @@ function S.start(cfg)
         error("Failed to listen on " .. host .. ":" .. tostring(actual_port) .. ": " .. tostring(listen_err), 0)
     end
 
-    if allowed == true then
-        util.notify(
-            "live-server: allowed_hosts = true turns the Host check off; a DNS-rebinding page can read this server",
-            { notify = true },
-            "WARN"
-        )
+    -- Scheduled, so a start from a fast event (a luv callback) cannot raise
+    -- after the socket is serving; a network bind has no check to turn off.
+    if allowed == true and is_loopback_ip(bound.ip) then
+        vim.schedule(function()
+            util.notify(
+                "live-server: allowed_hosts = true turns the Host check off; a DNS-rebinding page can read this server",
+                { notify = true },
+                "WARN"
+            )
+        end)
     end
     return inst
 end

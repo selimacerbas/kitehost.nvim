@@ -120,11 +120,20 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
     end)
     local open = serve({ allowed_hosts = true })
     eq(status(open.port, "/", "attacker.example"), 200, "allowed_hosts = true serves any Host")
+    ok(
+        H.wait_for(function()
+            return #notes >= 1
+        end, 1000),
+        "the warning is delivered"
+    )
     eq(#notes, 1, "and says so once")
     ok(
         notes[1] ~= nil and notes[1].level == vim.log.levels.WARN and notes[1].msg:find("allowed_hosts", 1, true) ~= nil,
         "as a warning naming the option"
     )
+    serve({ host = "0.0.0.0", allowed_hosts = true })
+    vim.wait(200)
+    eq(#notes, 1, "a network bind adds no warning: it had no check to turn off")
     local tcps = H.handle_count("tcp")
     local started, err = pcall(server.start, { port = 0, root = root, allowed_hosts = "my.name" })
     ok(not started and tostring(err):find("allowed_hosts", 1, true) ~= nil, "a string is refused: " .. tostring(err))
@@ -172,6 +181,42 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
         status(bare.port, "/", "[fe80::1]:" .. bare.port),
         200,
         "an IPv6 entry written without brackets matches a bracketed Host"
+    )
+    -- The real vim.notify raises E5560 in a fast event context; a start
+    -- from a luv callback must still return the instance it opened.
+    vim.notify = real_notify
+    local tcps_before = H.handle_count("tcp")
+    local started, inst_or_err
+    local t = assert(vim.uv.new_timer())
+    H.defer(function()
+        t:close()
+    end)
+    t:start(10, 0, function()
+        started, inst_or_err = pcall(server.start, {
+            port = 0,
+            root = root,
+            allowed_hosts = true,
+            live = { enabled = false },
+        })
+    end)
+    ok(
+        H.wait_for(function()
+            return started ~= nil
+        end, 2000),
+        "the start returned"
+    )
+    if started then
+        H.defer(function()
+            server.stop(inst_or_err)
+        end)
+    end
+    ok(
+        started == true,
+        ("a start with allowed_hosts = true from a luv callback returns an instance: %s (tcp %d then %d)"):format(
+            tostring(inst_or_err),
+            tcps_before,
+            H.handle_count("tcp")
+        )
     )
 end)
 
