@@ -819,13 +819,16 @@ local function needs_auth(inst, p)
 end
 
 -- A file's path under the root as the filesystem spells it (realpath: the
--- case on disk, links followed), or nil when it resolves outside the root.
+-- case on disk, links followed), or nil when realpath fails or the path
+-- resolves outside the root. A root that ends in a separator ("/", "D:\")
+-- keeps it on the name, where a pattern anchored at ^/ expects it.
 local function root_rel(inst, path)
     local ok_real, real = pcall(uv.fs_realpath, path)
     if not ok_real or not real or not util.path_has_prefix(real, inst.root_real) then
         return nil
     end
-    local rel = real:sub(#inst.root_real + 1):gsub("\\", "/")
+    local base = inst.root_real:gsub("[/\\]$", "")
+    local rel = real:sub(#base + 1):gsub("\\", "/")
     return rel == "" and "/" or rel
 end
 
@@ -883,11 +886,17 @@ local function handle_request(conn, req)
 
     -- The check above reads the request's spelling; the filesystem may serve
     -- another name for it: /CONTENT.MD on a case-folding volume, or a link,
-    -- is content.md. The file about to be served is checked
+    -- is content.md. The file or listing about to be served is checked
     -- again by its path under the root as realpath spells it.
     local function refusal(path)
         local rel = root_rel(inst, path)
-        if rel and not authorized(rel) then
+        if not rel then
+            -- default_index may sit outside the root by design; an index
+            -- name linked out of it would serve what the file route refuses.
+            if path ~= inst.default_index then
+                return 404
+            end
+        elseif not authorized(rel) then
             return 401
         end
     end
@@ -970,6 +979,10 @@ local function handle_request(conn, req)
             return serve_path(inst, sock, candidate, req, inst.headers)
         end
         if inst.dir_enabled then
+            local status = refusal(mapped)
+            if status then
+                return refuse(status)
+            end
             local html = dir_listing_html(inst, mapped, req.path)
             return send_html_with_injection(inst, sock, html, inst.headers, req)
         else

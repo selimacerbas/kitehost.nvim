@@ -157,6 +157,82 @@ else
         "a link to content.md without the token is 401 (" .. tostring(link_err or "the link does not resolve") .. ")"
     )
 end
+-- A root that ends in a separator ("/", a drive root) lost the name's
+-- leading slash, so a pattern anchored at ^/ never matched the file served.
+local disk = assert(uv.fs_realpath(f2))
+local drive = disk:match("^%a:[/\\]") or "/"
+local slashed = "/" .. disk:sub(#drive + 1):gsub("\\", "/")
+local at_root = server.start({
+    port = 0,
+    root = drive,
+    token = TOKEN,
+    protected_paths = { "^" .. vim.pesc(slashed) .. "$" },
+    live = { enabled = false, inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+if linked and uv.fs_stat(alias) then
+    local via = (slashed:gsub("content%.md$", "alias.md"))
+    eq(
+        http_get(("http://127.0.0.1:%d%s"):format(at_root.port, via)).status,
+        401,
+        "a link to content.md under root / is 401"
+    )
+else
+    H.skip("a link to content.md under root / is 401 (" .. tostring(link_err or "the link does not resolve") .. ")")
+end
+server.stop(at_root)
+-- The listing names a directory's files: a link to a protected directory
+-- listed what the directory's own spelling refused.
+vim.fn.mkdir(vim.fs.joinpath(tmpdir, "secret"), "p")
+H.write_file(vim.fs.joinpath(tmpdir, "secret", "notes.md"), "notes")
+vim.fn.mkdir(vim.fs.joinpath(tmpdir, "docs"), "p")
+H.write_file(vim.fs.joinpath(tmpdir, "docs", "index.html"), "<html>docs</html>")
+local listed = server.start({
+    port = 0,
+    root = tmpdir,
+    token = TOKEN,
+    protected_paths = { "^/secret", "^/docs/index%.html$" },
+    live = { inject_script = false },
+    features = { dirlist = { enabled = true } },
+})
+local dlinked, dlink_err = uv.fs_symlink("secret", vim.fs.joinpath(tmpdir, "pub"))
+if dlinked and uv.fs_stat(vim.fs.joinpath(tmpdir, "pub")) then
+    eq(
+        http_get(("http://127.0.0.1:%d/pub/"):format(listed.port)).status,
+        401,
+        "a link to a protected directory lists nothing"
+    )
+else
+    H.skip(
+        "a link to a protected directory lists nothing (" .. tostring(dlink_err or "the link does not resolve") .. ")"
+    )
+end
+if H.fs_folds_case then
+    eq(
+        http_get(("http://127.0.0.1:%d/SECRET/"):format(listed.port)).status,
+        401,
+        "/SECRET/ without the token lists nothing"
+    )
+else
+    H.skip("/SECRET/ without the token lists nothing (a case-sensitive volume has no such directory)")
+end
+-- The first check reads /docs; only the index about to be served matches.
+eq(http_get(("http://127.0.0.1:%d/docs/"):format(listed.port)).status, 401, "/docs/ serving a protected index is 401")
+-- An index name may be a link out of the root, which the file route refuses.
+local outside = vim.fs.joinpath(H.tmpdir(), "leak.html")
+H.write_file(outside, "outside the root")
+vim.fn.mkdir(vim.fs.joinpath(tmpdir, "sub"), "p")
+local sub_index = vim.fs.joinpath(tmpdir, "sub", "index.html")
+local olinked, olink_err = uv.fs_symlink(outside, sub_index)
+if olinked and uv.fs_stat(sub_index) then
+    eq(http_get(("http://127.0.0.1:%d/sub/"):format(listed.port)).status, 404, "an index linked out of the root is 404")
+    eq(http_get(("http://127.0.0.1:%d/sub/?t=%s"):format(listed.port, TOKEN)).status, 404, "and 404 with the token")
+else
+    local why = " (" .. tostring(olink_err or "the link does not resolve") .. ")"
+    H.skip("an index linked out of the root is 404" .. why)
+    H.skip("and 404 with the token" .. why)
+end
+server.stop(listed)
 
 server.stop(inst)
 -- Refused is curl 7: a listener left open after stop answers (curl 0) and
