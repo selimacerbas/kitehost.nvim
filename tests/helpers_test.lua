@@ -2,7 +2,9 @@
 -- Verify the harness every other suite leans on: the root it resolves and
 -- the XDG move (Section 1), the bounded curl (2), the exit code a gate reads
 -- (3), an error a callback raises failing the suite (4), H.expect_error (5),
--- H.rtp's proof of the copy require loads (6) and one spelling per path (7).
+-- H.rtp's proof of the copy require loads (6), one spelling per path (7)
+-- and the teardown, the raw client, the response reader and the counters
+-- (8).
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/helpers_test.lua"
 

@@ -1,7 +1,9 @@
 -- tests/helpers.lua
 -- Shared by every headless suite: XDG isolation for everything a suite
--- creates, one spelling per path, a bounded curl and one pass/fail ledger
--- whose exit code is the ruling. Loaded by path (dofile), never by require,
+-- creates, one spelling per path, a bounded curl, one pass/fail ledger
+-- whose exit code is the ruling, a teardown that runs whatever a suite
+-- registers, a raw TCP client, a reader of raw responses and counters of
+-- descriptors and live handles. Loaded by path (dofile), never by require,
 -- so nothing under tests/ joins the plugin's public module tree.
 local uv = vim.uv
 local H = {}
