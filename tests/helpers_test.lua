@@ -1327,12 +1327,23 @@ H.case("the response reader", function()
     eq(two[1] and two[1].count["x-a"], 2, "a repeated header is counted, whatever its case")
     eq(two[2] and two[2].headers["content-type"], "text/event-stream", "header names are lowercased")
     eq(two[2] and two[2].body, "retry: 1000\n\n", "a body without Content-Length runs to the end")
+    eq(two[1] and two[1].status, 401, "the status code is read as a number")
+    eq(two[1] and two[1].headers["x-a"], "1", "a repeated header keeps its first value")
     eq(#H.responses("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n"), 0, "a head without its blank line is no response")
     eq(
         H.responses("HTTP/1.1 200 OK\r\nContent-Length: -100\r\n\r\nabc")[1].body,
         "abc",
         "a length that is not decimal digits reads the body to the end"
     )
+    eq(
+        #H.responses(
+            "HTTP/1.1 200 OK\r\nContent-Length: 3 \r\n\r\nabcHTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+        ),
+        2,
+        "a length with trailing whitespace still bounds its body"
+    )
+    eq(#H.responses("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n"), 0, "an HTTP/1.0 status line is no response")
+    eq(#H.responses("HTTP/1.1 2000 OK\r\nContent-Length: 0\r\n\r\n"), 0, "a four-digit status is no response")
 end)
 
 H.finish()

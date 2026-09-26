@@ -501,7 +501,9 @@ end
 -- Splits raw bytes into HTTP/1.1 responses. A body runs for its
 -- Content-Length, or to the end of the bytes when there is none (an event
 -- stream), so a status line spliced into a streamed body shows as a body
--- that differs from the file, never as a second response.
+-- that differs from the file, never as a second response. Bytes that do not
+-- parse stop the split and return the responses read so far, so a row that
+-- asserts a header is absent checks the count or the status first.
 function H.responses(data)
     local list, pos = {}, 1
     while pos <= #data do
@@ -510,18 +512,21 @@ function H.responses(data)
             break
         end
         local head = data:sub(pos, head_end - 1)
-        local code, reason = head:match("^HTTP/1%.1 (%d%d%d) ?([^\r\n]*)")
-        if not code then
+        local code, rest = head:match("^HTTP/1%.1 (%d%d%d)([^\r\n]*)")
+        if not code or (rest ~= "" and rest:sub(1, 1) ~= " ") then
             break
         end
+        local reason = rest:sub(2)
         local r = { status = tonumber(code), reason = reason, headers = {}, count = {} }
         for name, value in head:gmatch("\r\n([^:\r\n]+):[ \t]*([^\r\n]*)") do
             name = name:lower()
+            value = value:gsub("[ \t]+$", "")
             r.count[name] = (r.count[name] or 0) + 1
             r.headers[name] = r.headers[name] or value
         end
         local body_start = head_end + 4
-        -- Decimal digits only: a negative or non-decimal length once looped forever.
+        -- A negative length moves pos backwards and loops forever; hex or a
+        -- fraction reads a length the server never writes, so digits only.
         local len = tonumber((r.headers["content-length"] or ""):match("^%d+$"))
         if len then
             r.body = data:sub(body_start, body_start + len - 1)
