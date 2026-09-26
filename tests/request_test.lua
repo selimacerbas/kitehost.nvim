@@ -36,10 +36,12 @@ local function serve(cfg)
     return inst
 end
 
--- One request on its own connection: the parsed responses and the bytes.
+-- One request on its own connection: the parsed responses, the tail (what
+-- followed them, unparsed) and the bytes. A failed exchange raises.
 local function ask(port, bytes)
-    local data = H.raw_request(port, bytes) or ""
-    return H.responses(data), data
+    local data = assert(H.raw_request(port, bytes))
+    local list, tail = H.responses(data)
+    return list, tail, data
 end
 
 local function get(path, port, extra)
@@ -49,19 +51,23 @@ end
 H.case("Section 1: the behaviour the pipeline refactor keeps", function()
     local inst = serve({ token = "tok", protected_paths = { "^/content%.md$" } })
     local port = inst.port
-    local res = ask(port, get("/style.css", port))
+    local res, tail = ask(port, get("/style.css", port))
     eq(#res, 1, "one request, one response")
     eq(res[1] and res[1].status, 200, "a request in one write is served")
     eq(res[1] and res[1].body, "body{color:red}", "the body is the file")
     eq(res[1] and res[1].headers.connection, "close", "a file response closes the connection")
+    eq(tail, "", "nothing follows the file response")
     res = ask(port, "GET /index.html HTTP/1.0\n\n")
     eq(res[1] and res[1].status, 200, "a head ended by bare LF lines is served")
     res = ask(port, get("/content.md", port))
     eq(res[1] and res[1].status, 401, "a protected path without the token is 401")
+    eq(res[1] and res[1].body, "Unauthorized", "with its body")
     res = ask(port, get("/content.md?t=tok", port))
     eq(res[1] and res[1].status, 200, "the token opens it")
+    eq(res[1] and res[1].body, "# secret", "and serves the file")
     res = ask(port, ("POST / HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))
     eq(res[1] and res[1].status, 405, "a method other than GET is 405")
+    eq(res[1] and res[1].body, "Method Not Allowed", "with its body")
     res = ask(port, "get / HTTP/1.1\r\n\r\n")
     eq(res[1] and res[1].status, 400, "a lowercase method is 400")
     res = ask(port, "\r\n\r\n")
@@ -70,7 +76,7 @@ H.case("Section 1: the behaviour the pipeline refactor keeps", function()
     -- Buffering must keep SSE disconnect detection: the stream leaves the
     -- client list only when its socket reports the end.
     local c = assert(H.raw_connect(port))
-    c:send(get("/__live/events?t=tok", port))
+    assert(c:send(get("/__live/events?t=tok", port)))
     local head = c:read(2000, function(d)
         return d:find("retry: 1000\n\n", 1, true) ~= nil
     end)
@@ -82,9 +88,9 @@ H.case("Section 1: the behaviour the pipeline refactor keeps", function()
         end, 2000),
         "the stream counts as one client"
     )
-    c:send("GET /whatever HTTP/1.1\r\n\r\n")
+    assert(c:send("GET /whatever HTTP/1.1\r\n\r\n"))
     local after = c:read(300)
-    ok(not after:find("HTTP/1.1 400", 1, true), "a later chunk on the stream gets no response")
+    eq(after, head, "a later chunk on the stream gets no response")
     c:close()
     ok(
         H.wait_for(function()
