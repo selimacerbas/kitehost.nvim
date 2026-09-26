@@ -47,17 +47,22 @@ end
 
 -- -------- HTTP helpers -----------------------------------------------------
 
+-- Reason phrases by status: one table for every status this server
+-- sends, so a status line never reads "401 OK" again.
+local REASONS = {
+    [200] = "OK",
+    [301] = "Moved Permanently",
+    [302] = "Found",
+    [400] = "Bad Request",
+    [401] = "Unauthorized",
+    [404] = "Not Found",
+    [405] = "Method Not Allowed",
+    [431] = "Request Header Fields Too Large",
+    [500] = "Internal Server Error",
+}
+
 local function write_headers(sock, status, headers)
-    local reason = ({
-        [200] = "OK",
-        [301] = "Moved Permanently",
-        [302] = "Found",
-        [400] = "Bad Request",
-        [404] = "Not Found",
-        [405] = "Method Not Allowed",
-        [431] = "Request Header Fields Too Large",
-        [500] = "Internal Server Error",
-    })[status] or "OK"
+    local reason = REASONS[status] or "OK"
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
     for k, v in pairs(headers or {}) do
         table.insert(lines, ("%s: %s\r\n"):format(k, v))

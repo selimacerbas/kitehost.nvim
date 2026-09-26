@@ -53,6 +53,10 @@ eq(r.status, 200, "/ (index.html) reachable without token")
 -- /content.md requires token
 r = http_get(("http://127.0.0.1:%d/content.md"):format(port))
 eq(r.status, 401, "/content.md without token is 401")
+-- The status line read "401 OK"; a raw read shows the reason.
+local raw401 =
+    H.response(assert(H.raw_request(port, ("GET /content.md HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))))
+eq(raw401.reason, "Unauthorized", "a 401 names its reason phrase")
 
 r = http_get(("http://127.0.0.1:%d/content.md?t=wrong"):format(port))
 eq(r.status, 401, "/content.md with wrong token is 401")
