@@ -165,4 +165,27 @@ H.case("Section 3: the head, parsed once", function()
     eq(res[1] and res[1].status, 400, "an obsolete folded header line is 400")
 end)
 
+H.case("Section 4: HTTP/1.1 names its host, once", function()
+    local inst = serve()
+    local port = inst.port
+    local res = ask(port, "GET /style.css HTTP/1.1\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "HTTP/1.1 without Host is 400")
+    res = ask(port, "GET /style.css HTTP/1.0\r\n\r\n")
+    eq(res[1] and res[1].status, 200, "HTTP/1.0 without Host is served")
+    res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nHost: evil.example\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "two Host lines are 400")
+    res = ask(port, "GET /style.css HTTP/1.0\r\nHost: a\r\nhost: b\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "two Host lines are 400 on HTTP/1.0 too, whatever their case")
+    -- markdown-preview's remote.lua sends exactly this: a portless Host.
+    res = ask(
+        port,
+        "GET /__live/inject?event=scroll&data=%7B%7D HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    eq(res[1] and res[1].status, 200, "markdown-preview's remote.lua request is served")
+    res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: a\rb\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a bare CR inside a header value is 400")
+    res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: a\0b\r\n\r\n")
+    eq(res[1] and res[1].status, 400, "a NUL inside a header value is 400")
+end)
+
 H.finish()

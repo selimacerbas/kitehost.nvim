@@ -128,6 +128,11 @@ local function parse_head(head)
         if not name then
             return nil, "Malformed header line"
         end
+        -- RFC 9112 5.5: a value with a CR or a NUL is no field value, and a
+        -- check that read one would compare against a byte no client sends.
+        if value:find("[\r%z]") then
+            return nil, "Malformed header line"
+        end
         name = name:lower()
         headers[name] = headers[name] or {}
         table.insert(headers[name], value)
@@ -142,6 +147,15 @@ local function parse_head(head)
         if target:sub(1, 1) ~= "/" then
             target = "/" .. target
         end
+    end
+    -- RFC 9112 3.2: an HTTP/1.1 request names its host, on one line; two
+    -- would let the Host check read one copy and anything in front the other.
+    local hosts = headers.host
+    if hosts and #hosts > 1 then
+        return nil, "More than one Host header"
+    end
+    if version == "1.1" and not hosts then
+        return nil, "HTTP/1.1 request without Host"
     end
     return { method = method, path = target, version = version, headers = headers, authority = authority }
 end
