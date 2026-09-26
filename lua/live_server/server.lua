@@ -653,20 +653,29 @@ end
 -- A head larger than this is refused (431); browsers send a few KiB.
 local MAX_HEAD = 16 * 1024
 
--- Where the head ends: the first blank line, CRLF or bare LF (RFC 9112 2.2
--- lets a server accept a bare LF, and this server always answered one).
--- The index of the head's last byte, or nil while it is incomplete.
+-- Where the head ends: the first blank line, whether its two line ends are
+-- CRLF or bare LF in any mix (RFC 9112 2.2 lets a server accept a bare LF,
+-- and this server always answered one). The index of the head's last byte,
+-- a CR before the blank line excluded, or nil while it is incomplete.
 local function find_head_end(buf)
-    local crlf = buf:find("\r\n\r\n", 1, true)
-    local lf = buf:find("\n\n", 1, true)
-    if crlf and (not lf or crlf < lf) then
-        return crlf - 1
+    local first
+    for _, blank in ipairs({ "\r\n\r\n", "\n\n", "\n\r\n" }) do
+        local at = buf:find(blank, 1, true)
+        if at and (not first or at < first) then
+            first = at
+        end
     end
-    return lf and lf - 1 or nil
+    if not first then
+        return nil
+    end
+    local last = first - 1
+    if buf:sub(last, last) == "\r" then
+        last = last - 1
+    end
+    return last
 end
 
--- One accepted socket's state; the pipeline steps add the read buffer,
--- the flags and the timers.
+-- One accepted socket's state, the one place a later step adds a field to.
 local function new_conn(inst, sock)
     return { inst = inst, sock = sock, buf = "", handled = false }
 end
@@ -694,6 +703,7 @@ local function on_read(conn, err, chunk)
     local head_end = find_head_end(conn.buf)
     if (head_end or #conn.buf) > MAX_HEAD then
         conn.handled = true
+        conn.buf = ""
         return send_response(sock, 431, { ["Content-Type"] = "text/plain" }, "Request Header Fields Too Large")
     end
     if not head_end then

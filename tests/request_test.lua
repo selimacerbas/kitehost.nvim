@@ -137,6 +137,13 @@ H.case("Section 2: one request per connection, read to the end of its head", fun
     res = ask(port, "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 17 * 1024))
     eq(res[1] and res[1].status, 431, "a head over 16 KiB with no end is 431")
     eq(res[1] and res[1].reason, "Request Header Fields Too Large", "with its reason phrase")
+
+    -- The blank line's two line ends may mix CRLF and bare LF; before the
+    -- buffering the old parser answered every mix, so the buffer must too.
+    res = ask(port, "GET /index.html HTTP/1.0\n\r\n")
+    eq(res[1] and res[1].status, 200, "a head ended by a bare LF then CRLF is served")
+    res = ask(port, "GET /index.html HTTP/1.0\r\n\n")
+    eq(res[1] and res[1].status, 200, "a head ended by CRLF then a bare LF is served")
 end)
 
 H.finish()
