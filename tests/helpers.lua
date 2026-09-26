@@ -521,7 +521,8 @@ function H.responses(data)
             r.headers[name] = r.headers[name] or value
         end
         local body_start = head_end + 4
-        local len = tonumber(r.headers["content-length"])
+        -- Decimal digits only: a negative or non-decimal length once looped forever.
+        local len = tonumber((r.headers["content-length"] or ""):match("^%d+$"))
         if len then
             r.body = data:sub(body_start, body_start + len - 1)
             pos = body_start + len

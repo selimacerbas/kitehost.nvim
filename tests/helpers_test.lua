@@ -1328,6 +1328,11 @@ H.case("the response reader", function()
     eq(two[2] and two[2].headers["content-type"], "text/event-stream", "header names are lowercased")
     eq(two[2] and two[2].body, "retry: 1000\n\n", "a body without Content-Length runs to the end")
     eq(#H.responses("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n"), 0, "a head without its blank line is no response")
+    eq(
+        H.responses("HTTP/1.1 200 OK\r\nContent-Length: -100\r\n\r\nabc")[1].body,
+        "abc",
+        "a length that is not decimal digits reads the body to the end"
+    )
 end)
 
 H.finish()
