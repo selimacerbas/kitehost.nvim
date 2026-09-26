@@ -206,10 +206,14 @@ local function parse_head(head)
     end
     local headers = {}
     for i = 2, #lines do
-        local name, value = lines[i]:match("^([%w!#$%%&'*+.^_`|~-]+):[ \t]*(.-)[ \t]*$")
+        local name, value = lines[i]:match("^([%w!#$%%&'*+.^_`|~-]+):(.*)$")
         if not name then
             return nil, "Malformed header line"
         end
+        -- Two one-pass trims: a lazy capture with a greedy tail rescans an
+        -- inner run of blanks from every position and stalled the loop.
+        value = value:gsub("^[ \t]+", "")
+        value = value:match("^(.*[^ \t])") or ""
         -- RFC 9112 5.5: a value with a CR or a NUL is no field value, and a
         -- check that read one would compare against a byte no client sends.
         if value:find("[\r%z]") then
@@ -783,24 +787,28 @@ local MAX_HEAD = 16 * 1024
 
 -- Where the head ends: the first blank line, whether its two line ends are
 -- CRLF or bare LF in any mix (RFC 9112 2.2 lets a server accept a bare LF,
--- and this server always answered one). The index of the head's last byte,
--- a CR before the blank line excluded, or nil while it is incomplete.
-local function find_head_end(buf)
-    local first
+-- and this server always answered one). The index of the head's last byte
+-- and the spelling found, or nil while it is incomplete. The search starts
+-- at from, so a head read in many chunks is scanned once, not once per
+-- chunk. Only the "\n\n" spelling can leave the CR of a CRLF line end
+-- before it, which is excluded; a CR before any other spelling is the last
+-- field value's own byte and must reach the CR check.
+local function find_head_end(buf, from)
+    local first, spelling
     for _, blank in ipairs({ "\r\n\r\n", "\n\n", "\n\r\n" }) do
-        local at = buf:find(blank, 1, true)
+        local at = buf:find(blank, from, true)
         if at and (not first or at < first) then
-            first = at
+            first, spelling = at, blank
         end
     end
     if not first then
         return nil
     end
     local last = first - 1
-    if buf:sub(last, last) == "\r" then
+    if spelling == "\n\n" and buf:sub(last, last) == "\r" then
         last = last - 1
     end
-    return last
+    return last, spelling
 end
 
 -- One accepted socket's state, the one place a later step adds a field to.
@@ -828,7 +836,8 @@ local function on_read(conn, err, chunk)
         return
     end
     conn.buf = conn.buf .. chunk
-    local head_end = find_head_end(conn.buf)
+    -- A terminator of at most four bytes may straddle the previous read.
+    local head_end = find_head_end(conn.buf, math.max(1, #conn.buf - #chunk - 3))
     if (head_end or #conn.buf) > MAX_HEAD then
         conn.handled = true
         conn.buf = ""
