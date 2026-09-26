@@ -57,24 +57,32 @@ H.case("Section 1: only a navigation gets the reload script", function()
         eq(r.body, injected, "and gets the script (Sec-Fetch-Dest: " .. dest .. ")")
     end
 
-    -- A page's fetch, an XHR and a script load: the bytes as written.
+    -- A page's fetch or XHR (cors), a fetch with mode same-origin and a
+    -- script load: the bytes as written. The mode alone decides, so a
+    -- missing or a frame's Sec-Fetch-Dest changes nothing.
     for _, marks in ipairs({
-        { "cors", "empty", "a page's fetch()" },
-        { "same-origin", "empty", "an XHR" },
+        { "cors", "empty", "a page's fetch() or XHR" },
+        { "same-origin", "empty", "a fetch with mode same-origin" },
         { "no-cors", "script", "HTML loaded as a script" },
+        { "cors", nil, "a cors fetch with no Sec-Fetch-Dest" },
+        { "same-origin", "iframe", "mode same-origin beside Sec-Fetch-Dest: iframe" },
     }) do
         local r = fetch(port, "/page.html", marks[1], marks[2])
         eq(r.status, 200, marks[3] .. " is 200")
         eq(r.body, PAGE, marks[3] .. " gets the bytes as written")
     end
+    local dest_only = fetch(port, "/page.html", nil, "document")
+    eq(dest_only.status, 200, "Sec-Fetch-Dest: document with no Sec-Fetch-Mode is 200")
+    eq(dest_only.body, injected, "and gets the script, as a client with no mode does")
     local listing = fetch(port, "/dir/", "cors", "empty")
     eq(listing.status, 200, "a listing a script fetches is 200")
     ok(listing.body:find("a.txt", 1, true) ~= nil and not listing.body:find(TAG, 1, true), "and carries no script")
 end)
 
-H.case("Section 2: every HTML response says it varies by Sec-Fetch-Mode", function()
-    -- The body differs by that header, so a cached fetched copy would
-    -- otherwise answer a later navigation without the script.
+H.case("Section 2: every page the server renders carries Vary", function()
+    -- The body differs by Sec-Fetch-Mode, so a cached fetched copy would
+    -- otherwise answer a later navigation without the script. The asset
+    -- route streams an .html file as bytes and a 404 page varies on nothing.
     local root = H.tmpdir()
     H.write_file(root .. "/page.html", PAGE)
     local port = serve(root).port
@@ -90,6 +98,20 @@ H.case("Section 2: every HTML response says it varies by Sec-Fetch-Mode", functi
     local both = fetch(serve(root, { headers = { Vary = "Accept-Encoding", vary = "Accept" } }).port, "/page.html")
     eq(both.status, 200, "two spellings of the name are served")
     eq(both.headers.vary, "Accept, Accept-Encoding, Sec-Fetch-Mode", "as one field")
+    eq(both.count.vary, 1, "on one line")
+    -- RFC 9110 5.6.1: a list carries no empty element and names a member once.
+    local empty = fetch(serve(root, { headers = { Vary = "" } }).port, "/page.html")
+    eq(empty.status, 200, "an empty configured Vary is served")
+    eq(empty.headers.vary, "Sec-Fetch-Mode", "and adds no empty element")
+    local named = fetch(serve(root, { headers = { Vary = "Sec-Fetch-Mode" } }).port, "/page.html")
+    eq(named.status, 200, "a configured Vary of Sec-Fetch-Mode is served")
+    eq(named.headers.vary, "Sec-Fetch-Mode", "and names it once")
+    local twice = fetch(serve(root, { headers = { Vary = "sec-fetch-mode, Accept" } }).port, "/page.html")
+    eq(twice.status, 200, "a configured list naming it in another case is served")
+    eq(twice.headers.vary, "sec-fetch-mode, Accept", "and keeps its first spelling alone")
+    local plain = fetch(serve(root, { live = { enabled = false, inject_script = false } }).port, "/page.html")
+    eq(plain.status, 200, "with inject_script off a page is served")
+    eq(plain.headers.vary, nil, "and carries no Vary: its body cannot vary")
 end)
 
 H.finish()

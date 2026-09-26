@@ -534,7 +534,8 @@ end
 
 -- A navigation is what a browser shows: a page, a frame, an object, an
 -- embed or a service worker's pass-through, and a page's own fetch is
--- never one. A client with no Fetch Metadata keeps the script.
+-- never one. A client with no Fetch Metadata keeps the script, and a
+-- download sends the navigation's mode and gets the script too.
 local function wants_injection(req)
     local mode = req and req.headers["sec-fetch-mode"]
     mode = mode and mode[1]
@@ -554,19 +555,31 @@ local function send_html_with_injection(inst, sock, html, extra_headers, req)
     for k, v in pairs(extra_headers or {}) do
         headers[k] = v
     end
-    -- The body differs by Sec-Fetch-Mode, so a cache must not answer a
-    -- navigation with a copy a page's fetch received. A configured Vary
-    -- under any spelling of the name joins the one field sent.
-    local vary = {}
-    for k, v in pairs(headers) do
-        if type(k) == "string" and k:lower() == "vary" then
-            table.insert(vary, tostring(v))
-            headers[k] = nil
+    -- With the script on, the body differs by Sec-Fetch-Mode, so a cache
+    -- must not answer a navigation with a copy a page's fetch received. A
+    -- configured Vary under any spelling of the name joins the one field
+    -- sent, a list with no empty member and each member once (RFC 9110
+    -- 5.6.1).
+    if inst.inject_script then
+        local configured = {}
+        for k, v in pairs(headers) do
+            if type(k) == "string" and k:lower() == "vary" then
+                table.insert(configured, tostring(v))
+                headers[k] = nil
+            end
         end
+        table.sort(configured)
+        table.insert(configured, "Sec-Fetch-Mode")
+        local members, seen = {}, {}
+        for member in table.concat(configured, ","):gmatch("[^,]+") do
+            member = member:match("^%s*(.-)%s*$")
+            if member ~= "" and not seen[member:lower()] then
+                seen[member:lower()] = true
+                table.insert(members, member)
+            end
+        end
+        headers.Vary = table.concat(members, ", ")
     end
-    table.sort(vary)
-    table.insert(vary, "Sec-Fetch-Mode")
-    headers.Vary = table.concat(vary, ", ")
     send_response(sock, 200, headers, html)
 end
 
