@@ -47,8 +47,10 @@ end
 
 -- -------- HTTP helpers -----------------------------------------------------
 
--- Reason phrases by status: one table for every status this server
--- sends, so a status line never reads "401 OK" again.
+-- Reason phrases by status: one table for every status this server sends
+-- or may send, so a status line never reads "401 OK" again. A status with
+-- no entry goes out with an empty reason, which RFC 9112 allows and which a
+-- suite row catches, never with a wrong one.
 local REASONS = {
     [200] = "OK",
     [301] = "Moved Permanently",
@@ -62,7 +64,7 @@ local REASONS = {
 }
 
 local function write_headers(sock, status, headers)
-    local reason = REASONS[status] or "OK"
+    local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
     for k, v in pairs(headers or {}) do
         table.insert(lines, ("%s: %s\r\n"):format(k, v))

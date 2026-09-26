@@ -340,4 +340,31 @@ H.case("Section 4b: a Host value that is not a host is 400 on every bind", funct
     eq(res[1] and res[1].status, 400, "an absolute-form authority that is not a host is 400")
 end)
 
+H.case("Section 5: every status the server sends has its reason phrase", function()
+    -- A status added to a response with no entry in the reason table would
+    -- go out with an empty reason, which RFC 9112 allows; this row makes
+    -- that omission a red run instead of a silent status line.
+    local src = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n")
+    local reasons = {}
+    for code in src:gmatch('%[(%d%d%d)%] = "') do
+        reasons[code] = true
+    end
+    ok(reasons["200"] and reasons["404"], "the reason table was read from the source")
+    local missing, seen = {}, {}
+    for code in src:gmatch("send_response%(%s*sock,%s*(%d%d%d)") do
+        seen[code] = true
+        if not reasons[code] then
+            table.insert(missing, code)
+        end
+    end
+    for code in src:gmatch("write_headers%(%s*sock,%s*(%d%d%d)") do
+        seen[code] = true
+        if not reasons[code] then
+            table.insert(missing, code)
+        end
+    end
+    ok(seen["401"] and seen["431"], "the status literals were read from the source")
+    eq(#missing, 0, "every status literal the server sends has a reason entry: " .. table.concat(missing, ","))
+end)
+
 H.finish()
