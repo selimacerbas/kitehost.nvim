@@ -91,6 +91,8 @@ H.case("Section 1: the behaviour the pipeline refactor keeps", function()
     assert(c:send("GET /whatever HTTP/1.1\r\n\r\n"))
     local after = c:read(300)
     eq(after, head, "a later chunk on the stream gets no response")
+    -- Silence alone would also fit a stream closed on the chunk.
+    eq(server.connected_client_count(inst), 1, "and the stream stays open")
     c:close()
     ok(
         H.wait_for(function()
