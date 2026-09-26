@@ -698,13 +698,18 @@ local function is_loopback_name(name)
     return name == "localhost" or name:sub(-10) == ".localhost" or is_loopback_ip(name)
 end
 
+-- The host a request names: its absolute-form authority, else its Host.
+local function request_host(req)
+    return req.authority or (req.headers.host and req.headers.host[1])
+end
+
 -- A DNS-rebinding page reaches a loopback bind under its own name, so the
 -- name must be one only this machine answers to. The port is never
 -- compared: an ssh -L tunnel sends localhost:<its own port>. A request
 -- with no Host (HTTP/1.0) passes: every browser sends one. parse_head has
 -- refused a value host_name cannot read; a nil here still refuses.
 local function host_ok(inst, req)
-    local value = req.authority or (req.headers.host and req.headers.host[1])
+    local value = request_host(req)
     if not value then
         return true
     end
@@ -716,10 +721,11 @@ local function host_ok(inst, req)
 end
 
 -- How a browser marked this request: "cross" when Sec-Fetch-Site or Origin
--- names another site or another port, "same" when either names this
--- server's origin or the site is "none" (a typed URL or an extension, the
--- user's own act, which no page can send), nil when it carries neither.
--- A no-cors GET carries no Origin, so Origin alone misses it.
+-- names another site or another port, "same" only when Sec-Fetch-Site is
+-- same-origin or none (a typed URL or an extension, the user's own act),
+-- nil otherwise. An Origin refuses and never admits: Sec-Fetch-Site is a
+-- header no page controls, while a page's own Origin rides on a WebSocket
+-- handshake and a POST, so under a rebinding name it names this server.
 local function request_site(req)
     local site = req.headers["sec-fetch-site"]
     site = site and site[1]
@@ -729,11 +735,10 @@ local function request_site(req)
     local origin = req.headers.origin
     origin = origin and origin[1]
     if origin then
-        local host = req.authority or (req.headers.host and req.headers.host[1])
+        local host = request_host(req)
         if host == nil or origin:lower() ~= ("http://" .. host):lower() then
             return "cross"
         end
-        return "same"
     end
     return (site == "same-origin" or site == "none") and "same" or nil
 end
@@ -751,7 +756,7 @@ local function unmarked_ok(inst, req)
     if not is_loopback_ip(inst.host) then
         return false
     end
-    local value = req.authority or (req.headers.host and req.headers.host[1])
+    local value = request_host(req)
     local name = value and host_name(value)
     return value == nil or (name ~= nil and is_loopback_name(name))
 end
