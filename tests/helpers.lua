@@ -363,13 +363,18 @@ end
 -- abort, an event stream read with a bound. Every luv call's nil, err is
 -- read, never hidden in a pcall around a closure, and every wait has its
 -- own bound. The connect bound sits above Windows's two-second retry of a
--- refused loopback connect (the H.http_get comment's measurement).
+-- refused loopback connect (the H.http_get comment's measurement). host is
+-- an IP literal: luv raises on a name instead of returning nil, err, and
+-- that raise is the suite's own defect.
 local Raw = {}
 Raw.__index = Raw
 local RAW_CONNECT_MS, RAW_STEP_MS = 5000, 2000
 
 function H.raw_connect(port, host)
-    local tcp = uv.new_tcp()
+    local tcp, terr = uv.new_tcp()
+    if not tcp then
+        return nil, terr
+    end
     local done, conn_err = false, nil
     local req, err = tcp:connect(host or "127.0.0.1", port, function(e)
         conn_err, done = e, true
@@ -446,11 +451,16 @@ function Raw:half_close()
     return true
 end
 
--- Resets the connection (an RST) instead of closing it.
+-- An RST where a test needs a reset; a closing handle has none to send.
 function Raw:abort()
-    if not self.tcp:is_closing() then
-        self.tcp:close_reset()
+    if self.tcp:is_closing() then
+        return true
     end
+    local r, err = self.tcp:close_reset()
+    if not r then
+        return nil, err
+    end
+    return true
 end
 
 function Raw:close()
@@ -460,7 +470,8 @@ function Raw:close()
 end
 
 -- The bytes received so far, after waiting up to ms for the peer's end or
--- for stop_when(bytes) to hold; eof says whether the peer ended.
+-- for stop_when(bytes) to hold; eof says whether the peer ended. self.err
+-- tells a reset from a FIN: ECONNRESET after a reset, nil after a FIN.
 function Raw:read(ms, stop_when)
     local function bytes()
         return table.concat(self.chunks)
