@@ -1083,4 +1083,44 @@ else
     H.skip("an ELOOP met through H.same_path names the suite's line (no symlink here)")
 end
 
+H.section("Section 8: teardown, the raw client, the response reader, the counters")
+-- A section that raises must still stop what it started: the next section
+-- counts sockets and descriptors, and a leftover listener would skew it.
+eq(
+    child_exit(
+        [[
+H.case("boom", function()
+    H.defer(function() io.stdout:write("cleanup ran\n") end)
+    error("deliberate")
+end)
+H.ok(true, "after")
+H.finish()]],
+        "FAIL: boom raised: .*deliberate.*cleanup ran.*PASS: after"
+    ),
+    1,
+    "a raising H.case is one FAIL, runs its cleanups, and the suite goes on"
+)
+eq(
+    child_exit(
+        [[
+H.defer(function() io.stdout:write("left over\n") end)
+H.ok(true, "x")
+H.finish()]],
+        "left over.*Results: 1 passed"
+    ),
+    0,
+    "H.finish runs the cleanups still registered before it rules"
+)
+eq(
+    child_exit(
+        [[
+H.defer(function() error("cleanup broke") end)
+H.ok(true, "x")
+H.finish()]],
+        "FAIL: a cleanup raised: .*cleanup broke"
+    ),
+    1,
+    "a cleanup that raises fails the suite"
+)
+
 H.finish()

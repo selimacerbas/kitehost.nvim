@@ -523,6 +523,39 @@ function H.skip(msg)
     H.write_line("  SKIP: " .. msg)
 end
 
+-- Cleanups a suite registers: stop a server, close a client. H.case runs
+-- the ones registered inside it when it ends, raise or not, and H.finish
+-- runs whatever is left before it rules, so a failed or raising section
+-- never leaves a listener or a socket for the next one to count.
+local deferred = {}
+local function run_deferred(mark)
+    while #deferred > mark do
+        local ok, err = pcall(table.remove(deferred))
+        if not ok then
+            failed = failed + 1
+            H.write_line("  FAIL: a cleanup raised: " .. headline(tostring(err)))
+        end
+    end
+end
+
+function H.defer(fn)
+    table.insert(deferred, fn)
+end
+
+-- A section whose body runs under xpcall: a raise is one FAIL naming the
+-- section, the sections after it still run, and its cleanups run either
+-- way.
+function H.case(title, fn)
+    H.section(title)
+    local mark = #deferred
+    local ok, err = xpcall(fn, debug.traceback)
+    if not ok then
+        failed = failed + 1
+        H.write_line("  FAIL: " .. title .. " raised: " .. headline(tostring(err)))
+    end
+    run_deferred(mark)
+end
+
 -- The exit code is the ruling every gate reads; the summary is for the reader.
 -- A suite that asserted nothing proved nothing, so it fails as well, and so
 -- does one whose callbacks raised, and one whose skips exceed a quarter of
@@ -536,6 +569,7 @@ end
 -- (measured), so a cq that raises or returns falls through to the real exit.
 function H.finish()
     open_ledger("H.finish")
+    run_deferred(0)
     finishing = true
     for _, e in ipairs(H.errors()) do
         failed = failed + 1
