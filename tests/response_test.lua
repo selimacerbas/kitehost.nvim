@@ -136,22 +136,23 @@ H.case("Section 2: cors never reaches /__live/*", function()
 end)
 
 -- The stream sends the caller's headers as the asset route does, and each
--- of its own fields once under any spelling of the name: a caller's line
--- beside the stream's own would leave the client to pick which it reads.
+-- of its own fields once: a caller's line beside the stream's own would
+-- leave the client to pick which it reads. Start refuses a caller's
+-- Content-Type and Connection; a Cache-Control, which a caller sets for
+-- its files, yields here under any spelling of the name.
 H.case("Section 3: the event stream carries the caller's headers, its own fields once", function()
     local inst = serve({
         headers = {
             ["X-Frame-Options"] = "DENY",
-            ["content-type"] = "text/plain",
             ["CACHE-CONTROL"] = "max-age=60",
-            ["connection"] = "close",
         },
     })
     local r = stream_head(inst.port, "/__live/events")
     eq(r.headers["x-frame-options"], "DENY", "a caller's header reaches the stream")
-    eq(r.headers["content-type"], "text/event-stream", "the stream's own type holds against a caller's spelling")
-    eq(r.count["content-type"], 1, "and goes out once")
-    eq(r.count["cache-control"], 1, "its Cache-Control goes out once")
+    eq(r.headers["content-type"], "text/event-stream", "the stream's own type")
+    eq(r.count["content-type"], 1, "goes out once")
+    eq(r.headers["cache-control"], "no-cache", "its Cache-Control holds against a caller's spelling")
+    eq(r.count["cache-control"], 1, "and goes out once")
     eq(r.count["connection"], 1, "and its Connection once")
 end)
 
@@ -403,6 +404,29 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
         ok(not r.body:find(root, 1, true) and not r.body:find(H.canon(root), 1, true), "its page shows no root path")
         ok(r.body:find("<code>" .. row[2] .. "</code>", 1, true) ~= nil, "it names " .. row[2])
     end
+end)
+
+-- The root route and the asset route answer with the instance's own header
+-- tables, by reference, and send_response writes Content-Length and
+-- Connection into the table it gets: a path that handed one over uncopied
+-- would put a stale length into every later response.
+H.case("Section 7: a response leaves the instance's header tables as start made them", function()
+    local inst = serve({ cors = true, headers = { ["X-Frame-Options"] = "DENY" } })
+    local port = inst.port
+    local headers, live_headers = vim.deepcopy(inst.headers), vim.deepcopy(inst.live_headers)
+    eq(raw(port, get("/style.css", port)).status, 200, "a file is served")
+    eq(raw(port, get("/index.html", port)).status, 200, "a page is served")
+    eq(raw(port, get("/missing", port)).status, 404, "a 404 is served")
+    eq(raw(port, get("/__live/asset?p=pic.png", port)).status, 200, "an asset is served")
+    eq(stream_head(port, "/__live/events").status, 200, "the stream head is served")
+    local function shown(t)
+        return vim.inspect(t, { newline = " ", indent = "" })
+    end
+    ok(vim.deep_equal(inst.headers, headers), "inst.headers is as start made it: " .. shown(inst.headers))
+    ok(
+        vim.deep_equal(inst.live_headers, live_headers),
+        "inst.live_headers is as start made it: " .. shown(inst.live_headers)
+    )
 end)
 
 H.finish()

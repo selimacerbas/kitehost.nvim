@@ -782,7 +782,12 @@ end)
 -- "Access-Control-Allow-Origin " let any site read the event stream
 -- (measured); a colon in a name or a CR or LF in a value sends a header
 -- other than the one named, a key that is not a string went out as a
--- number, and a headers string opened the socket before it raised. A cors
+-- number, and a headers string opened the socket before it raised. A
+-- caller's Content-Type, Content-Length, Transfer-Encoding or Connection
+-- replaced the server's own or went out beside it: a second framing line
+-- that left Chrome rendering nothing, and on the asset route a type that
+-- rendered a text file as HTML in the server's origin, past the sandbox
+-- its extension decides. A cors
 -- value goes out as a header value too, so a CR or LF in it wrote a line
 -- of its own; one that is no origin as a browser sends it could never
 -- match, and a list is walked with ipairs, which skips a map's keys.
@@ -820,6 +825,30 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names,
             { ["X-Custom"] = "a\r\nSet-Cookie: x=1" },
             "headers: a name must be a token and a value a line: X-Custom",
         },
+        -- Chromium splits a header at a bare LF, so either character alone
+        -- is refused, not only the pair.
+        { "headers", { ["X-Custom"] = "a\rb" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\nb" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = 1 }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { [""] = "x" }, "headers: a name must be a token and a value a line: " },
+        { "headers", { ["X\tA"] = "x" }, "headers: a name must be a token and a value a line: X\tA" },
+        { "headers", { ["Content-Type"] = "text/html" }, "headers: Content-Type is the server's own field" },
+        { "headers", { ["content-type"] = "text/html" }, "headers: content-type is the server's own field" },
+        { "headers", { ["Content-Length"] = "1" }, "headers: Content-Length is the server's own field" },
+        { "headers", { ["content-length"] = "1" }, "headers: content-length is the server's own field" },
+        {
+            "headers",
+            { ["Transfer-Encoding"] = "chunked" },
+            "headers: Transfer-Encoding is the server's own field",
+        },
+        {
+            "headers",
+            { ["transfer-encoding"] = "chunked" },
+            "headers: transfer-encoding is the server's own field",
+        },
+        { "headers", { ["Connection"] = "keep-alive" }, "headers: Connection is the server's own field" },
+        { "headers", { ["connection"] = "keep-alive" }, "headers: connection is the server's own field" },
+        { "headers", { ["CONTENT-type"] = "text/html" }, "headers: CONTENT-type is the server's own field" },
         { "headers", "x", "headers must be a table" },
         { "cors", "http://a.example\r\nSet-Cookie: x=1", "cors entry is not an origin" },
         { "cors", "http://a.example\n", "cors entry is not an origin" },

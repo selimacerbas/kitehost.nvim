@@ -85,8 +85,22 @@ local function write_headers(sock, status, headers)
     sock:write(table.concat(lines))
 end
 
+-- The fields a response computes for itself, which start refuses in a
+-- caller's headers under any spelling.
+local SERVER_FIELDS = {
+    ["content-type"] = true,
+    ["content-length"] = true,
+    ["transfer-encoding"] = true,
+    ["connection"] = true,
+}
+
+-- A copy: root_headers and asset_headers hand back the instance's own
+-- tables, and a length written into one would ride every later response.
 local function send_response(sock, status, headers, body)
-    local h = headers or {}
+    local h = {}
+    for k, v in pairs(headers or {}) do
+        h[k] = v
+    end
     if body then
         h["Content-Length"] = #body
     end
@@ -454,15 +468,14 @@ local CLIENT_JS_TOKEN = table.concat({
     CLIENT_END,
 })
 
--- A caller's header under another spelling of one of these names would go
--- out as a second line beside the stream's own.
-local SSE_OWN = { ["content-type"] = true, ["cache-control"] = true, ["connection"] = true }
-
 local function sse_accept(inst, sock)
     local h = {}
-    -- Every key is a token string: start refuses any other.
+    -- Every key is a token string: start refuses any other, and the
+    -- stream's Content-Type and Connection. A caller's Cache-Control, set
+    -- for its files, would go out under another spelling as a second line
+    -- beside the stream's own.
     for k, v in pairs(inst.live_headers) do
-        if not SSE_OWN[k:lower()] then
+        if k:lower() ~= "cache-control" then
             h[k] = v
         end
     end
@@ -1620,8 +1633,11 @@ function S.start(cfg)
     -- A header is written as the table spells it. Chromium trims a name, so
     -- "Access-Control-Allow-Origin " let any site read the event stream
     -- (measured); a colon in a name or a CR or LF in a value sends a header
-    -- other than the one named. The copy comes from the same pass, so the
-    -- table served is the one checked.
+    -- other than the one named. The fields the server computes are its own:
+    -- a caller's replaced them or went out beside them, a second framing
+    -- line, or a Content-Type that rendered an asset as HTML past the
+    -- sandbox its extension decides. The copy comes from the same pass, so
+    -- the table served is the one checked.
     local cfg_headers = cfg.headers or {}
     if type(cfg_headers) ~= "table" then
         error("headers must be a table of header names and values", 0)
@@ -1630,6 +1646,9 @@ function S.start(cfg)
     for k, v in pairs(cfg_headers) do
         if type(k) ~= "string" or not k:find("^[%w!#$%%&'*+%-.^_`|~]+$") or type(v) ~= "string" or v:find("[\r\n]") then
             error("headers: a name must be a token and a value a line: " .. tostring(k), 0)
+        end
+        if SERVER_FIELDS[k:lower()] then
+            error(("headers: %s is the server's own field"):format(k), 0)
         end
         headers[k] = v
     end
