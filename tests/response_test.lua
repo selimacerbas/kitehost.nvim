@@ -346,11 +346,12 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
     -- so each fixture is measured and its checks skipped where it is not.
     H.write_file(root .. "/.env", "S")
     local linked, link_err = uv.fs_symlink(".env", root .. "/link.txt")
-    if linked and uv.fs_stat(root .. "/link.txt") then
+    local link_st, link_st_err = uv.fs_stat(root .. "/link.txt")
+    if linked and link_st then
         names_request("/link.txt?t=secret", "/link.txt", "a link to a dot name")
     else
         for _ = 1, 3 do
-            H.skip("a link to a dot name's 404 (" .. tostring(link_err or "the link does not resolve") .. ")")
+            H.skip("a link to a dot name's 404 (" .. tostring(link_err or link_st_err) .. ")")
         end
     end
     local pipe = assert(uv.new_pipe(false))
@@ -358,12 +359,14 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
         pipe:close()
     end)
     local bound, bind_err = pipe:bind(root .. "/sock.s")
-    local sock_st = bound and uv.fs_stat(root .. "/sock.s")
-    if sock_st and sock_st.type ~= "file" and sock_st.type ~= "directory" then
+    local sock_st, sock_st_err = uv.fs_stat(root .. "/sock.s")
+    if bound and sock_st and sock_st.type ~= "file" and sock_st.type ~= "directory" then
         names_request("/sock.s?t=secret", "/sock.s", "a socket")
     else
         for _ = 1, 3 do
-            H.skip("a socket's 404 (" .. tostring(bind_err or "the bind made no socket file") .. ")")
+            H.skip(
+                "a socket's 404 (" .. tostring(bind_err or sock_st_err or ("the bind made a " .. sock_st.type)) .. ")"
+            )
         end
     end
     local rows = {
