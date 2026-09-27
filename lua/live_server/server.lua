@@ -694,7 +694,11 @@ local function dir_listing_html(inst, fs_path, req_path)
         -- A name the dot rule refuses is not shown: show_hidden alone
         -- named .env and .git to anyone the server answers, behind 404s.
         local shown = show_all or name:sub(1, 1) ~= "."
-        if shown and t == "link" then
+        -- luv gives no type for an entry a filesystem leaves untyped (XFS
+        -- with ftype=0, some NFS and FUSE mounts), so anything not typed as
+        -- a file or a directory is judged as a link; a plain entry so judged
+        -- costs one realpath and shows as before.
+        if shown and t ~= "file" and t ~= "directory" then
             shown = link_shown(name)
         end
         if shown then
@@ -897,6 +901,8 @@ end
 -- read callback, where it left the request unanswered: a raise reads as a
 -- match no token satisfies, since the gate cannot tell what it protects.
 -- Every pattern is read, so the answer does not hang on the list's order.
+-- A 401 alone reads like a bad token, so the first pattern that raises is
+-- named once per instance, scheduled, as a request runs in a fast event.
 local function needs_auth(inst, p)
     if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
         return true
@@ -905,6 +911,16 @@ local function needs_auth(inst, p)
     for _, pat in ipairs(inst.protected_paths) do
         local read, hit = pcall(string.find, p, pat)
         if not read then
+            if not inst._unreadable_warned then
+                inst._unreadable_warned = true
+                vim.schedule(function()
+                    util.notify(
+                        "live-server: protected_paths pattern cannot be read, refusing what it gates: " .. pat,
+                        { notify = true },
+                        "WARN"
+                    )
+                end)
+            end
             return true, true
         end
         needed = needed or hit ~= nil
@@ -1457,7 +1473,9 @@ function S.start(cfg)
 
         -- auth
         token = cfg.token, -- nil = no auth; string = required on protected paths
-        protected_paths = cfg.protected_paths or {},
+        -- A copy of the checked list: the caller's table (init.lua hands the
+        -- user's own) holed or emptied after start dropped the gate.
+        protected_paths = vim.list_extend({}, protected or {}),
         serve_dotfiles = cfg.serve_dotfiles == true,
 
         -- /__live/asset root: a directory, or a function returning one.

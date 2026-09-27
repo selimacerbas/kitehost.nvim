@@ -568,6 +568,26 @@ H.case("start refuses a bad token, protected_paths or serve_dotfiles", function(
         local got = http_get(url)
         ok(got.status == 401, ("%s (got %d, curl %d)"):format(label, got.status, got.curl_exit))
     end
+    -- A 401 alone reads like a bad token, so the first pattern that cannot
+    -- be read is named once per instance. Captured here, where the real
+    -- notify would print to the run.
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    local warning = "live-server: protected_paths pattern cannot be read, refusing what it gates: /["
+    local function settled(count)
+        H.wait_for(function()
+            return #notes >= count
+        end, 1000)
+        -- A second warning scheduled by a later request would land here.
+        vim.wait(100)
+        return #notes
+    end
     local alone = unreadable_server({ "/[" })
     if alone then
         answers_401(alone, "/content.md under an unreadable pattern is 401 without the token, never unanswered")
@@ -575,13 +595,62 @@ H.case("start refuses a bad token, protected_paths or serve_dotfiles", function(
             alone .. "?t=" .. TOKEN,
             "and 401 with it: a pattern nobody can read gates every path it is asked about"
         )
+        local count = settled(1)
+        ok(
+            count == 1 and notes[1].level == vim.log.levels.WARN and notes[1].msg == warning,
+            ("two requests warn once, naming the pattern: %s"):format(
+                vim.inspect(notes, { newline = " ", indent = "" })
+            )
+        )
     end
     -- Every pattern is read, so a path an earlier pattern matches is asked
     -- about the unreadable one too.
     local after = unreadable_server({ "^/content%.md$", "/[" })
     if after then
         answers_401(after .. "?t=" .. TOKEN, "an unreadable pattern after a matching one refuses the token too")
+        local count = settled(2)
+        ok(
+            count == 2 and notes[2].msg == warning,
+            ("another instance warns once of its own: %s"):format(vim.inspect(notes, { newline = " ", indent = "" }))
+        )
     end
+    local before = #notes
+    local readable = server.start({
+        port = 0,
+        root = tmpdir,
+        token = TOKEN,
+        protected_paths = { "^/content%.md$" },
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(readable)
+    end)
+    answers_401(("http://127.0.0.1:%d/content.md"):format(readable.port), "a readable pattern gates as before")
+    vim.wait(100)
+    eq(#notes, before, "and a list of readable patterns warns nothing")
+end)
+
+-- The server read the caller's own table, which init.lua hands from the
+-- user's options, so a caller that holed or emptied it after start dropped
+-- the gate.
+H.case("the server keeps its own copy of protected_paths", function()
+    local patterns = { "^/content%.md$" }
+    local inst = server.start({
+        port = 0,
+        root = tmpdir,
+        token = TOKEN,
+        protected_paths = patterns,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local url = ("http://127.0.0.1:%d/content.md"):format(inst.port)
+    eq(http_get(url).status, 401, "/content.md without the token is 401")
+    patterns[1] = nil
+    eq(http_get(url).status, 401, "and stays 401 after the caller's list is holed")
 end)
 
 -- ─── Summary ────────────────────────────────────────────────────────────────

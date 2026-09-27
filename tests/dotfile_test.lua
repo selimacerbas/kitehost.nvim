@@ -298,4 +298,38 @@ H.case("Section 8: a listing judges a link by where it points", function()
     ok(sub_plain["/sub/f.txt"] and not sub_plain["/sub/wk"], rows[8])
 end)
 
+-- luv gives no type for an entry a filesystem leaves untyped (XFS with
+-- ftype=0, some NFS and FUSE mounts), and the link check ran for "link"
+-- alone, so there cfg -> .git was listed by name. The scan is wrapped to
+-- drop every type, as such a mount reports it.
+H.case("Section 9: an entry the scan leaves untyped is judged as a link", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/.git", "p")
+    H.write_file(site .. "/page.txt", "page")
+    local linked, link_err = uv.fs_symlink(".git", site .. "/cfg")
+    if not (linked and uv.fs_stat(site .. "/cfg")) then
+        H.skip(
+            "an untyped cfg -> .git is not listed, page.txt is ("
+                .. tostring(link_err or "the link does not resolve")
+                .. ")"
+        )
+        return
+    end
+    local base = serve(site, { features = { dirlist = { enabled = true } } })
+    local real_next = uv.fs_scandir_next
+    H.defer(function()
+        uv.fs_scandir_next = real_next
+    end)
+    uv.fs_scandir_next = function(iter)
+        local name = real_next(iter)
+        return name
+    end
+    local body = H.http_get(base .. "/").body
+    uv.fs_scandir_next = real_next
+    ok(
+        body:find('href="/page.txt"', 1, true) ~= nil and not body:find('href="/cfg', 1, true),
+        "an untyped cfg -> .git is not listed, page.txt is"
+    )
+end)
+
 H.finish()
