@@ -81,25 +81,34 @@ function U.random_token(byte_len)
         error("random_token: byte_len must be an integer from 1 to 1024", 2)
     end
     local data, rand_err = uv.random(byte_len)
-    local open_err, read_err
+    local dev_err
     if type(data) ~= "string" or #data ~= byte_len then
         data = nil
         local fd
-        fd, open_err = uv.fs_open("/dev/urandom", "r", 384)
+        fd, dev_err = uv.fs_open("/dev/urandom", "r", 384)
         if fd then
-            local read
-            read, read_err = uv.fs_read(fd, byte_len, 0)
-            uv.fs_close(fd)
-            if type(read) == "string" and #read == byte_len then
-                data = read
+            -- On Windows the path names <drive>:\dev\urandom, a file another
+            -- local account could plant, so only a character device is read.
+            local stat, stat_err = uv.fs_fstat(fd)
+            if not stat then
+                dev_err = stat_err
+            elseif stat.type ~= "char" then
+                dev_err = "not a character device"
+            else
+                local read
+                read, dev_err = uv.fs_read(fd, byte_len, 0)
+                if type(read) == "string" and #read == byte_len then
+                    data = read
+                end
             end
+            uv.fs_close(fd)
         end
     end
     if not data then
         error(
             ("random_token: no secure random source (vim.uv.random: %s; /dev/urandom: %s)"):format(
                 tostring(rand_err or "short read"),
-                tostring(open_err or read_err or "short read")
+                tostring(dev_err or "short read")
             ),
             2
         )

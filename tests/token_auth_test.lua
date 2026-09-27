@@ -54,6 +54,24 @@ end
 local tok = util.random_token(16)
 eq(calls, 1, "random_token reads vim.uv.random")
 ok(#tok == 32 and tok:match("^[0-9a-f]+$") ~= nil, "and returns 32 hex characters")
+-- A count of calls passed a token drawn elsewhere after the call, from
+-- /dev/urandom on every POSIX host, so the bytes are pinned. The stub
+-- answers as luv does: a call with flags or a callback returns 0 and
+-- delivers its bytes later, never as the token.
+uv.random = function(n, ...)
+    if select("#", ...) > 0 then
+        return 0
+    end
+    local bytes = {}
+    for i = 0, n - 1 do
+        bytes[#bytes + 1] = string.char(i % 256)
+    end
+    return table.concat(bytes)
+end
+eq(util.random_token(16), "000102030405060708090a0b0c0d0e0f", "the token is vim.uv.random's bytes in hex, exactly")
+uv.random = real_random
+local plain = util.random_token()
+ok(#plain == 32 and plain:match("^[0-9a-f]+$") ~= nil, "no length takes the default, 32 hex characters: " .. plain)
 uv.random = function()
     return nil, "EIO: stubbed", "EIO"
 end
@@ -86,6 +104,9 @@ for _, bad in ipairs({ { -1, "a negative length" }, { math.huge, "an infinite le
         H.skip(bad[2] .. " leaves no descriptor open (no descriptor listing on this platform)")
     end
 end
+-- A length of 0 returned "", the token value start exists to refuse.
+raises_length_error(0, "a length of 0 raises the length error")
+raises_length_error(1025, "a length of 1025 raises the length error")
 raises_length_error(2 ^ 31, "a length of 2^31 raises the length error")
 raises_length_error(1.5, "a fractional length raises the length error")
 raises_length_error("16", "a string length raises the length error")
@@ -117,6 +138,95 @@ H.case("Section 1b: with no source the raise names both causes", function()
             and err:find("EACCES: urandom stubbed", 1, true) ~= nil,
         "the message names vim.uv.random's and /dev/urandom's errors: " .. err
     )
+end)
+
+-- With vim.uv.random failing, /dev/urandom is the source: no row read it
+-- answering, so its bytes dropped, a short read taken or its descriptor
+-- left open all stayed green. It is read only as a character device: on
+-- Windows the path names <drive>:\dev\urandom, which another local
+-- account could plant, and a planted file gave a predictable token.
+H.case("Section 1c: /dev/urandom answers when vim.uv.random fails, as a device alone", function()
+    local real_read = uv.fs_read
+    H.defer(function()
+        uv.random, uv.fs_open, uv.fs_read = real_random, real_open, real_read
+    end)
+    uv.random = function()
+        return nil, "EIO: random stubbed", "EIO"
+    end
+    local function fds_kept(before, label)
+        if before then
+            eq(H.fd_count(), before, label)
+        else
+            H.skip(label .. " (no descriptor listing on this platform)")
+        end
+    end
+    local dev, dev_err = uv.fs_stat("/dev/urandom")
+    if not (dev and dev.type == "char") then
+        local why = " (no /dev/urandom device here: " .. tostring(dev_err or (dev and dev.type)) .. ")"
+        for _, row in ipairs({
+            "/dev/urandom answers with 32 hex characters",
+            "and its descriptor is closed",
+            "the token is the bytes read, in hex",
+            "a short read raises naming both causes",
+            "and its descriptor is closed",
+        }) do
+            H.skip(row .. why)
+        end
+    else
+        local fds = H.fd_count()
+        local good, res = pcall(util.random_token, 16)
+        ok(
+            good and #res == 32 and res:match("^[0-9a-f]+$") ~= nil,
+            "/dev/urandom answers with 32 hex characters: " .. tostring(res)
+        )
+        fds_kept(fds, "and its descriptor is closed")
+        -- The device's own descriptor answers with known bytes.
+        local device_fd
+        uv.fs_open = function(path, ...)
+            local fd, err, name = real_open(path, ...)
+            if path == "/dev/urandom" then
+                device_fd = fd
+            end
+            return fd, err, name
+        end
+        local short = false
+        uv.fs_read = function(fd, len, ...)
+            if fd == device_fd then
+                return string.rep("\171", short and len - 1 or len)
+            end
+            return real_read(fd, len, ...)
+        end
+        good, res = pcall(util.random_token, 4)
+        eq(res, "abababab", "the token is the bytes read, in hex")
+        short = true
+        fds = H.fd_count()
+        good, res = pcall(util.random_token, 16)
+        res = tostring(res)
+        ok(
+            not good
+                and res:find("vim.uv.random: EIO: random stubbed", 1, true) ~= nil
+                and res:find("/dev/urandom: short read", 1, true) ~= nil,
+            "a short read raises naming both causes: " .. res
+        )
+        fds_kept(fds, "and its descriptor is closed")
+        uv.fs_open, uv.fs_read = real_open, real_read
+    end
+    local planted = H.tmpdir() .. "/urandom"
+    H.write_file(planted, string.rep("A", 64))
+    uv.fs_open = function(path, ...)
+        if path == "/dev/urandom" then
+            return real_open(planted, ...)
+        end
+        return real_open(path, ...)
+    end
+    local fds = H.fd_count()
+    local good, res = pcall(util.random_token, 16)
+    res = tostring(res)
+    ok(
+        not good and res:find("/dev/urandom: not a character device", 1, true) ~= nil,
+        "a regular file at the path is no source: " .. res
+    )
+    fds_kept(fds, "and the planted file's descriptor is closed")
 end)
 
 -- ─── Section 2: server with token ───────────────────────────────────────────
