@@ -834,6 +834,17 @@ local function root_rel(inst, path)
     return rel == "" and "/" or rel
 end
 
+-- A path segment naming a dotfile or dot directory; .well-known stays
+-- public (RFC 8615).
+local function has_dot_segment(p)
+    for seg in p:gmatch("[^/]+") do
+        if seg:sub(1, 1) == "." and seg ~= ".well-known" then
+            return true
+        end
+    end
+    return false
+end
+
 -- Answers one parsed request: the token gate, the routes and every
 -- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
@@ -856,6 +867,10 @@ local function handle_request(conn, req)
     local path_only = normalize_path(req.path)
     if not path_only then
         return http_400(sock, "Bad request path")
+    end
+    -- Dotfiles hold secrets and the listing already hides them.
+    if not inst.serve_dotfiles and has_dot_segment(path_only) then
+        return http_404(sock, req.path)
     end
     local query = req.path:match("%?(.*)$") or ""
 
@@ -901,6 +916,8 @@ local function handle_request(conn, req)
             if path ~= inst.default_index or path_only ~= "/" then
                 return 404
             end
+        elseif not inst.serve_dotfiles and has_dot_segment(rel) then
+            return 404
         elseif not authorized(rel) then
             return 401
         end
@@ -1218,6 +1235,7 @@ function S.start(cfg)
         -- auth
         token = cfg.token, -- nil = no auth; string = required on protected paths
         protected_paths = cfg.protected_paths or {},
+        serve_dotfiles = cfg.serve_dotfiles == true,
 
         -- /__live/asset root: a directory, or a function returning one.
         -- Lets a caller expose files that live next to its source document
