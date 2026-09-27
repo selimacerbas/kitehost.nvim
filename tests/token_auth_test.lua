@@ -69,15 +69,54 @@ ok(
     "with no source it raises: " .. tostring(made_err)
 )
 uv.random, uv.fs_open = real_random, real_open
-local fds = H.fd_count()
-ok(not pcall(util.random_token, -1), "a negative length raises")
-if fds then
-    eq(H.fd_count(), fds, "and leaves no descriptor open")
-else
-    H.skip("a negative length leaves no descriptor open (no descriptor listing on this platform)")
+-- A bad length raises before any source is read. Infinity equals its own
+-- floor, and the /dev/urandom read it reached raised before the descriptor
+-- closed, one descriptor lost per call; a length of 2^31 held the editor
+-- 16 s reading 2 GB (measured).
+local function raises_length_error(len, label)
+    local good, err = pcall(util.random_token, len)
+    ok(not good and tostring(err):find("byte_len must be", 1, true) ~= nil, label .. ": " .. tostring(err))
 end
+for _, bad in ipairs({ { -1, "a negative length" }, { math.huge, "an infinite length" } }) do
+    local fds = H.fd_count()
+    raises_length_error(bad[1], bad[2] .. " raises the length error")
+    if fds then
+        eq(H.fd_count(), fds, bad[2] .. " leaves no descriptor open")
+    else
+        H.skip(bad[2] .. " leaves no descriptor open (no descriptor listing on this platform)")
+    end
+end
+raises_length_error(2 ^ 31, "a length of 2^31 raises the length error")
+raises_length_error(1.5, "a fractional length raises the length error")
+raises_length_error("16", "a string length raises the length error")
+local long = util.random_token(1024)
+ok(#long == 2048 and long:match("^[0-9a-f]+$") ~= nil, "a length of 1024 returns 2048 hex characters")
 math.randomseed = real_seed
 eq(seeds, 0, "the global math.randomseed is never called")
+
+-- With neither source the raise carries both errors, so the host says why.
+H.case("Section 1b: with no source the raise names both causes", function()
+    H.defer(function()
+        uv.random, uv.fs_open = real_random, real_open
+    end)
+    uv.random = function()
+        return nil, "EIO: random stubbed", "EIO"
+    end
+    uv.fs_open = function(path, ...)
+        if path == "/dev/urandom" then
+            return nil, "EACCES: urandom stubbed", "EACCES"
+        end
+        return real_open(path, ...)
+    end
+    local good, err = pcall(util.random_token, 16)
+    err = tostring(err)
+    ok(
+        not good
+            and err:find("EIO: random stubbed", 1, true) ~= nil
+            and err:find("EACCES: urandom stubbed", 1, true) ~= nil,
+        "the message names vim.uv.random's and /dev/urandom's errors: " .. err
+    )
+end)
 
 -- ─── Section 2: server with token ───────────────────────────────────────────
 H.section("Section 2: server enforces token")

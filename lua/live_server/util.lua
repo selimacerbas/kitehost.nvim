@@ -67,21 +67,26 @@ function U.url_encode(s)
     )
 end
 
--- A hex token from the OS random source: vim.uv.random (the platform's
--- CSPRNG, Windows included), then /dev/urandom. With neither it raises
--- rather than hand out a guessable token; the math.random fallback held
--- about 31 bits and reseeded the global generator.
+-- A hex token from the OS random source alone: vim.uv.random (the
+-- platform's CSPRNG, Windows included), then /dev/urandom, else a raise.
+-- Never a userland PRNG fallback: math.random is seeded from about 31
+-- bits, and reseeding it disturbs every other user of the global
+-- generator. 1024 bytes is far above any secret's size and keeps the read
+-- and the hex conversion trivial.
 function U.random_token(byte_len)
     byte_len = byte_len or 16 -- 16 bytes = 32 hex characters = 128 bits
-    if type(byte_len) ~= "number" or byte_len < 1 or byte_len ~= math.floor(byte_len) then
-        error("random_token: byte_len must be a positive integer", 2)
+    if type(byte_len) ~= "number" or byte_len % 1 ~= 0 or byte_len < 1 or byte_len > 1024 then
+        error("random_token: byte_len must be an integer from 1 to 1024", 2)
     end
-    local data = uv.random(byte_len)
+    local data, rand_err = uv.random(byte_len)
+    local open_err, read_err
     if type(data) ~= "string" or #data ~= byte_len then
         data = nil
-        local fd = uv.fs_open("/dev/urandom", "r", 384)
+        local fd
+        fd, open_err = uv.fs_open("/dev/urandom", "r", 384)
         if fd then
-            local read = uv.fs_read(fd, byte_len, 0)
+            local read
+            read, read_err = uv.fs_read(fd, byte_len, 0)
             uv.fs_close(fd)
             if type(read) == "string" and #read == byte_len then
                 data = read
@@ -89,7 +94,13 @@ function U.random_token(byte_len)
         end
     end
     if not data then
-        error("random_token: no secure random source (vim.uv.random and /dev/urandom both failed)", 2)
+        error(
+            ("random_token: no secure random source (vim.uv.random: %s; /dev/urandom: %s)"):format(
+                tostring(rand_err or "short read"),
+                tostring(open_err or read_err or "short read")
+            ),
+            2
+        )
     end
     return (data:gsub(".", function(c)
         return string.format("%02x", string.byte(c))
