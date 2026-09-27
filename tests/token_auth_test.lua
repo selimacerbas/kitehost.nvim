@@ -658,8 +658,10 @@ end)
 
 -- Each refused before any socket opens. An empty token is truthy, so it
 -- would mark every request as the token's holder and pass the gate with
--- no t= at all. protected_paths is walked with ipairs, which skips a
--- map's keys and stops at a hole, so a map protected nothing and the
+-- no t= at all. A false token, read as none, would pass the check that
+-- patterns need a token and leave the files they name open to any
+-- request (measured). protected_paths is walked with ipairs, which skips
+-- a map's keys and stops at a hole, so a map protected nothing and the
 -- entries after a hole were never read, without a word; a malformed
 -- pattern started and then raised in the read callback of every request,
 -- which was never answered; serve_dotfiles = 1 read as false. Patterns
@@ -672,6 +674,7 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_name
     local bad = {
         { "token", "" },
         { "token", 42 },
+        { "token", false },
         { "protected_paths", { content = "^/content%.md$" } },
         { "protected_paths", { [1] = "^/a$", [3] = "^/b$" } },
         { "protected_paths", { 42 } },
