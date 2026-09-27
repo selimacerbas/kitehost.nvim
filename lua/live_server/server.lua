@@ -501,9 +501,11 @@ local function schedule_reload(inst, changed_path)
     if ignorable and #inst.ignore_patterns > 0 and util.match_ignore("/" .. rel, inst.ignore_patterns) then
         return
     end
-    -- The file the user started on reloads the page at /, and the path it
-    -- sits at may be the dot target of a plain-named link.
-    inst._last_change = own and "/" or rel or inst._last_change
+    -- The file the user started on reloads the page at /; when it sits on
+    -- a dot path (its own name, or the target of a plain-named link) the
+    -- payload says / so no dot name reaches an events client, and a plain
+    -- name keeps its path, so a started-on stylesheet still swaps.
+    inst._last_change = (own and has_dot_segment(rel)) and "/" or rel or inst._last_change
     inst.debounce_timer:stop()
     inst.debounce_timer:start(inst.live_debounce, 0, function()
         S.reload(inst, inst._last_change or "")

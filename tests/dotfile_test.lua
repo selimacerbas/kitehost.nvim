@@ -353,6 +353,26 @@ H.case("Section 7: a dot path's change sends no reload", function()
         reloaded(uc, umark, 2000, '"path":"page%.html"') and not streamed(uc, umark, "dist/"),
         "and a line dist drops both " .. named(uc, umark)
     )
+    -- A started-on file with a plain name keeps its path in the payload, so
+    -- a stylesheet started on still swaps instead of reloading the page.
+    local css_site = H.tmpdir()
+    H.write_file(css_site .. "/style.css", "body{}")
+    local _, cc, cmark = watched({ default_index = css_site .. "/style.css" }, css_site)
+    H.write_file(css_site .. "/style.css", "body{color:red}")
+    ok(
+        reloaded(cc, cmark, 2000, '"path":"style%.css","css":true'),
+        "a started-on style.css reloads as a stylesheet swap, named " .. named(cc, cmark)
+    )
+    -- A .liveignore line holding a bracket or a question mark raised inside
+    -- the watcher once its literal prefix matched a path, and the reload
+    -- was lost; every pattern character is escaped.
+    local bracket = ignore_site("draft[\n")
+    local _, bc, bmark = watched(nil, bracket)
+    H.write_file(bracket .. "/draft.html", "<html><body>bracket</body></html>")
+    ok(
+        reloaded(bc, bmark, 2000, '"path":"draft%.html"'),
+        "a .liveignore line with a bracket is read and draft.html reloads " .. named(bc, bmark)
+    )
 end)
 
 -- libuv names an event on the watched directory itself by the directory's
