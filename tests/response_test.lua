@@ -1,8 +1,11 @@
 -- tests/response_test.lua
 -- What every response carries and what it must not: the referrer policy,
--- the cors headers (never on /__live/*), the preflight answer and the
--- request headers it allows, a cors list's echo of a listed Origin, and a
--- 404 that names the request, never a filesystem path or the query.
+-- the cors headers (never on /__live/*), the event stream's caller headers
+-- and its own fields once, the preflight answer (before the token gate,
+-- never with cors off or on /__live/*) and the request headers it allows,
+-- a cors list's echo of a listed Origin, a 404 that names the request,
+-- never a filesystem path or the query, and the instance's header tables
+-- left as start made them.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -160,10 +163,11 @@ H.case("Section 3: the event stream carries the caller's headers, its own fields
     eq(r.count["connection"], 1, "and its Connection once")
 end)
 
--- cors = true promised cross-origin reads of the root route, but the
--- browser's preflight got 405 and it refused the read. /__live/* answers
--- no cross-origin read, so its preflight keeps the 405, and every 405
--- names the one method served (RFC 9110 15.5.6). The path checks still
+-- Under cors = true a simple cross-origin GET of the root route was
+-- readable, but a read carrying a header outside the safelist sends a
+-- preflight first, which got 405, and the browser refused it. /__live/*
+-- answers no cross-origin read, so its preflight keeps the 405, and every
+-- 405 names the one method served (RFC 9110 15.5.6). The path checks still
 -- come first: a NUL in the path is 400 whatever the method. A preflight
 -- that named no request header refused every read carrying one outside
 -- the safelist (a custom header, Authorization, a JSON Content-Type), so

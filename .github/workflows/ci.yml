@@ -93,8 +93,8 @@ jobs:
         run: sh tests/floor_smoke.sh
 
   # The suites on Windows, gating as the other test jobs do; it joined ci-ok
-  # after three green hosted runs. The token fallback (no /dev/urandom) has
-  # no assertion of its own.
+  # after three green hosted runs. The token draws from vim.uv.random here as
+  # on every platform, and token_auth_test asserts that source on every leg.
   windows:
     name: windows (nvim stable)
     runs-on: windows-latest

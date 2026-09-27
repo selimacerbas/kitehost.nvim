@@ -35,7 +35,7 @@ local defaults = {
     notify = true,
     notify_on_reload = false, -- show notification on every live-reload
     headers = { ["Cache-Control"] = "no-cache" },
-    cors = false, -- true/"*" or origin string
+    cors = false, -- true/"*", one origin or a list of origins
     index_names = { "index.html", "index.htm" },
     auto_start = nil, -- { filetypes = {"html"}, port = 8000 }
 

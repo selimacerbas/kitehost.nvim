@@ -104,7 +104,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
   notify           = true,           -- use vim.notify for events
   notify_on_reload = false,          -- notify on every live-reload event
   headers          = { ["Cache-Control"] = "no-cache" }, -- extra response headers
-  cors             = false,          -- true/"*" or origin string (e.g. "http://localhost:3000")
+  cors             = false,          -- true/"*", one origin (e.g. "http://localhost:3000") or a list of origins
   index_names      = { "index.html", "index.htm" }, -- index files to try in order
 
   auto_start = nil,                  -- set to auto-start on filetype, e.g.:
@@ -159,7 +159,7 @@ A line starting with `/` is anchored at the served root: `/dist` skips `dist/` a
 
 ### CORS
 
-Enable cross-origin headers for all responses:
+Enable cross-origin headers on the root route's responses; `/__live/*` never carries them:
 
 ```lua
 cors = true,                         -- Access-Control-Allow-Origin: *
@@ -297,7 +297,7 @@ When `cfg.token` is set, the server requires `?t=<token>` on:
 * `/__live/asset` (the asset route)
 * Any path matching one of the Lua patterns in `cfg.protected_paths`
 
-Static assets (`index.html`, `style.css`, etc.) are intentionally not gated because the browser bootstraps from them before any JS runs and cannot append query strings to tags it discovers itself. Token-bearing requests for everything else are the caller's responsibility: pass `?t=<token>` to the browser via the initial URL, then stash it in `sessionStorage` and append it on every `fetch`/`EventSource` call.
+Static assets (`index.html`, `style.css`, etc.) are intentionally not gated because the browser bootstraps from them before any JS runs and cannot append query strings to tags it discovers itself. Everything else needs `?t=<token>`: pass it to the browser via the initial URL, and the injected client keeps it in `sessionStorage` and puts it on the event stream itself, while a caller's own `fetch`/`EventSource` calls still append it.
 
 `util.random_token(byte_len)` generates a hex token (default 16 bytes = 128 bits) from the operating system's random source (`vim.uv.random`, then `/dev/urandom`) and raises when neither is available. `util.secure_compare(a, b)` is a constant-time-ish string compare for token validation.
 

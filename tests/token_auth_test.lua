@@ -1,12 +1,17 @@
 -- tests/token_auth_test.lua
--- Verify that cfg.token gates /__live/events, /__live/inject, and any path
--- listed in cfg.protected_paths, while leaving static assets (index.html)
--- reachable without auth. The gate reads the request path, then the name
--- on disk of the file, index or directory about to be served (a case
--- variant, a link); a NUL or a backslash in the path is 400 before it; a
--- link out of the root is 404; and start refuses a bad token,
--- protected_paths (patterns with no token among them), serve_dotfiles,
--- index_names, headers or cors before any socket opens.
+-- The token's source first: random_token draws from vim.uv.random, then
+-- /dev/urandom read as a character device, and raises naming both when
+-- neither answers; its bytes are the token, its length an integer from 1
+-- to 1024 (16 by default), and no descriptor stays open. Then verify that
+-- cfg.token gates /__live/events, /__live/inject, and any path listed in
+-- cfg.protected_paths, while leaving static assets (index.html) reachable
+-- without auth. The gate reads the request path, then the name on disk of
+-- the file, index or directory about to be served (a case variant, a
+-- link); a NUL or a backslash in the path is 400 before it; a link out of
+-- the root is 404; and start refuses a bad token, protected_paths
+-- (patterns with no token among them), serve_dotfiles, index_names,
+-- headers (the server's own fields among them) or cors before any socket
+-- opens.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
