@@ -3,6 +3,7 @@
 --   - serves files relative to cfg.asset_root (string or function form)
 --   - requires ?t=<token> when token auth is configured
 --   - rejects traversal (a symlink out of the root too), absolute paths, and schemes
+--   - refuses secrets by name (.env, .git, key files) and anything but a file
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -19,6 +20,7 @@ local eq, http_get, write_file = H.eq, H.http_get, H.write_file
 --   tmpdir/www/index.html          (served root)
 --   tmpdir/src/pic.png             (asset root)
 --   tmpdir/src/sub/nested.txt
+--   tmpdir/src/.images/pic.png     (a dot directory served on purpose)
 --   tmpdir/secret.txt              (outside asset root)
 local tmpdir = H.tmpdir()
 vim.fn.mkdir(tmpdir .. "/www", "p")
@@ -27,6 +29,17 @@ write_file(tmpdir .. "/www/index.html", "<html><body>ok</body></html>")
 write_file(tmpdir .. "/src/pic.png", "PNGDATA")
 write_file(tmpdir .. "/src/sub/nested.txt", "nested")
 write_file(tmpdir .. "/secret.txt", "SECRET")
+vim.fn.mkdir(tmpdir .. "/src/.images", "p")
+write_file(tmpdir .. "/src/.images/pic.png", "PNGDATA")
+vim.fn.mkdir(tmpdir .. "/src/dir.png", "p")
+write_file(tmpdir .. "/src/.env", "DENIED")
+write_file(tmpdir .. "/src/.env.local", "DENIED")
+vim.fn.mkdir(tmpdir .. "/src/sub/.git", "p")
+write_file(tmpdir .. "/src/sub/.git/config", "DENIED")
+write_file(tmpdir .. "/src/key.pem", "DENIED")
+write_file(tmpdir .. "/src/cert.crt", "DENIED")
+write_file(tmpdir .. "/src/id.key", "DENIED")
+write_file(tmpdir .. "/src/SERVER.PEM", "DENIED")
 
 local TOKEN = lutil.random_token(16)
 
@@ -58,6 +71,31 @@ eq(
     404,
     "a NUL in p is 404 (libuv would open the name before it)"
 )
+-- Vite's default fs.deny names plus private keys: an image beside a
+-- markdown file is served, its secrets are not.
+for _, p in ipairs({ ".env", ".env.local", "sub/.git/config", "key.pem", "cert.crt", "id.key", ".ENV" }) do
+    eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
+end
+-- realpath returns the spelling on disk, so a case-folding volume hands the
+-- check .ENV as .env; a name upper case on disk needs the lowercased read.
+eq(http_get(base .. "/__live/asset?p=SERVER.PEM&t=" .. TOKEN).status, 404, "p=SERVER.PEM is 404")
+local alias = tmpdir .. "/src/ok.png"
+local aliased, alias_err = uv.fs_symlink(".env", alias)
+if aliased and uv.fs_stat(alias) then
+    eq(http_get(base .. "/__live/asset?p=ok.png&t=" .. TOKEN).status, 404, "an image name linking to .env is 404")
+else
+    H.skip("an image name linking to .env is 404 (" .. tostring(alias_err or "the link does not resolve") .. ")")
+end
+-- A deny list, not the root route's dot rule: markdown-preview serves a
+-- document's images from a .images directory.
+eq(http_get(base .. "/__live/asset?p=.images/pic.png&t=" .. TOKEN).status, 200, "an image under a dot directory is 200")
+-- A regular file alone: stream_file opens before it reads the type, and a
+-- FIFO blocks that open past SIGTERM, so a FIFO row would hang this suite
+-- wherever the check is missing. A directory takes the same check; without
+-- it the 404 came from stream_file, whose page named the path on disk.
+local dir_r = http_get(base .. "/__live/asset?p=dir.png&t=" .. TOKEN)
+eq(dir_r.status, 404, "a directory named like an image is 404")
+eq(dir_r.body:find(assert(uv.fs_realpath(tmpdir .. "/src")), 1, true), nil, "that 404 names no path on disk")
 -- Containment is by the resolved path, not the spelling: a link inside the
 -- asset root that points above it was served by a lexical check (measured on
 -- a mutant). The target is written with the platform's separator, since

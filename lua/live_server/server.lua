@@ -822,18 +822,19 @@ local function needs_auth(inst, p)
     return false
 end
 
--- A file's path under the root as the filesystem spells it (realpath: the
--- case on disk, links followed), or nil when realpath fails or the path
--- resolves outside the root. A root that ends in a separator ("/", "D:\")
--- keeps it on the name, where a pattern anchored at ^/ expects it.
-local function root_rel(inst, path)
+-- A file's path under a resolved base as the filesystem spells it
+-- (realpath: the case on disk, links followed), then the resolved path; nil
+-- when realpath fails or the path resolves outside the base. A base that
+-- ends in a separator ("/", "D:\") keeps it on the name, where a pattern
+-- anchored at ^/ expects it.
+local function root_rel(base_real, path)
     local ok_real, real = pcall(uv.fs_realpath, path)
-    if not ok_real or not real or not util.path_has_prefix(real, inst.root_real) then
+    if not ok_real or not real or not util.path_has_prefix(real, base_real) then
         return nil
     end
-    local base = inst.root_real:gsub("[/\\]$", "")
+    local base = base_real:gsub("[/\\]$", "")
     local rel = real:sub(#base + 1):gsub("\\", "/")
-    return rel == "" and "/" or rel
+    return rel == "" and "/" or rel, real
 end
 
 -- A path segment naming a dotfile or dot directory; .well-known stays
@@ -845,6 +846,24 @@ local function has_dot_segment(p)
         end
     end
     return false
+end
+
+-- The names Vite's fs.deny refuses by default, plus private keys: the asset
+-- route serves a document's neighbours, never its secrets. Lowercased, as a
+-- case-folding volume maps .ENV to .env.
+local function asset_denied(rel)
+    rel = rel:lower()
+    for seg in rel:gmatch("[^/]+") do
+        if seg == ".git" then
+            return true
+        end
+    end
+    local base = rel:match("([^/]+)$") or ""
+    return base == ".env"
+        or base:sub(1, 5) == ".env."
+        or base:match("%.pem$") ~= nil
+        or base:match("%.crt$") ~= nil
+        or base:match("%.key$") ~= nil
 end
 
 -- Answers one parsed request: the token gate, the routes and every
@@ -908,7 +927,7 @@ local function handle_request(conn, req)
     -- is content.md. The file or listing about to be served is checked
     -- again by its path under the root as realpath spells it.
     local function refusal(path)
-        local rel = root_rel(inst, path)
+        local rel = root_rel(inst.root_real, path)
         if not rel then
             -- default_index may sit outside the root by design, and only /
             -- names it: a link back to the root (/loop/) reaches it under a
@@ -964,12 +983,22 @@ local function handle_request(conn, req)
         if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") or rel:find("%z") then
             return http_404(sock, "/__live/asset")
         end
+        if asset_denied(rel) then
+            return http_404(sock, "/__live/asset")
+        end
         local aroot_real = uv.fs_realpath(aroot)
         if not aroot_real then
             return http_404(sock, "/__live/asset")
         end
-        local ok_real, real = pcall(uv.fs_realpath, util.joinpath(aroot_real, rel))
-        if not ok_real or not real or not util.path_has_prefix(real, aroot_real) then
+        -- The resolved name too: an innocent p may be a link to a secret.
+        local name, real = root_rel(aroot_real, util.joinpath(aroot_real, rel))
+        if not name or asset_denied(name) then
+            return http_404(sock, "/__live/asset")
+        end
+        -- A regular file alone: stream_file opens before it reads the type,
+        -- and opening a FIFO blocks the loop past SIGTERM.
+        local st = uv.fs_stat(real)
+        if not st or st.type ~= "file" then
             return http_404(sock, "/__live/asset")
         end
         return stream_file(sock, real, inst.headers)
