@@ -646,7 +646,9 @@ local function dir_listing_html(inst, fs_path, req_path)
         )
     end
 
-    local title = "Index of " .. util.html_escape(req_path:sub(-1) == "/" and req_path or req_path .. "/")
+    -- Escaped once, where the page is formatted: a second escape here
+    -- showed "&amp;" to a browser for a name holding an ampersand.
+    local title = "Index of " .. (req_path:sub(-1) == "/" and req_path or req_path .. "/")
     local css = [[
     <style>
       :root{color-scheme:light dark}
@@ -991,7 +993,7 @@ local function handle_request(conn, req)
             if status then
                 return refuse(status)
             end
-            -- The path the server resolved, each segment encoded: the
+            -- The path as normalized, each segment encoded: the
             -- request's own spelling carries its query and whatever markup
             -- a raw target holds into every href.
             local html = dir_listing_html(inst, mapped, (path_only:gsub("[^/]+", util.url_encode)))
