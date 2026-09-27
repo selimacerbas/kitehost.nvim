@@ -79,10 +79,13 @@ local function write_headers(sock, status, headers)
             table.insert(lines, ("%s: %s\r\n"):format(k, v))
         end
     end
-    -- A page URL can carry ?t=<token>; no request its page makes sends the
-    -- URL on as a Referer, whatever policy a caller's headers name. A
-    -- page's own meta or referrerpolicy attribute can still override it.
-    table.insert(lines, "Referrer-Policy: no-referrer\r\n")
+    -- A page URL can carry ?t=<token>; no request its page makes sends a
+    -- path or query as a Referer, same-origin included, whatever policy a
+    -- caller's headers name. The origin alone still reaches a destination
+    -- as secure, which an embed needs: under no-referrer every YouTube
+    -- iframe showed Error 153. A page's own meta or referrerpolicy
+    -- attribute can still widen or narrow it.
+    table.insert(lines, "Referrer-Policy: strict-origin\r\n")
     table.insert(lines, "\r\n")
     sock:write(table.concat(lines))
 end

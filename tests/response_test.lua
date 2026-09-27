@@ -58,14 +58,18 @@ local function stream_head(port, path, extra)
 end
 
 -- A page opened with ?t=<token> sent its full URL, token included, as the
--- Referer to same-origin requests and its origin across origins. A
+-- Referer to same-origin requests and its origin across origins. The
+-- policy sends no path or query in any Referer, same-origin included, and
+-- the origin alone to a destination as secure: no-referrer sent nothing,
+-- and every YouTube embed, which needs the origin, showed Error 153. A
 -- caller's own policy, under any spelling of the name, is replaced, so the
 -- header goes out once and is always this one.
-H.case("Section 1: every response carries Referrer-Policy: no-referrer", function()
+H.case("Section 1: every response carries Referrer-Policy: strict-origin", function()
     local inst = serve({ token = "tok", protected_paths = { "^/content%.md$" } })
     local port = inst.port
     local cases = {
         { "a file", get("/style.css", port) },
+        { "the index", get("/", port) },
         { "a 404", get("/missing", port) },
         { "a 401", get("/content.md", port) },
         { "a 400", "GET /x HTTP/1.1\r\n\r\n" },
@@ -73,20 +77,20 @@ H.case("Section 1: every response carries Referrer-Policy: no-referrer", functio
         { "the client script", get("/__live/script.js", port) },
     }
     for _, c in ipairs(cases) do
-        eq(raw(port, c[2]).headers["referrer-policy"], "no-referrer", c[1] .. " carries it")
+        eq(raw(port, c[2]).headers["referrer-policy"], "strict-origin", c[1] .. " carries it")
     end
     eq(
         stream_head(port, "/__live/events?t=tok").headers["referrer-policy"],
-        "no-referrer",
+        "strict-origin",
         "the event stream carries it"
     )
     local own = serve({ headers = { ["Referrer-Policy"] = "unsafe-url" } })
     local r = raw(own.port, get("/style.css", own.port))
-    eq(r.headers["referrer-policy"], "no-referrer", "a caller's own policy is replaced, not sent beside it")
+    eq(r.headers["referrer-policy"], "strict-origin", "a caller's own policy is replaced, not sent beside it")
     eq(r.count["referrer-policy"], 1, "and the header is sent once")
     local lower = serve({ headers = { ["referrer-policy"] = "unsafe-url" } })
     r = raw(lower.port, get("/style.css", lower.port))
-    eq(r.headers["referrer-policy"], "no-referrer", "a caller's policy under another spelling is replaced too")
+    eq(r.headers["referrer-policy"], "strict-origin", "a caller's policy under another spelling is replaced too")
     -- A browser takes the last token across every Referrer-Policy line, so a
     -- second line with the caller's value would reopen what the first closes.
     eq(r.count["referrer-policy"], 1, "and sent once under that spelling too")
