@@ -891,17 +891,25 @@ local function unmarked_ok(inst, req)
 end
 
 -- Whether a path needs ?t=<token>: the live endpoints and any
--- protected_paths pattern.
+-- protected_paths pattern; the second value is true when a pattern could
+-- not be read. The start check reads a pattern against the empty subject
+-- only, so a malformed part after a literal ("/[") raises here, in the
+-- read callback, where it left the request unanswered: a raise reads as a
+-- match no token satisfies, since the gate cannot tell what it protects.
+-- Every pattern is read, so the answer does not hang on the list's order.
 local function needs_auth(inst, p)
     if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
         return true
     end
+    local needed = false
     for _, pat in ipairs(inst.protected_paths) do
-        if p:find(pat) then
-            return true
+        local read, hit = pcall(string.find, p, pat)
+        if not read then
+            return true, true
         end
+        needed = needed or hit ~= nil
     end
-    return false
+    return needed
 end
 
 -- The asset route serves a document's neighbours, never its secrets. An
@@ -1027,8 +1035,14 @@ local function handle_request(conn, req)
     -- discovers itself. Protect the user content (caller passes
     -- protected_paths) and the live-reload control plane.
     local function authorized(p)
-        if not inst.token or not needs_auth(inst, p) then
+        if not inst.token then
             return true
+        end
+        local needed, unreadable = needs_auth(inst, p)
+        if not needed then
+            return true
+        elseif unreadable then
+            return false
         end
         local req_token = qparam("t")
         return util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)

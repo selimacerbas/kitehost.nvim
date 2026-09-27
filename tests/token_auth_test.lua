@@ -537,6 +537,51 @@ H.case("start refuses a bad token, protected_paths or serve_dotfiles", function(
     if started then
         server.stop(res)
     end
+    -- The start check reads a pattern against the empty subject, so a
+    -- malformed part after a literal ("/[") is never parsed there. The
+    -- request the pattern was asked about raised in the read callback and
+    -- went unanswered; no token satisfies a pattern nobody can read.
+    local function unreadable_server(patterns)
+        local up, inst_or_err = pcall(server.start, {
+            port = 0,
+            root = tmpdir,
+            token = TOKEN,
+            protected_paths = patterns,
+            live = { enabled = false, inject_script = false },
+            features = { dirlist = { enabled = false } },
+        })
+        ok(
+            up,
+            ("protected_paths = %s starts: the start check cannot read past the literal%s"):format(
+                vim.inspect(patterns, { newline = " ", indent = "" }),
+                up and "" or ": " .. tostring(inst_or_err)
+            )
+        )
+        if up then
+            H.defer(function()
+                server.stop(inst_or_err)
+            end)
+            return ("http://127.0.0.1:%d/content.md"):format(inst_or_err.port)
+        end
+    end
+    local function answers_401(url, label)
+        local got = http_get(url)
+        ok(got.status == 401, ("%s (got %d, curl %d)"):format(label, got.status, got.curl_exit))
+    end
+    local alone = unreadable_server({ "/[" })
+    if alone then
+        answers_401(alone, "/content.md under an unreadable pattern is 401 without the token, never unanswered")
+        answers_401(
+            alone .. "?t=" .. TOKEN,
+            "and 401 with it: a pattern nobody can read gates every path it is asked about"
+        )
+    end
+    -- Every pattern is read, so a path an earlier pattern matches is asked
+    -- about the unreadable one too.
+    local after = unreadable_server({ "^/content%.md$", "/[" })
+    if after then
+        answers_401(after .. "?t=" .. TOKEN, "an unreadable pattern after a matching one refuses the token too")
+    end
 end)
 
 -- ─── Summary ────────────────────────────────────────────────────────────────
