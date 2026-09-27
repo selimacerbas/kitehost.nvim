@@ -127,6 +127,11 @@ H.case("Section 2: cors never reaches /__live/*", function()
         nil,
         "and off the event stream"
     )
+    -- Without cors the caller's line is the root route's own choice and
+    -- stays; only /__live/* refuses it.
+    local kept = raw(manual.port, get("/index.html", manual.port))
+    eq(kept.headers["access-control-allow-origin"], "*", "and kept on the root route without cors")
+    eq(kept.count["access-control-allow-origin"], 1, "on one line")
 end)
 
 -- The stream sends the caller's headers as the asset route does, and each

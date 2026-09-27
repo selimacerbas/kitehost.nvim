@@ -420,10 +420,9 @@ local SSE_OWN = { ["content-type"] = true, ["cache-control"] = true, ["connectio
 
 local function sse_accept(inst, sock)
     local h = {}
-    -- k:lower() raises on a key that is not a string, and the stream would
-    -- never answer.
+    -- Every key is a token string: start refuses any other.
     for k, v in pairs(inst.live_headers) do
-        if type(k) == "string" and not SSE_OWN[k:lower()] then
+        if not SSE_OWN[k:lower()] then
             h[k] = v
         end
     end
@@ -1548,7 +1547,7 @@ function S.start(cfg)
     -- browser refuses a response with two.
     local live_headers = {}
     for k, v in pairs(headers) do
-        if not (type(k) == "string" and k:lower() == "access-control-allow-origin") then
+        if k:lower() ~= "access-control-allow-origin" then
             live_headers[k] = v
         elseif cfg.cors then
             headers[k] = nil
