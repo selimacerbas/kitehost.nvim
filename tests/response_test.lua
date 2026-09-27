@@ -86,6 +86,9 @@ H.case("Section 1: every response carries Referrer-Policy: no-referrer", functio
     local lower = serve({ headers = { ["referrer-policy"] = "unsafe-url" } })
     r = raw(lower.port, get("/style.css", lower.port))
     eq(r.headers["referrer-policy"], "no-referrer", "a caller's policy under another spelling is replaced too")
+    -- A browser takes the last token across every Referrer-Policy line, so a
+    -- second line with the caller's value would reopen what the first closes.
+    eq(r.count["referrer-policy"], 1, "and sent once under that spelling too")
 end)
 
 H.finish()
