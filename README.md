@@ -295,7 +295,7 @@ When `cfg.token` is set, the server requires `?t=<token>` on:
 * `/__live/events` (the SSE stream)
 * `/__live/inject` (event injection)
 * `/__live/asset` (the asset route)
-* Any path matching one of the Lua patterns in `cfg.protected_paths`
+* Any path matching one of the Lua patterns in `cfg.protected_paths`, except `/__live/script.js`, the injected client, which holds no secret
 
 Static assets (`index.html`, `style.css`, etc.) are intentionally not gated because the browser bootstraps from them before any JS runs and cannot append query strings to tags it discovers itself. Everything else needs `?t=<token>`: pass it to the browser via the initial URL, and the injected client keeps it in `sessionStorage` and puts it on the event stream itself, while a caller's own `fetch`/`EventSource` calls still append it.
 

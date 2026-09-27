@@ -1024,6 +1024,12 @@ local function needs_auth(inst, p)
     if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
         return true
     end
+    -- The injected client holds no secret and its tag carries no token, so
+    -- a pattern that matched it (%.js$, ^/) stopped live reload on every
+    -- page, the client's own hint to add ?t= included.
+    if p == "/__live/script.js" then
+        return false
+    end
     local needed = false
     for _, pat in ipairs(inst.protected_paths) do
         local read, hit = pcall(string.find, p, pat)

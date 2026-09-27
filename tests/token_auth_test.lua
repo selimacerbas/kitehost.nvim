@@ -4,14 +4,14 @@
 -- neither answers; its bytes are the token, its length an integer from 1
 -- to 1024 (16 by default), and no descriptor stays open. Then verify that
 -- cfg.token gates /__live/events, /__live/inject, and any path listed in
--- cfg.protected_paths, while leaving static assets (index.html) reachable
--- without auth. The gate reads the request path, then the name on disk of
--- the file, index or directory about to be served (a case variant, a
--- link); a NUL or a backslash in the path is 400 before it; a link out of
--- the root is 404; and start refuses a bad token, protected_paths
--- (patterns with no token among them), serve_dotfiles, index_names,
--- headers (the server's own fields among them) or cors before any socket
--- opens.
+-- cfg.protected_paths but the injected client, /__live/script.js, while
+-- leaving static assets (index.html) reachable without auth. The gate
+-- reads the request path, then the name on disk of the file, index or
+-- directory about to be served (a case variant, a link); a NUL or a
+-- backslash in the path is 400 before it; a link out of the root is 404;
+-- and start refuses a bad token, protected_paths (patterns with no token
+-- among them), serve_dotfiles, index_names, headers (the server's own
+-- fields among them) or cors before any socket opens.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
@@ -1123,6 +1123,37 @@ H.case("the server keeps its own copy of protected_paths and index_names", funct
     ok(
         got.status == 200 and got.body:find("hi", 1, true) ~= nil,
         ("and still does after the caller's index_names changes (got %d)"):format(got.status)
+    )
+end)
+
+-- The injected tag names /__live/script.js with no token, so a pattern
+-- matching it (%.js$, ^/) answered the server's own client 401: live
+-- reload died on every page, and the client's hint to add ?t= lived in
+-- the refused script. The client holds no secret.
+H.case("the injected client is never gated", function()
+    local site = H.tmpdir()
+    H.write_file(site .. "/index.html", "<html><body>page</body></html>")
+    H.write_file(site .. "/app.js", "var secret = 1")
+    local gated = server.start({
+        port = 0,
+        root = site,
+        token = TOKEN,
+        protected_paths = { "%.js$" },
+        live = { enabled = false, inject_script = true },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(gated)
+    end)
+    local base = ("http://127.0.0.1:%d"):format(gated.port)
+    local client = http_get(base .. "/__live/script.js")
+    eq(client.status, 200, "a token server with protected_paths %.js$ serves /__live/script.js without the token")
+    ok(client.body:find("EventSource", 1, true) ~= nil, "and it is the client")
+    eq(http_get(base .. "/app.js").status, 401, "while a .js file under the root still wants the token")
+    local page = http_get(base .. "/", { "Sec-Fetch-Mode: navigate" })
+    ok(
+        page.body:find('<script src="/__live/script.js"></script>', 1, true) ~= nil,
+        "the page's injected tag still names /__live/script.js: " .. page.body
     )
 end)
 

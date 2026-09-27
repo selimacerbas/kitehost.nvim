@@ -116,7 +116,9 @@ Options:
     except a dot path unless `serve_dotfiles` is set.
 
 `protected_paths` (string[], default `{}`)
-    Lua patterns of request paths that also require the token.
+    Lua patterns of request paths that also require the token; the
+    injected client, `/__live/script.js`, which holds no secret, is never
+    gated.
 
 `asset_root` is not a setup option: a plugin that calls
 `require("live_server.server").start()` passes it, and the token then
