@@ -139,8 +139,23 @@ end)
 
 -- An index.html linking to a dot name answered 404 for its whole
 -- directory; it is no index of that directory, as one linking out of the
--- root is not, so the next name or the listing answers.
+-- root is not, so the next name or the listing answers. An index name
+-- that is itself a dot name is passed over the same way.
 H.case("Section 6: an index the dot rule refuses is not the directory's", function()
+    local named = H.tmpdir()
+    H.write_file(named .. "/.index.html", "<html><body>DOTINDEX</body></html>")
+    H.write_file(named .. "/index.htm", "<html><body>PLAININDEX</body></html>")
+    local names = { ".index.html", "index.htm" }
+    local got = H.http_get(serve(named, { index_names = names }) .. "/")
+    ok(
+        got.status == 200 and got.body:find("PLAININDEX", 1, true) ~= nil,
+        ("index_names = { .index.html, index.htm } serves index.htm without serve_dotfiles (got %d)"):format(got.status)
+    )
+    got = H.http_get(serve(named, { index_names = names, serve_dotfiles = true }) .. "/")
+    ok(
+        got.status == 200 and got.body:find("DOTINDEX", 1, true) ~= nil,
+        ("and .index.html with it (got %d)"):format(got.status)
+    )
     local site = H.tmpdir()
     for _, dir in ipairs({ "both", "solo" }) do
         vim.fn.mkdir(site .. "/" .. dir, "p")
@@ -326,8 +341,8 @@ end)
 -- The listing read an entry's own name, so a plain-named link to a dot name
 -- (cfg -> .git, dotlink -> .env) was listed and then 404 on click. A link is
 -- judged by where it points: outside the root or nowhere, no flag opens it;
--- a dot name below the listed directory is shown with both flags alone, as
--- a dot entry is; the directory's own segments passed the rule already.
+-- a link to a dot name is shown with serve_dotfiles, with which the rule
+-- refuses nothing, inside or beside a listed .hidden/ alike.
 H.case("Section 8: a listing judges a link by where it points", function()
     local site = H.tmpdir()
     local sep = package.config:sub(1, 1)
@@ -341,6 +356,9 @@ H.case("Section 8: a listing judges a link by where it points", function()
     vim.fn.mkdir(site .. "/sub/.well-known", "p")
     H.write_file(site .. "/sub/.well-known/x", "SECRET-12")
     H.write_file(site .. "/sub/f.txt", "f")
+    vim.fn.mkdir(site .. "/.hidden/a", "p")
+    H.write_file(site .. "/.hidden/b.txt", "b")
+    H.write_file(site .. "/.hidden/a/own.txt", "own")
     -- { target, link, whether the target exists }
     local links = {
         { ".git", "cfg", true },
@@ -349,6 +367,7 @@ H.case("Section 8: a listing judges a link by where it points", function()
         { ".inner", ".hidden/hid2", true },
         { "missing.txt", "gone", false },
         { ".well-known" .. sep .. "x", "sub/wk", true },
+        { ".." .. sep .. "b.txt", ".hidden/a/up", true },
     }
     local why
     for _, l in ipairs(links) do
@@ -363,11 +382,12 @@ H.case("Section 8: a listing judges a link by where it points", function()
         "a listing without the flags names no link to a dot name",
         "with show_hidden and serve_dotfiles both links are listed",
         "with serve_dotfiles /.hidden/ names a link to a plain name inside it",
-        "and no link to a dot name inside it",
+        "and a link to a dot name inside it too, which serve_dotfiles serves",
         "with both flags /.hidden/ names that link too",
         "a dangling link is not named without the flags",
         "nor with show_hidden and serve_dotfiles",
         "a link in sub/ to its .well-known is not named",
+        "with serve_dotfiles /.hidden/a/ names up -> ../b.txt, beside it under .hidden",
     }
     if why then
         for _, row in ipairs(rows) do
@@ -395,11 +415,13 @@ H.case("Section 8: a listing judges a link by where it points", function()
     ok(root_plain["/page.txt"] and not root_plain["/cfg"] and not root_plain["/dotlink"], rows[1])
     ok(root_open["/cfg"] and root_open["/dotlink"], rows[2])
     ok(hidden_dotted["/.hidden/plain"], rows[3])
-    ok(hidden_dotted["/.hidden/target.txt"] and not hidden_dotted["/.hidden/hid2"], rows[4])
+    ok(hidden_dotted["/.hidden/target.txt"] and hidden_dotted["/.hidden/hid2"], rows[4])
     ok(hidden_open["/.hidden/plain"], rows[5])
     ok(root_plain["/page.txt"] and not root_plain["/gone"], rows[6])
     ok(root_open["/page.txt"] and not root_open["/gone"], rows[7])
     ok(sub_plain["/sub/f.txt"] and not sub_plain["/sub/wk"], rows[8])
+    local hidden_a = hrefs(dotted, "/.hidden/a/")
+    ok(hidden_a["/.hidden/a/own.txt"] and hidden_a["/.hidden/a/up"], rows[9])
 end)
 
 -- luv gives no type for an entry a filesystem leaves untyped (XFS with

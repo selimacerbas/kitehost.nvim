@@ -5,7 +5,8 @@
 -- on disk of the file, index or directory about to be served (a case
 -- variant, a link); a NUL or a backslash in the path is 400 before it; a
 -- link out of the root is 404; and start refuses a bad token,
--- protected_paths or serve_dotfiles before any socket opens.
+-- protected_paths (patterns with no token among them), serve_dotfiles or
+-- index_names before any socket opens.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
@@ -439,6 +440,25 @@ ok(
     ("and / lists the root with the listing on (got %d)"):format(r.status)
 )
 server.stop(dir_on)
+-- The index chain reads default_index, then index_names, then the listing;
+-- a default_index that is no file skipped index_names at / and listed the
+-- root, or answered 404, beside an index.html.
+local fall_ws = H.tmpdir()
+vim.fn.mkdir(vim.fs.joinpath(fall_ws, "page.html"), "p")
+H.write_file(vim.fs.joinpath(fall_ws, "index.html"), "<html>FALLBACK</html>")
+local fall = server.start({
+    port = 0,
+    root = fall_ws,
+    default_index = vim.fs.joinpath(fall_ws, "page.html"),
+    live = { enabled = false, inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+r = http_get(("http://127.0.0.1:%d/"):format(fall.port))
+ok(
+    r.status == 200 and r.body:find("FALLBACK", 1, true) ~= nil,
+    ("a default_index that is a directory falls through to index.html (got %d)"):format(r.status)
+)
+server.stop(fall)
 -- The root's own index, with no default_index set, linked out of the root:
 -- the candidate's resolution and the gate each refuse it, 404 at / too.
 local root_index = vim.fs.joinpath(ws, "index.html")
@@ -493,14 +513,79 @@ server.stop(inst)
 r = http_get(("http://127.0.0.1:%d/"):format(port))
 eq(r.curl_exit, 7, "the port refuses connections after stop without a token")
 
+-- The index a directory serves was read by its own name alone, so under
+-- ^/secret$ a case variant (/SECRET/) or a link (pub -> secret) served
+-- secret's index where its listing is 401. A request that ends in a slash
+-- is read with it, so ^/nosuch/ is 401 whether or not the directory
+-- exists, where a 404 said it did not.
+H.case("a directory the gate refuses serves no index", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(vim.fs.joinpath(site, "secret"), "p")
+    H.write_file(vim.fs.joinpath(site, "secret", "index.html"), "<html>SECRET-INDEX</html>")
+    local function gated(patterns)
+        local s = server.start({
+            port = 0,
+            root = site,
+            token = TOKEN,
+            protected_paths = patterns,
+            live = { enabled = false, inject_script = false },
+            features = { dirlist = { enabled = false } },
+        })
+        H.defer(function()
+            server.stop(s)
+        end)
+        return ("http://127.0.0.1:%d"):format(s.port)
+    end
+    local base = gated({ "^/secret$" })
+    eq(http_get(base .. "/secret/").status, 401, "/secret/ under ^/secret$ is 401 without the token")
+    local res = http_get(base .. "/secret/?t=" .. TOKEN)
+    ok(
+        res.status == 200 and res.body:find("SECRET-INDEX", 1, true) ~= nil,
+        ("and serves its index with it (got %d)"):format(res.status)
+    )
+    if H.fs_folds_case then
+        eq(http_get(base .. "/SECRET/").status, 401, "/SECRET/ without the token is 401, never secret's index")
+    else
+        H.skip(
+            "/SECRET/ without the token is 401, never secret's index (a case-sensitive volume has no such directory)"
+        )
+    end
+    local pub = vim.fs.joinpath(site, "pub")
+    local linked, link_err = uv.fs_symlink("secret", pub)
+    if linked and uv.fs_stat(pub) then
+        eq(http_get(base .. "/pub/").status, 401, "a link pub -> secret without the token is 401, never its index")
+    else
+        H.skip(
+            "a link pub -> secret without the token is 401, never its index ("
+                .. tostring(link_err or "the link does not resolve")
+                .. ")"
+        )
+    end
+    local slashed = gated({ "^/secret/", "^/nosuch/" })
+    eq(http_get(slashed .. "/secret/").status, 401, "/secret/ under ^/secret/ is 401 without the token")
+    eq(
+        http_get(slashed .. "/nosuch/").status,
+        401,
+        "and /nosuch/ under ^/nosuch/ is 401 too, though no such directory exists"
+    )
+    -- A last segment of . names the directory as a slash does; curl
+    -- squashes it, so the request goes raw.
+    local port = tonumber(slashed:match(":(%d+)$"))
+    local raw =
+        H.response(assert(H.raw_request(port, ("GET /nosuch/. HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))))
+    eq(raw.status, 401, "and /nosuch/. sent raw is 401 as well")
+end)
+
 -- Each refused before any socket opens. An empty token is truthy, so it
 -- would mark every request as the token's holder and pass the gate with
 -- no t= at all. protected_paths is walked with ipairs, which skips a
 -- map's keys and stops at a hole, so a map or a holed list protected
 -- nothing without a word; a malformed pattern started and then raised in
 -- the read callback of every request, which was never answered;
--- serve_dotfiles = 1 read as false.
-H.case("start refuses a bad token, protected_paths or serve_dotfiles", function()
+-- serve_dotfiles = 1 read as false. Patterns with no token started and
+-- gated nothing, and an index_names string raised in the read callback of
+-- every directory request.
+H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_names", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
     local bad = {
@@ -512,6 +597,10 @@ H.case("start refuses a bad token, protected_paths or serve_dotfiles", function(
         { "protected_paths", { "(" }, "protected_paths pattern is malformed: (" },
         { "protected_paths", { "^/a$", "%" }, "protected_paths pattern is malformed: %" },
         { "serve_dotfiles", 1 },
+        { "protected_paths", { "^/secret" }, "protected_paths needs a token" },
+        { "index_names", "index.html" },
+        { "index_names", { 42 } },
+        { "index_names", { "" } },
     }
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
@@ -531,9 +620,16 @@ H.case("start refuses a bad token, protected_paths or serve_dotfiles", function(
     local started, res = pcall(server.start, {
         port = 0,
         root = tmpdir,
+        token = TOKEN,
         protected_paths = { "^/content%.md$", "[%w_]+%.key$", "^/a/(b)$" },
     })
     ok(started, "a list of well-formed patterns starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    -- init.lua's default: no patterns ask for no token.
+    started, res = pcall(server.start, { port = 0, root = tmpdir, protected_paths = {} })
+    ok(started, "protected_paths = {} starts without a token: " .. tostring(started and "" or res))
     if started then
         server.stop(res)
     end

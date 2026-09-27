@@ -308,7 +308,10 @@ local function normalize_path(req_path)
             parts[#parts + 1] = seg
         end
     end
-    return "/" .. table.concat(parts, "/")
+    -- The second value: the path names a directory (a trailing slash, or a
+    -- last segment of . or ..), which the gate reads with its slash.
+    local tail = raw:match("[^/]*$")
+    return "/" .. table.concat(parts, "/"), tail == "" or tail == "." or tail == ".."
 end
 
 -- Map an already-normalized path (see normalize_path) to a real file under
@@ -346,13 +349,11 @@ end
 
 -- A path segment naming a dotfile or dot directory; .well-known stays
 -- public as the first segment, the path root where RFC 8615 reserves it.
--- The first skip segments are not read: a listed directory's own passed
--- the rule when the directory was reached.
-local function has_dot_segment(p, skip)
+local function has_dot_segment(p)
     local i = 0
     for seg in p:gmatch("[^/]+") do
         i = i + 1
-        if i > (skip or 0) and seg:sub(1, 1) == "." and not (i == 1 and seg == ".well-known") then
+        if seg:sub(1, 1) == "." and not (i == 1 and seg == ".well-known") then
             return true
         end
     end
@@ -689,24 +690,13 @@ local function dir_listing_html(inst, fs_path, req_path)
     local show_all = inst.dir_show_hidden and inst.serve_dotfiles
     -- A link is judged by where it points, one realpath per link: outside
     -- the root or nowhere, containment refuses it on click whatever the
-    -- flags; a dot name below this directory (cfg -> .git) is 404 on click
-    -- and shown, as a dot entry is, with both flags alone. The directory's
-    -- own segments passed the dot rule when it was reached, so a plain link
-    -- inside a listed .hidden/ is shown.
-    local dir_rel
+    -- flags; a dot name under the root (cfg -> .git) is 404 on click, so it
+    -- is hidden unless serve_dotfiles, with which the rule refuses nothing.
+    -- Without it no listed directory has a dot segment of its own (the gate
+    -- refused it), so the target's whole path is read.
     local function link_shown(name)
         local rel = root_rel(inst.root_real, util.joinpath(fs_path, name))
-        if not rel then
-            return false
-        elseif show_all then
-            return true
-        end
-        dir_rel = dir_rel or root_rel(inst.root_real, fs_path) or "/"
-        local skip = 0
-        if dir_rel ~= "/" and rel:sub(1, #dir_rel + 1) == dir_rel .. "/" then
-            skip = select(2, dir_rel:gsub("[^/]+", ""))
-        end
-        return not has_dot_segment(rel, skip)
+        return rel ~= nil and (inst.serve_dotfiles or not has_dot_segment(rel))
     end
     while true do
         local name, t = uv.fs_scandir_next(iter)
@@ -1046,7 +1036,7 @@ local function handle_request(conn, req)
     -- disk second (refusal below), and a name that passes one read and not
     -- the other is refused, so an encoded or slash-padded variant can't
     -- reach a protected file ungated.
-    local path_only = normalize_path(req.path)
+    local path_only, names_dir = normalize_path(req.path)
     if not path_only then
         return http_400(sock, "Bad request path")
     end
@@ -1085,7 +1075,10 @@ local function handle_request(conn, req)
         local req_token = qparam("t")
         return util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)
     end
-    if not authorized(path_only) then
+    -- A path that names a directory is read with its slash too, as the
+    -- directory's own read below is: ^/secret/ answered 401 for an existing
+    -- /secret/ and 404 for a missing one, which told the two apart.
+    if not authorized(path_only) or (names_dir and path_only ~= "/" and not authorized(path_only .. "/")) then
         return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
     end
 
@@ -1208,17 +1201,27 @@ local function handle_request(conn, req)
 
     local st = uv.fs_stat(mapped)
     if st and st.type == "directory" then
+        -- The gate reads the directory before any page says it exists or
+        -- serves its index: a "(no index)" told a protected directory
+        -- reached by a case variant apart from a missing one, and an index
+        -- read by its own name alone served, under a case variant or a
+        -- link, the directory the gate refuses.
+        local status = refusal(mapped, "dir")
+        if status then
+            return refuse(status)
+        end
         local candidate, kind
         -- / alone names the root's own index: a link back to the root
         -- (/loop/) is a directory like any other, never a way to the
         -- default_index past a ^/$ pattern. A directory or a FIFO so named
-        -- is no index, as with the names below.
+        -- is no index, as with the names below, which answer next.
         if inst.default_index and path_only == "/" then
             local dst = uv.fs_stat(inst.default_index)
             if dst and dst.type == "file" then
                 candidate, kind = inst.default_index, "own"
             end
-        else
+        end
+        if not candidate then
             for _, iname in ipairs(inst.index_names) do
                 -- Resolved as a file request is: a linked index.html that
                 -- points outside the root or at a name the dot rule refuses
@@ -1235,18 +1238,11 @@ local function handle_request(conn, req)
             end
         end
         if candidate then
-            local status = refusal(candidate, kind)
+            status = refusal(candidate, kind)
             if status then
                 return refuse(status)
             end
             return serve_path(inst, sock, candidate, req, inst.headers)
-        end
-        -- The gate reads the directory before any page says it exists: a
-        -- "(no index)" told a protected directory reached by a case variant
-        -- apart from a missing one.
-        local status = refusal(mapped, "dir")
-        if status then
-            return refuse(status)
         end
         if inst.dir_enabled then
             -- The path as normalized: the request's own spelling carries its
@@ -1420,6 +1416,25 @@ function S.start(cfg)
             end
         end
     end
+    -- The patterns gate by the token, so without one they started and
+    -- gated nothing, without a word; an empty list asks for none.
+    if protected ~= nil and #protected > 0 and cfg.token == nil then
+        error("protected_paths needs a token", 0)
+    end
+    -- Each name is joined to a directory's path in the read callback, where
+    -- a string raised and every directory request went unanswered
+    -- (measured).
+    local index_names = cfg.index_names
+    if index_names ~= nil then
+        if type(index_names) ~= "table" or not vim.islist(index_names) then
+            error("index_names must be a list of file names", 0)
+        end
+        for _, iname in ipairs(index_names) do
+            if type(iname) ~= "string" or iname == "" then
+                error("index_names must be a list of file names", 0)
+            end
+        end
+    end
     -- Any value but true read as false, so serve_dotfiles = 1 served no
     -- dotfile without a word.
     if cfg.serve_dotfiles ~= nil and type(cfg.serve_dotfiles) ~= "boolean" then
@@ -1489,7 +1504,9 @@ function S.start(cfg)
         -- features
         dir_enabled = not (cfg.features and cfg.features.dirlist and cfg.features.dirlist.enabled == false),
         dir_show_hidden = cfg.features and cfg.features.dirlist and cfg.features.dirlist.show_hidden or false,
-        index_names = cfg.index_names or { "index.html", "index.htm" },
+        -- A copy of the checked list, as protected_paths below is: the
+        -- caller's table may change after start.
+        index_names = index_names and vim.list_extend({}, index_names) or { "index.html", "index.htm" },
         ignore_patterns = util.parse_liveignore(root_real),
         notify_on_reload = cfg.notify_on_reload or false,
 
