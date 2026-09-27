@@ -226,7 +226,8 @@ local DEFAULT_PORTS = { http = "80", ws = "80", https = "443", wss = "443" }
 -- could never match; such an entry is refused, never rewritten, since a
 -- partial rewrite would disagree with the browser's at the edges. Any
 -- scheme is left free (an extension's origin is one). A non-canonical
--- IPv6 literal ([0:0::1]) is not caught here, and never matches either.
+-- IP literal (127.1, [0:0::1]) is not caught here, and never matches
+-- either.
 local function as_browser_sends(s)
     local scheme, authority = s:match("^(.-)://(.*)$")
     if s:find("[A-Z]") or authority:find("%", 1, true) then
