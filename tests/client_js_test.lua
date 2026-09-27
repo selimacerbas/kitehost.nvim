@@ -75,19 +75,19 @@ local RUNNER = [==[
 'use strict';
 const src = require('fs').readFileSync(process.argv[2], 'utf8');
 const K = 'live-server.nvim:t';
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 function page(search, store, throws) {
   const warns = [], streams = [];
   const sessionStorage = {
-    getItem(k) { if (throws) throw new Error(throws); return Object.hasOwn(store, k) ? store[k] : null; },
+    getItem(k) { if (throws) throw new Error(throws); return has(store, k) ? store[k] : null; },
     setItem(k, v) { if (throws) throw new Error(throws); store[k] = String(v); },
   };
   class EventSource {
     constructor(url) { this.url = url; this.readyState = 0; this.on = {}; streams.push(this); }
     addEventListener(type, fn) { (this.on[type] = this.on[type] || []).push(fn); }
-    close() { this.readyState = 2; }
   }
   const console = { log() {}, warn(...a) { warns.push(a.map(String).join(' ')); } };
-  const location = { search, reload() {} };
+  const location = { search };
   new Function('location', 'sessionStorage', 'EventSource', 'console', 'URLSearchParams', 'document', src)(
     location, sessionStorage, EventSource, console, URLSearchParams, {});
   const fire = (i, type, state) => {
@@ -97,7 +97,7 @@ function page(search, store, throws) {
     if (es['on' + type]) es['on' + type]({});
   };
   const urls = () => streams.map((es) => es.url);
-  const kept = () => (Object.hasOwn(store, K) ? store[K] : null);
+  const kept = () => (has(store, K) ? store[K] : null);
   return { warns, streams, fire, urls, kept };
 }
 const pages = {
@@ -182,11 +182,19 @@ local function run_pages(body)
     return pages
 end
 
+-- One node run over a token server's client, read by both sections below.
+local token_run
+local function token_pages()
+    if not token_run then
+        token_run = { run_pages(script({ token = "REAL" }).body) }
+    end
+    return token_run[1], token_run[2]
+end
+
 local EVENTS = "/__live/events"
 
 H.case("Section 3: a page's own t never replaces a working token", function()
-    local r = script({ token = "REAL" })
-    local pages, why = run_pages(r.body)
+    local pages, why = token_pages()
     ok(pages ~= nil, "the client's pages ran: " .. tostring(why or "yes"))
     pages = pages or {}
     local function seen(name)
@@ -241,8 +249,7 @@ end)
 -- never prints, and a storage error was dropped, so a user who had opened
 -- the page with its token was told to open it again.
 H.case("Section 4: a page with no token is told why", function()
-    local r = script({ token = "REAL" })
-    local pages, why = run_pages(r.body)
+    local pages, why = token_pages()
     ok(pages ~= nil, "the client's pages ran: " .. tostring(why or "yes"))
     pages = pages or {}
     local p = pages.hint or {}

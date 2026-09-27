@@ -52,6 +52,10 @@ end
 
 -- -------- HTTP helpers -----------------------------------------------------
 
+-- One character of an RFC 9110 token (5.6.2), a field name among them, as
+-- a Lua pattern class: every reader of a name builds its pattern from it.
+local TCHAR = "[%w!#$%%&'*+%-.^_`|~]"
+
 -- Reason phrases by status: one table for every status this server sends
 -- or may send, so a status line never reads "401 OK" again. A status with
 -- no entry goes out with an empty reason, which RFC 9112 allows and which a
@@ -79,8 +83,10 @@ local function write_headers(sock, status, headers)
             table.insert(lines, ("%s: %s\r\n"):format(k, v))
         end
     end
-    -- A page URL can carry ?t=<token>; no request its page makes sends a
-    -- path or query as a Referer, same-origin included, whatever policy a
+    -- A page URL can carry ?t=<token>. The browser's default,
+    -- strict-origin-when-cross-origin, sends the full URL same-origin, so
+    -- the token would ride to the server's own log or a same-origin embed;
+    -- this policy sends no path or query in any Referer, whatever policy a
     -- caller's headers name. The origin alone still reaches a destination
     -- as secure, which an embed needs: under no-referrer every YouTube
     -- iframe showed Error 153. A page's own meta or referrerpolicy
@@ -281,7 +287,7 @@ local function parse_head(head)
     local version = minor == "0" and "1.0" or "1.1"
     local headers = {}
     for i = 2, #lines do
-        local name, value = lines[i]:match("^([%w!#$%%&'*+.^_`|~-]+):(.*)$")
+        local name, value = lines[i]:match("^(" .. TCHAR .. "+):(.*)$")
         if not name then
             return nil, "Malformed header line"
         end
@@ -1024,12 +1030,6 @@ local function needs_auth(inst, p)
     if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
         return true
     end
-    -- The injected client holds no secret and its tag carries no token, so
-    -- a pattern that matched it (%.js$, ^/) stopped live reload on every
-    -- page, the client's own hint to add ?t= included.
-    if p == "/__live/script.js" then
-        return false
-    end
     local needed = false
     for _, pat in ipairs(inst.protected_paths) do
         local read, hit = pcall(string.find, p, pat)
@@ -1232,7 +1232,7 @@ local function handle_request(conn, req)
         asked = asked and table.concat(asked, ", ")
         if asked then
             for item in (asked .. ","):gmatch("([^,]*),") do
-                if not item:find("^[ \t]*[%w!#$%%&'*+%-.^_`|~]+[ \t]*$") then
+                if not item:find("^[ \t]*" .. TCHAR .. "+[ \t]*$") then
                     asked = nil
                     break
                 end
@@ -1281,6 +1281,20 @@ local function handle_request(conn, req)
         local req_token = qparam("t")
         return util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)
     end
+    -- The injected client is answered before the gate: it holds no secret
+    -- and its tag carries no token, so a pattern that matched it (%.js$,
+    -- ^/) stopped live reload on every page, the client's own hint to add
+    -- ?t= included. The route never reads the disk; exempted by name inside
+    -- the gate instead, a file of the root's at that name, reached through
+    -- a link or a case variant, was served ungated.
+    if path_only == "/__live/script.js" then
+        return send_response(
+            sock,
+            200,
+            { ["Content-Type"] = "application/javascript; charset=utf-8" },
+            inst.token and CLIENT_JS_TOKEN or CLIENT_JS
+        )
+    end
     -- A path that names a directory is read with its slash too, as the
     -- directory's own read below is: ^/secret/ answered 401 for an existing
     -- /secret/ and 404 for a missing one, which told the two apart.
@@ -1324,14 +1338,7 @@ local function handle_request(conn, req)
     end
 
     -- Special endpoints
-    if path_only == "/__live/script.js" then
-        return send_response(
-            sock,
-            200,
-            { ["Content-Type"] = "application/javascript; charset=utf-8" },
-            inst.token and CLIENT_JS_TOKEN or CLIENT_JS
-        )
-    elseif path_only == "/__live/events" then
+    if path_only == "/__live/events" then
         conn.sse = true
         return sse_accept(inst, sock)
     elseif path_only == "/__live/inject" then
@@ -1674,7 +1681,7 @@ function S.start(cfg)
     end
     local headers = {}
     for k, v in pairs(cfg_headers) do
-        if type(k) ~= "string" or not k:find("^[%w!#$%%&'*+%-.^_`|~]+$") or type(v) ~= "string" or v:find("[\r\n]") then
+        if type(k) ~= "string" or not k:find("^" .. TCHAR .. "+$") or type(v) ~= "string" or v:find("[\r\n]") then
             error("headers: a name must be a token and a value a line: " .. tostring(k), 0)
         end
         if SERVER_FIELDS[k:lower()] then

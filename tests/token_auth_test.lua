@@ -1129,11 +1129,17 @@ end)
 -- The injected tag names /__live/script.js with no token, so a pattern
 -- matching it (%.js$, ^/) answered the server's own client 401: live
 -- reload died on every page, and the client's hint to add ?t= lived in
--- the refused script. The client holds no secret.
+-- the refused script. The client holds no secret. A user's own file at
+-- that name is no client: exempted by name inside the gate, it was served
+-- ungated through a link to it or a case variant of its name, which the
+-- route's exact match lets fall through to the file.
 H.case("the injected client is never gated", function()
     local site = H.tmpdir()
     H.write_file(site .. "/index.html", "<html><body>page</body></html>")
     H.write_file(site .. "/app.js", "var secret = 1")
+    vim.fn.mkdir(site .. "/__live", "p")
+    H.write_file(site .. "/__live/script.js", "var mine = 1")
+    local linked, link_err = uv.fs_symlink("__live/script.js", site .. "/alias.txt")
     local gated = server.start({
         port = 0,
         root = site,
@@ -1148,8 +1154,26 @@ H.case("the injected client is never gated", function()
     local base = ("http://127.0.0.1:%d"):format(gated.port)
     local client = http_get(base .. "/__live/script.js")
     eq(client.status, 200, "a token server with protected_paths %.js$ serves /__live/script.js without the token")
-    ok(client.body:find("EventSource", 1, true) ~= nil, "and it is the client")
+    ok(
+        client.body:find("EventSource", 1, true) ~= nil and not client.body:find("var mine", 1, true),
+        "and it is the client, never the root's file of that name"
+    )
     eq(http_get(base .. "/app.js").status, 401, "while a .js file under the root still wants the token")
+    -- Windows may refuse the link (no symlink privilege); the fixture is
+    -- measured and its row skipped where it is not.
+    if linked then
+        local r = http_get(base .. "/alias.txt")
+        eq(r.status, 401, "the root's own __live/script.js reached through a link wants the token")
+    else
+        H.skip("a link to the root's own __live/script.js (" .. tostring(link_err) .. ")")
+    end
+    -- A case-sensitive volume has no second name for the file.
+    if uv.fs_stat(site .. "/__live/SCRIPT.JS") then
+        local r = http_get(base .. "/__live/SCRIPT.JS")
+        eq(r.status, 401, "the root's own __live/script.js under a case variant wants the token")
+    else
+        H.skip("a case variant of the root's own __live/script.js (this volume is case-sensitive)")
+    end
     local page = http_get(base .. "/", { "Sec-Fetch-Mode: navigate" })
     ok(
         page.body:find('<script src="/__live/script.js"></script>', 1, true) ~= nil,

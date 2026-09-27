@@ -164,6 +164,7 @@ Enable cross-origin headers on the root route's responses; `/__live/*` never car
 ```lua
 cors = true,                         -- Access-Control-Allow-Origin: *
 cors = "http://localhost:3000",      -- specific origin
+cors = { "http://localhost:3000", "http://localhost:5173" }, -- a listed Origin is echoed, with Vary: Origin
 ```
 
 Useful when your frontend (on the live server) makes API calls to a separate backend.
@@ -297,7 +298,7 @@ When `cfg.token` is set, the server requires `?t=<token>` on:
 * `/__live/asset` (the asset route)
 * Any path matching one of the Lua patterns in `cfg.protected_paths`, except `/__live/script.js`, the injected client, which holds no secret
 
-Static assets (`index.html`, `style.css`, etc.) are intentionally not gated because the browser bootstraps from them before any JS runs and cannot append query strings to tags it discovers itself. Everything else needs `?t=<token>`: pass it to the browser via the initial URL, and the injected client keeps it in `sessionStorage` and puts it on the event stream itself, while a caller's own `fetch`/`EventSource` calls still append it.
+Static assets (`index.html`, `style.css`, etc.) are intentionally not gated because the browser bootstraps from them before any JS runs and cannot append query strings to tags it discovers itself. The gated routes above (the event stream, the inject endpoint, the asset route and the `protected_paths` matches) need `?t=<token>`: pass it to the browser via the initial URL, and the injected client keeps it in `sessionStorage` and puts it on the event stream itself, while a caller's own `fetch`/`EventSource` calls still append it.
 
 `util.random_token(byte_len)` generates a hex token (default 16 bytes = 128 bits) from the operating system's random source (`vim.uv.random`, then `/dev/urandom`) and raises when neither is available. `util.secure_compare(a, b)` is a constant-time-ish string compare for token validation.
 
