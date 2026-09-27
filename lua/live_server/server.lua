@@ -396,12 +396,14 @@ local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" ..
 
 -- A token server gates its stream, so the page's own ?t= (or the copy kept
 -- for reloads that drop the query) goes on it. The token is never
--- written into the script, which any page may load.
+-- written into the script, which any page may load. Without one the 401
+-- logged only "SSE error", so the client says first where it comes from.
 local CLIENT_JS_TOKEN = table.concat({
     "!function(){try{",
     "var t=new URLSearchParams(location.search).get('t');",
     "try{if(t){sessionStorage.setItem('live-server.nvim:t',t)}",
     "else{t=sessionStorage.getItem('live-server.nvim:t')}}catch(_){}",
+    "if(!t){console.warn('[live-server.nvim] no token: open the page through the URL the server printed (with ?t=)')}",
     "var es=new EventSource('/__live/events'+(t?'?t='+encodeURIComponent(t):''));",
     CLIENT_BODY,
 })
