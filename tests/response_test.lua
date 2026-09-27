@@ -331,15 +331,40 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
     local function fetch(target)
         return H.http_get(("http://127.0.0.1:%d%s"):format(inst.port, target))
     end
-    for _, row in ipairs({
-        { "/missing.html?t=secret", "/missing.html", "a missing file" },
-        { "/.env?t=secret", "/.env", "a dot path" },
-        { "/assets/?t=secret", "/assets (no index)", "a directory with no index" },
-    }) do
-        local r = fetch(row[1])
-        eq(r.status, 404, row[3] .. " is 404")
-        ok(r.body:find("<code>" .. row[2] .. "</code>", 1, true) ~= nil, "its page names " .. row[2])
+    local function names_request(target, shown, what)
+        local r = fetch(target)
+        eq(r.status, 404, what .. " is 404")
+        ok(r.body:find("<code>" .. shown .. "</code>", 1, true) ~= nil, "its page names " .. shown)
         ok(not r.body:find("secret", 1, true), "and never the query's token")
+    end
+    names_request("/missing.html?t=secret", "/missing.html", "a missing file")
+    names_request("/.env?t=secret", "/.env", "a dot path")
+    names_request("/assets/?t=secret", "/assets (no index)", "a directory with no index")
+    -- A link the dot rule refuses by its target and a name that is neither
+    -- a file nor a directory reach 404s of their own. Windows may refuse
+    -- the link (no symlink privilege) and binds no unix socket to a path,
+    -- so each fixture is measured and its checks skipped where it is not.
+    H.write_file(root .. "/.env", "S")
+    local linked, link_err = uv.fs_symlink(".env", root .. "/link.txt")
+    if linked and uv.fs_stat(root .. "/link.txt") then
+        names_request("/link.txt?t=secret", "/link.txt", "a link to a dot name")
+    else
+        for _ = 1, 3 do
+            H.skip("a link to a dot name's 404 (" .. tostring(link_err or "the link does not resolve") .. ")")
+        end
+    end
+    local pipe = assert(uv.new_pipe(false))
+    H.defer(function()
+        pipe:close()
+    end)
+    local bound, bind_err = pipe:bind(root .. "/sock.s")
+    local sock_st = bound and uv.fs_stat(root .. "/sock.s")
+    if sock_st and sock_st.type ~= "file" and sock_st.type ~= "directory" then
+        names_request("/sock.s?t=secret", "/sock.s", "a socket")
+    else
+        for _ = 1, 3 do
+            H.skip("a socket's 404 (" .. tostring(bind_err or "the bind made no socket file") .. ")")
+        end
     end
     local rows = {
         { "/locked.html", "/locked.html", "an unreadable page" },
@@ -356,7 +381,7 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
     end
     -- The superuser opens a mode-000 file and Windows keeps no such mode, so
     -- the refusal the rows need is measured before they run.
-    local fd = uv.fs_open(files[1], "r", 438)
+    local fd, open_err, open_code = uv.fs_open(files[1], "r", 438)
     if fd then
         assert(uv.fs_close(fd))
         for _, row in ipairs(rows) do
@@ -366,6 +391,9 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
         end
         return
     end
+    -- An open that failed for another reason measured nothing about the
+    -- mode, and the rows would run on a fixture no probe read.
+    assert(open_code == "EACCES" or open_code == "EPERM", "the mode-000 probe: " .. tostring(open_err))
     for _, row in ipairs(rows) do
         local r = fetch(row[1])
         eq(r.status, 404, row[3] .. " is 404")

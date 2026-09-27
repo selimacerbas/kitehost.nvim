@@ -137,10 +137,11 @@ eq(http_get(base .. "/__live/asset?p=.images/pic.png&t=" .. TOKEN).status, 200, 
 for _, p in ipairs({ ".github/assets/logo.png", "my%20pic.png", "gr%C3%BCn.png", "id_card.png" }) do
     eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 200, "p=" .. p .. " is 200")
 end
--- A regular file alone: stream_file opens before it reads the type, and a
--- FIFO blocks that open past SIGTERM, so a FIFO row would hang this suite
--- wherever the check is missing. A directory takes the same check; without
--- it the 404 came from stream_file, whose page named the path on disk.
+-- A regular file alone: opening a FIFO blocks the loop past SIGTERM before
+-- stream_file's fstat reads the type, so the branch checks the type first,
+-- and a FIFO row would hang this suite rather than fail. A directory takes
+-- the same check; stream_file's own 404 names no disk path either, so this
+-- row asserts the status and the page alone, not which of the two answered.
 local dir_r = http_get(base .. "/__live/asset?p=dir.png&t=" .. TOKEN)
 eq(dir_r.status, 404, "a directory named like an image is 404")
 eq(dir_r.body:find(assert(uv.fs_realpath(tmpdir .. "/src")), 1, true), nil, "that 404 names no path on disk")
