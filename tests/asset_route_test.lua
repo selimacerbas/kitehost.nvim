@@ -103,20 +103,21 @@ end
 -- and a link named .env still serves the secret it points at.
 local named = tmpdir .. "/src/sub/.env"
 local named_ok, named_err = uv.fs_symlink("nested.txt", named)
-if named_ok and uv.fs_stat(named) then
+local named_st, named_st_err = uv.fs_stat(named)
+if named_ok and named_st then
     eq(http_get(base .. "/__live/asset?p=sub/.env&t=" .. TOKEN).status, 404, "a .env linking to a plain name is 404")
 else
-    H.skip("a .env linking to a plain name is 404 (" .. tostring(named_err or "the link does not resolve") .. ")")
+    H.skip("a .env linking to a plain name is 404 (" .. tostring(named_err or named_st_err) .. ")")
 end
 -- A file's name never ends in a separator or a dot segment, yet macOS's
 -- realpath resolves one on a file: sub/.env/ read an empty base name past
 -- the list and served the link's target.
-if named_ok and uv.fs_stat(named) then
+if named_ok and named_st then
     for _, p in ipairs({ "sub/.env/", "sub/.env/." }) do
         eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
     end
 else
-    local why = " (" .. tostring(named_err or "the link does not resolve") .. ")"
+    local why = " (" .. tostring(named_err or named_st_err) .. ")"
     H.skip("p=sub/.env/ is 404" .. why)
     H.skip("p=sub/.env/. is 404" .. why)
 end
@@ -133,10 +134,11 @@ end
 eq(http_get(base .. "/__live/asset?p=SERVER.PEM&t=" .. TOKEN).status, 404, "p=SERVER.PEM is 404")
 local alias = tmpdir .. "/src/ok.png"
 local aliased, alias_err = uv.fs_symlink(".env", alias)
-if aliased and uv.fs_stat(alias) then
+local alias_st, alias_st_err = uv.fs_stat(alias)
+if aliased and alias_st then
     eq(http_get(base .. "/__live/asset?p=ok.png&t=" .. TOKEN).status, 404, "an image name linking to .env is 404")
 else
-    H.skip("an image name linking to .env is 404 (" .. tostring(alias_err or "the link does not resolve") .. ")")
+    H.skip("an image name linking to .env is 404 (" .. tostring(alias_err or alias_st_err) .. ")")
 end
 -- A deny list, not the root route's dot rule: a document may keep its
 -- images in a dot directory (.images); markdown-preview sends every relative
@@ -162,18 +164,15 @@ eq(dir_r.body:find(assert(uv.fs_realpath(tmpdir .. "/src")), 1, true), nil, "tha
 -- skipped, counted.
 local link = tmpdir .. "/src/link.txt"
 local linked, link_err = uv.fs_symlink(".." .. package.config:sub(1, 1) .. "secret.txt", link)
-if linked and uv.fs_stat(link) then
+local link_st, link_st_err = uv.fs_stat(link)
+if linked and link_st then
     eq(
         http_get(base .. "/__live/asset?p=link.txt&t=" .. TOKEN).status,
         404,
         "a symlink in the asset root pointing above it is 404"
     )
 else
-    H.skip(
-        "a symlink in the asset root pointing above it is 404 ("
-            .. tostring(link_err or "the link does not resolve")
-            .. ")"
-    )
+    H.skip("a symlink in the asset root pointing above it is 404 (" .. tostring(link_err or link_st_err) .. ")")
 end
 
 server.stop(inst)
@@ -284,13 +283,14 @@ for _, l in ipairs({
     }
     local link_path = tmpdir .. "/src/" .. l.name
     local made, made_err = uv.fs_symlink(l.target, link_path)
-    if made and uv.fs_stat(link_path) then
+    local made_st, made_st_err = uv.fs_stat(link_path)
+    if made and made_st then
         local res = raw_get("/__live/asset?p=" .. l.name .. "&t=" .. TOKEN)
         eq(res.status, 200, rows[1])
         eq(res.count["content-security-policy"], l.count, rows[2])
         eq(res.headers["content-security-policy"], l.policy, rows[3])
     else
-        local why = " (" .. tostring(made_err or "the link does not resolve") .. ")"
+        local why = " (" .. tostring(made_err or made_st_err) .. ")"
         for _, row in ipairs(rows) do
             H.skip(row .. why)
         end

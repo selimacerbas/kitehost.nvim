@@ -24,7 +24,8 @@ S.features = {
     host_check = true,
 }
 
--- A document type added here joins ACTIVE_DOCUMENT, or goes out unsandboxed.
+-- A document type added here joins ACTIVE_DOCUMENT, or the asset route
+-- serves it unsandboxed.
 local MIME = {
     html = "text/html; charset=utf-8",
     htm = "text/html; charset=utf-8",
