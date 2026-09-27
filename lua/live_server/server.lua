@@ -377,9 +377,9 @@ end
 
 -- -------- LiveReload (SSE) ------------------------------------------------
 
-local CLIENT_JS = table.concat({
-    "!function(){try{",
-    "var es=new EventSource('/__live/events');",
+-- Everything after the EventSource opens: reload handling and the logs,
+-- shared by both clients below.
+local CLIENT_BODY = table.concat({
     "es.addEventListener('reload',function(e){",
     "var d;try{d=JSON.parse(e.data)}catch(_){d={}}",
     "if(d.css){var ls=document.querySelectorAll('link[rel=\"stylesheet\"]');",
@@ -389,6 +389,21 @@ local CLIENT_JS = table.concat({
     "es.onopen=function(){console.log('[live-server.nvim] connected')};",
     "es.onerror=function(e){console.warn('[live-server.nvim] SSE error',e)};",
     "}catch(e){console.warn('[live-server.nvim] no EventSource',e)}}();",
+})
+
+-- A tokenless server's client, byte for byte the one it always served.
+local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" .. CLIENT_BODY
+
+-- A token server gates its stream, so the page's own ?t= (or the copy kept
+-- for reloads that drop the query) goes on it. The token is never
+-- written into the script, which any page may load.
+local CLIENT_JS_TOKEN = table.concat({
+    "!function(){try{",
+    "var t=new URLSearchParams(location.search).get('t');",
+    "try{if(t){sessionStorage.setItem('live-server.nvim:t',t)}",
+    "else{t=sessionStorage.getItem('live-server.nvim:t')}}catch(_){}",
+    "var es=new EventSource('/__live/events'+(t?'?t='+encodeURIComponent(t):''));",
+    CLIENT_BODY,
 })
 
 local function sse_accept(inst, sock)
@@ -1137,7 +1152,12 @@ local function handle_request(conn, req)
 
     -- Special endpoints
     if path_only == "/__live/script.js" then
-        return send_response(sock, 200, { ["Content-Type"] = "application/javascript; charset=utf-8" }, CLIENT_JS)
+        return send_response(
+            sock,
+            200,
+            { ["Content-Type"] = "application/javascript; charset=utf-8" },
+            inst.token and CLIENT_JS_TOKEN or CLIENT_JS
+        )
     elseif path_only == "/__live/events" then
         conn.sse = true
         return sse_accept(inst, sock)
