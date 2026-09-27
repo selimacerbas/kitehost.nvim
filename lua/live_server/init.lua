@@ -70,6 +70,18 @@ M.state = { servers = {}, opened_ports = {} } -- [port] = inst; opened_ports[por
 
 local start_for_path -- forward declaration (used by auto_start and start_picker)
 
+-- The URL a browser opens for a server: a wildcard bind is reached on
+-- loopback, and a server's token rides in the query, so the page's first
+-- request and its injected client carry it.
+local function browser_url(host, port, token)
+    local display = (host == "0.0.0.0") and "127.0.0.1" or host
+    local url = ("http://%s:%d/"):format(display, port)
+    if token and token ~= "" then
+        url = url .. "?t=" .. util.url_encode(token)
+    end
+    return url
+end
+
 function M.setup(opts)
     M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
 
@@ -158,12 +170,15 @@ function start_for_path(path, port)
         end
         active_port = inst_or_err.port
         M.state.servers[active_port] = inst_or_err
-        util.notify(("LiveServer %d started → %s"):format(active_port, root), M.opts)
+        -- The URL the browser is sent, printed too: a page opened by hand
+        -- needs its token, and the client's no-token warning points here.
+        local url = browser_url(inst_or_err.host, active_port, inst_or_err.token)
+        util.notify(("LiveServer %d started → %s at %s"):format(active_port, root, url), M.opts)
     end
 
     if M.opts.open_on_start then
-        local display_host = (M.opts.host == "0.0.0.0") and "127.0.0.1" or M.opts.host
-        util.open_browser(("http://%s:%d/"):format(display_host, active_port))
+        local s = M.state.servers[active_port]
+        util.open_browser(browser_url(s and s.host or M.opts.host, active_port, s and s.token))
         M.state.opened_ports[active_port] = true
     end
 end
@@ -194,9 +209,7 @@ function M.open_existing()
             return
         end
         local s = M.state.servers[tonumber(port)]
-        local h = s and s.host or M.opts.host
-        local display_host = (h == "0.0.0.0") and "127.0.0.1" or h
-        util.open_browser(("http://%s:%d/"):format(display_host, port))
+        util.open_browser(browser_url(s and s.host or M.opts.host, tonumber(port), s and s.token))
         M.state.opened_ports[tonumber(port)] = true
     end)
 end
