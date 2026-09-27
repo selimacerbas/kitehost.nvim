@@ -182,6 +182,29 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
         400,
         "a POST with a NUL in its path is 400 before 405"
     )
+    -- The preflight sits after the Host, path and dotfile checks and answers
+    -- only a request that asks a method: each order has its row.
+    eq(
+        raw(port, ("OPTIONS /style.css HTTP/1.1\r\nHost: attacker.example\r\n%s\r\n"):format(pre)).status,
+        421,
+        "a preflight under a foreign Host is 421 before any answer"
+    )
+    eq(
+        raw(port, ("OPTIONS /%%5F_live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre)).status,
+        405,
+        "a preflight reads the canonical path: /%5F_live/events is /__live/events"
+    )
+    r = raw(
+        port,
+        ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://a.example\r\n\r\n"):format(port)
+    )
+    eq(r.status, 405, "an OPTIONS that asks no method is no preflight: 405")
+    eq(r.headers.allow, "GET", "with Allow: GET")
+    eq(
+        raw(port, ("OPTIONS /.env HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre)).status,
+        404,
+        "a preflight on a dot path is 404 before any answer"
+    )
     local plain = serve()
     eq(
         raw(plain.port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(plain.port, pre)).status,
