@@ -299,7 +299,7 @@ When `cfg.token` is set, the server requires `?t=<token>` on:
 
 Static assets (`index.html`, `style.css`, etc.) are intentionally not gated because the browser bootstraps from them before any JS runs and cannot append query strings to tags it discovers itself. Token-bearing requests for everything else are the caller's responsibility: pass `?t=<token>` to the browser via the initial URL, then stash it in `sessionStorage` and append it on every `fetch`/`EventSource` call.
 
-`util.random_token(byte_len)` generates a hex token (default 16 bytes = 128 bits) from `/dev/urandom`, falling back to `math.random` seeded from `uv.hrtime` + `os.time` + pid. `util.secure_compare(a, b)` is a constant-time-ish string compare for token validation.
+`util.random_token(byte_len)` generates a hex token (default 16 bytes = 128 bits) from the operating system's random source (`vim.uv.random`, then `/dev/urandom`) and raises when neither is available. `util.secure_compare(a, b)` is a constant-time-ish string compare for token validation.
 
 Token auth is opt-in. When `cfg.token` is nil (the default), no token is required; the Host check on loopback binds (unless `allowed_hosts = true`) and the inject endpoint's origin check (Design notes) apply on every server.
 

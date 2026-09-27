@@ -67,30 +67,33 @@ function U.url_encode(s)
     )
 end
 
--- Generate a random hex token. Uses /dev/urandom when available, otherwise
--- falls back to math.random seeded from uv.hrtime + os.time + pid. The
--- fallback is not crypto-grade but raises the bar substantially over no auth,
--- which is the threat model for a LAN-bound dev server.
+-- A hex token from the OS random source: vim.uv.random (the platform's
+-- CSPRNG, Windows included), then /dev/urandom. With neither it raises
+-- rather than hand out a guessable token; the math.random fallback held
+-- about 31 bits and reseeded the global generator.
 function U.random_token(byte_len)
-    byte_len = byte_len or 16 -- 16 bytes = 32 hex chars = 128 bits
-    local fd = uv.fs_open("/dev/urandom", "r", 384)
-    if fd then
-        local data = uv.fs_read(fd, byte_len, 0)
-        uv.fs_close(fd)
-        if data and #data == byte_len then
-            local hex = {}
-            for i = 1, #data do
-                hex[i] = string.format("%02x", string.byte(data, i))
+    byte_len = byte_len or 16 -- 16 bytes = 32 hex characters = 128 bits
+    if type(byte_len) ~= "number" or byte_len < 1 or byte_len ~= math.floor(byte_len) then
+        error("random_token: byte_len must be a positive integer", 2)
+    end
+    local data = uv.random(byte_len)
+    if type(data) ~= "string" or #data ~= byte_len then
+        data = nil
+        local fd = uv.fs_open("/dev/urandom", "r", 384)
+        if fd then
+            local read = uv.fs_read(fd, byte_len, 0)
+            uv.fs_close(fd)
+            if type(read) == "string" and #read == byte_len then
+                data = read
             end
-            return table.concat(hex)
         end
     end
-    math.randomseed((uv.hrtime() % 2147483647) + os.time() + vim.fn.getpid())
-    local hex = {}
-    for i = 1, byte_len do
-        hex[i] = string.format("%02x", math.random(0, 255))
+    if not data then
+        error("random_token: no secure random source (vim.uv.random and /dev/urandom both failed)", 2)
     end
-    return table.concat(hex)
+    return (data:gsub(".", function(c)
+        return string.format("%02x", string.byte(c))
+    end))
 end
 
 -- Constant-time-ish string comparison. Not strictly required at LAN-trust

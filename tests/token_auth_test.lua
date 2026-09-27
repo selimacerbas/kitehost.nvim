@@ -38,6 +38,46 @@ ok(util.secure_compare("abc", "abc"), "secure_compare equal strings")
 ok(not util.secure_compare("abc", "abd"), "secure_compare unequal strings")
 ok(not util.secure_compare("abc", "abcd"), "secure_compare different lengths")
 ok(not util.secure_compare(nil, "abc"), "secure_compare nil arg")
+-- The token comes from the OS CSPRNG: vim.uv.random, then /dev/urandom,
+-- else a raise; the math.random fallback held about 31 bits and reseeded
+-- the global generator.
+local calls, seeds = 0, 0
+local real_random, real_seed, real_open = uv.random, math.randomseed, uv.fs_open
+math.randomseed = function(...)
+    seeds = seeds + 1
+    return real_seed(...)
+end
+uv.random = function(...)
+    calls = calls + 1
+    return real_random(...)
+end
+local tok = util.random_token(16)
+eq(calls, 1, "random_token reads vim.uv.random")
+ok(#tok == 32 and tok:match("^[0-9a-f]+$") ~= nil, "and returns 32 hex characters")
+uv.random = function()
+    return nil, "EIO: stubbed", "EIO"
+end
+uv.fs_open = function(path, ...)
+    if path == "/dev/urandom" then
+        return nil, "ENOENT: stubbed", "ENOENT"
+    end
+    return real_open(path, ...)
+end
+local made, made_err = pcall(util.random_token, 16)
+ok(
+    not made and tostring(made_err):find("no secure random source", 1, true) ~= nil,
+    "with no source it raises: " .. tostring(made_err)
+)
+uv.random, uv.fs_open = real_random, real_open
+local fds = H.fd_count()
+ok(not pcall(util.random_token, -1), "a negative length raises")
+if fds then
+    eq(H.fd_count(), fds, "and leaves no descriptor open")
+else
+    H.skip("a negative length leaves no descriptor open (no descriptor listing on this platform)")
+end
+math.randomseed = real_seed
+eq(seeds, 0, "the global math.randomseed is never called")
 
 -- ─── Section 2: server with token ───────────────────────────────────────────
 H.section("Section 2: server enforces token")
