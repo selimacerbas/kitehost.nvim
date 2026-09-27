@@ -1495,6 +1495,22 @@ function S.start(cfg)
     if cfg.serve_dotfiles ~= nil and type(cfg.serve_dotfiles) ~= "boolean" then
         error("serve_dotfiles must be true or false", 0)
     end
+    -- A header is written as the table spells it. Chromium trims a name, so
+    -- "Access-Control-Allow-Origin " let any site read the event stream
+    -- (measured); a colon in a name or a CR or LF in a value sends a header
+    -- other than the one named. The copy comes from the same pass, so the
+    -- table served is the one checked.
+    local cfg_headers = cfg.headers or {}
+    if type(cfg_headers) ~= "table" then
+        error("headers must be a table of header names and values", 0)
+    end
+    local headers = {}
+    for k, v in pairs(cfg_headers) do
+        if type(k) ~= "string" or not k:find("^[%w!#$%%&'*+%-.^_`|~]+$") or type(v) ~= "string" or v:find("[\r\n]") then
+            error("headers: a name must be a token and a value a line: " .. tostring(k), 0)
+        end
+        headers[k] = v
+    end
 
     local tcp = uv.new_tcp()
     local host = cfg.host or "127.0.0.1"
@@ -1525,14 +1541,17 @@ function S.start(cfg)
         error("Invalid root: " .. tostring(cfg.root), 0)
     end
 
-    local headers = vim.tbl_extend("keep", cfg.headers or {}, {})
     -- /__live/* answers no cross-origin read: the stream and the asset route
     -- get the caller's headers minus any ACAO, under any spelling, and cors
-    -- applies to the root route only.
+    -- applies to the root route only. With cors set its line is the one
+    -- origin: a caller's ACAO beside it went out as a second line, and a
+    -- browser refuses a response with two.
     local live_headers = {}
     for k, v in pairs(headers) do
         if not (type(k) == "string" and k:lower() == "access-control-allow-origin") then
             live_headers[k] = v
+        elseif cfg.cors then
+            headers[k] = nil
         end
     end
     if cfg.cors then

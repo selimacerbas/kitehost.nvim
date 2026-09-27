@@ -667,8 +667,13 @@ end)
 -- which was never answered; serve_dotfiles = 1 read as false. Patterns
 -- with no token started and gated nothing, and an index_names string
 -- raised in the read callback of every directory request; a name with a
--- path in it (../x) read a directory's index from another directory.
-H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_names", function()
+-- path in it (../x) read a directory's index from another directory. A
+-- header is written as the table spells it: Chromium trims a name, so
+-- "Access-Control-Allow-Origin " let any site read the event stream
+-- (measured); a colon in a name or a CR or LF in a value sends a header
+-- other than the one named, a key that is not a string went out as a
+-- number, and a headers string opened the socket before it raised.
+H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names or headers", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
     local bad = {
@@ -690,6 +695,19 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_name
         { "index_names", { "sub\\index.html" }, "index_names entry is not a file name: sub\\index.html" },
         { "index_names", { "." }, "index_names entry is not a file name: ." },
         { "index_names", { ".." }, "index_names entry is not a file name: .." },
+        {
+            "headers",
+            { ["Access-Control-Allow-Origin "] = "*" },
+            "headers: a name must be a token and a value a line: Access-Control-Allow-Origin ",
+        },
+        { "headers", { ["X-A:b"] = "1" }, "headers: a name must be a token and a value a line: X-A:b" },
+        { "headers", { [1] = "x" }, "headers: a name must be a token and a value a line: 1" },
+        {
+            "headers",
+            { ["X-Custom"] = "a\r\nSet-Cookie: x=1" },
+            "headers: a name must be a token and a value a line: X-Custom",
+        },
+        { "headers", "x", "headers must be a table" },
     }
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
@@ -719,6 +737,11 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_name
     -- init.lua's default: no patterns ask for no token.
     started, res = pcall(server.start, { port = 0, root = tmpdir, protected_paths = {} })
     ok(started, "protected_paths = {} starts without a token: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    started, res = pcall(server.start, { port = 0, root = tmpdir, headers = { ["X-Custom"] = "1" } })
+    ok(started, 'headers = { ["X-Custom"] = "1" } starts: ' .. tostring(started and "" or res))
     if started then
         server.stop(res)
     end

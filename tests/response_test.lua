@@ -93,7 +93,9 @@ end)
 
 -- With cors on, ACAO went out on the event stream and the asset route as
 -- well, so any website could read the reload stream and the files beside
--- the document; an ACAO set by hand in headers did the same.
+-- the document; an ACAO set by hand in headers, under any spelling, did
+-- the same. A caller's ACAO beside cors went out as a second line on the
+-- root route, and a browser refuses a response with two.
 H.case("Section 2: cors never reaches /__live/*", function()
     local inst = serve({ cors = true })
     local port = inst.port
@@ -110,24 +112,41 @@ H.case("Section 2: cors never reaches /__live/*", function()
         "the client script has none"
     )
     eq(raw(port, get("/index.html", port)).headers["access-control-allow-origin"], "*", "a root-route file keeps it")
-    local manual = serve({ headers = { ["access-control-allow-origin"] = "*" } })
+    local both = serve({ cors = "https://a.example", headers = { ["ACCESS-control-allow-origin"] = "*" } })
+    local r = raw(both.port, get("/index.html", both.port))
+    eq(r.count["access-control-allow-origin"], 1, "cors beside a caller's ACAO sends one origin line")
+    eq(r.headers["access-control-allow-origin"], "https://a.example", "and it is the cors one")
+    local manual = serve({ headers = { ["Access-control-ALLOW-Origin"] = "*" } })
     eq(
         raw(manual.port, get("/__live/asset?p=pic.png", manual.port)).headers["access-control-allow-origin"],
         nil,
         "an ACAO set by hand in headers stays off the asset route"
     )
+    eq(
+        stream_head(manual.port, "/__live/events").headers["access-control-allow-origin"],
+        nil,
+        "and off the event stream"
+    )
 end)
 
--- The stream sends the caller's headers as the asset route does, and its
--- own fields once under any spelling of their names. A key that is not a
--- string (a list-style headers table) raised in the copy, and the stream
--- never answered, so live reload stopped without a word.
+-- The stream sends the caller's headers as the asset route does, and each
+-- of its own fields once under any spelling of the name: a caller's line
+-- beside the stream's own would leave the client to pick which it reads.
 H.case("Section 3: the event stream carries the caller's headers, its own fields once", function()
-    local inst = serve({ headers = { "X-Listed: 1", ["X-Frame-Options"] = "DENY", ["content-type"] = "text/plain" } })
+    local inst = serve({
+        headers = {
+            ["X-Frame-Options"] = "DENY",
+            ["content-type"] = "text/plain",
+            ["CACHE-CONTROL"] = "max-age=60",
+            ["connection"] = "close",
+        },
+    })
     local r = stream_head(inst.port, "/__live/events")
     eq(r.headers["x-frame-options"], "DENY", "a caller's header reaches the stream")
     eq(r.headers["content-type"], "text/event-stream", "the stream's own type holds against a caller's spelling")
     eq(r.count["content-type"], 1, "and goes out once")
+    eq(r.count["cache-control"], 1, "its Cache-Control goes out once")
+    eq(r.count["connection"], 1, "and its Connection once")
 end)
 
 H.finish()
