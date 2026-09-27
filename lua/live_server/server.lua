@@ -210,12 +210,30 @@ local function host_name(value)
     return (name:lower():gsub("%.$", ""))
 end
 
--- An origin as a browser sends one in Origin (RFC 6454 6.2):
--- scheme://host with an optional port, and no userinfo, path or trailing
--- slash, so nothing in it can end a header line.
+-- The shape of an origin (RFC 6454 6.2): scheme://host with an optional
+-- port, and no userinfo, path or trailing slash, so nothing in it can end
+-- a header line.
 local function is_origin(s)
     local authority = s:match("^%a[%w+.-]*://(.+)$")
     return authority ~= nil and host_name(authority) ~= nil and not authority:find(":$")
+end
+
+local DEFAULT_PORTS = { http = "80", ws = "80", https = "443", wss = "443" }
+
+-- Whether an origin is spelled as a browser serializes one. A request's
+-- Origin is compared byte for byte, so an upper-case letter, an escape, a
+-- port with a leading zero or past 65535, or the scheme's default port
+-- could never match; such an entry is refused, never rewritten, since a
+-- partial rewrite would disagree with the browser's at the edges. Any
+-- scheme is left free (an extension's origin is one). A non-canonical
+-- IPv6 literal ([0:0::1]) is not caught here, and never matches either.
+local function as_browser_sends(s)
+    local scheme, authority = s:match("^(.-)://(.*)$")
+    if s:find("[A-Z]") or authority:find("%", 1, true) then
+        return false
+    end
+    local port = authority:match(":(%d+)$")
+    return port == nil or (port:find("^[1-9]%d*$") ~= nil and tonumber(port) <= 65535 and DEFAULT_PORTS[scheme] ~= port)
 end
 
 -- The Origin and Fetch Metadata fields the gates read, as sent, each once.
@@ -1587,6 +1605,9 @@ function S.start(cfg)
             end
             if not is_origin(origin) then
                 error("cors entry is not an origin (scheme://host[:port]): " .. vim.inspect(origin), 0)
+            end
+            if not as_browser_sends(origin) then
+                error("cors entry is not an origin as a browser sends it (lower case, no default port): " .. origin, 0)
             end
         end
     end
