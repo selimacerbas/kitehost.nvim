@@ -739,10 +739,10 @@ local function send_html_with_injection(inst, sock, html, extra_headers, req)
     send_response(sock, 200, headers, html)
 end
 
-local function serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req)
+local function serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req, shown)
     local body = read_file_all(abs_path)
     if not body then
-        return http_404(sock, abs_path)
+        return http_404(sock, shown or "/")
     end
     send_html_with_injection(inst, sock, body, extra_headers, req)
 end
@@ -847,15 +847,17 @@ end
 
 -- -------- Static file streaming -------------------------------------------
 
-local function stream_file(sock, abs_path, extra_headers)
+-- shown is what a 404 names: the request path, never abs_path, which gave
+-- a peer the user's home directory and project layout.
+local function stream_file(sock, abs_path, extra_headers, shown)
     local fd = uv.fs_open(abs_path, "r", 438)
     if not fd then
-        return http_404(sock, abs_path)
+        return http_404(sock, shown or "/")
     end
     local stat = uv.fs_fstat(fd)
     if not stat or stat.type ~= "file" then
         uv.fs_close(fd)
-        return http_404(sock, abs_path)
+        return http_404(sock, shown or "/")
     end
 
     local headers =
@@ -891,12 +893,12 @@ local function stream_file(sock, abs_path, extra_headers)
     read_chunk()
 end
 
-local function serve_path(inst, sock, abs_path, req, extra_headers)
+local function serve_path(inst, sock, abs_path, req, extra_headers, shown)
     local mime = guess_mime(abs_path)
     if mime:find("^text/html") then
-        return serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req)
+        return serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req, shown)
     else
-        return stream_file(sock, abs_path, extra_headers)
+        return stream_file(sock, abs_path, extra_headers, shown)
     end
 end
 
@@ -1132,7 +1134,7 @@ local function handle_request(conn, req)
     end
     -- Dotfiles hold secrets and the listing already hides them.
     if not inst.serve_dotfiles and has_dot_segment(path_only) then
-        return http_404(sock, req.path)
+        return http_404(sock, path_only)
     end
     -- A cors preflight for the root route; /__live/* answers no
     -- cross-origin read, so its preflight gets the 405 below. Both read the
@@ -1233,7 +1235,7 @@ local function handle_request(conn, req)
         if status == 401 then
             return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
         end
-        return http_404(sock, req.path)
+        return http_404(sock, path_only)
     end
 
     -- Special endpoints
@@ -1314,13 +1316,13 @@ local function handle_request(conn, req)
         if not st or st.type ~= "file" then
             return http_404(sock, "/__live/asset")
         end
-        return stream_file(sock, real, inst.live_headers)
+        return stream_file(sock, real, inst.live_headers, "/__live/asset")
     end
 
     -- Map path
     local mapped = sanitize_and_map(path_only, inst.root_real)
     if not mapped then
-        return http_404(sock, req.path)
+        return http_404(sock, path_only)
     end
 
     local st = uv.fs_stat(mapped)
@@ -1366,7 +1368,7 @@ local function handle_request(conn, req)
             if status then
                 return refuse(status)
             end
-            return serve_path(inst, sock, candidate, req, root_headers(inst, req))
+            return serve_path(inst, sock, candidate, req, root_headers(inst, req), path_only)
         end
         if inst.dir_enabled then
             -- The path as normalized: the request's own spelling carries its
@@ -1374,16 +1376,16 @@ local function handle_request(conn, req)
             local html = dir_listing_html(inst, mapped, path_only)
             return send_html_with_injection(inst, sock, html, root_headers(inst, req), req)
         else
-            return http_404(sock, req.path .. " (no index)")
+            return http_404(sock, path_only .. " (no index)")
         end
     elseif st and st.type == "file" then
         local status = refusal(mapped)
         if status then
             return refuse(status)
         end
-        return serve_path(inst, sock, mapped, req, root_headers(inst, req))
+        return serve_path(inst, sock, mapped, req, root_headers(inst, req), path_only)
     else
-        return http_404(sock, req.path)
+        return http_404(sock, path_only)
     end
 end
 

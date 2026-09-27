@@ -2,7 +2,7 @@
 -- What every response carries and what it must not: the referrer policy,
 -- the cors headers (never on /__live/*), the preflight answer and the
 -- request headers it allows, a cors list's echo of a listed Origin, and a
--- 404 that names the request, never a filesystem path.
+-- 404 that names the request, never a filesystem path or the query.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -319,6 +319,59 @@ H.case("Section 5: a cors list echoes only a listed Origin", function()
         nil,
         "an entry added to the caller's list after start is never echoed"
     )
+end)
+
+-- A file the server could not open answered a 404 naming its absolute
+-- path, which gave a peer the user's home directory and project layout,
+-- and a 404 on the root route echoed the query, a ?t=<token> with it. The
+-- page names the path asked for, normalized and without its query; the
+-- asset route names itself.
+H.case("Section 6: a 404 names the request, never the filesystem path", function()
+    local inst = serve()
+    local function fetch(target)
+        return H.http_get(("http://127.0.0.1:%d%s"):format(inst.port, target))
+    end
+    for _, row in ipairs({
+        { "/missing.html?t=secret", "/missing.html", "a missing file" },
+        { "/.env?t=secret", "/.env", "a dot path" },
+        { "/assets/?t=secret", "/assets (no index)", "a directory with no index" },
+    }) do
+        local r = fetch(row[1])
+        eq(r.status, 404, row[3] .. " is 404")
+        ok(r.body:find("<code>" .. row[2] .. "</code>", 1, true) ~= nil, "its page names " .. row[2])
+        ok(not r.body:find("secret", 1, true), "and never the query's token")
+    end
+    local rows = {
+        { "/locked.html", "/locked.html", "an unreadable page" },
+        { "/locked.bin", "/locked.bin", "an unreadable file" },
+        { "/__live/asset?p=locked.bin", "/__live/asset", "an unreadable asset" },
+    }
+    local files = { root .. "/locked.html", root .. "/locked.bin", root .. "/assets/locked.bin" }
+    for _, path in ipairs(files) do
+        H.write_file(path, "x")
+        assert(uv.fs_chmod(path, 0))
+        H.defer(function()
+            assert(uv.fs_chmod(path, 420))
+        end)
+    end
+    -- The superuser opens a mode-000 file and Windows keeps no such mode, so
+    -- the refusal the rows need is measured before they run.
+    local fd = uv.fs_open(files[1], "r", 438)
+    if fd then
+        assert(uv.fs_close(fd))
+        for _, row in ipairs(rows) do
+            for _ = 1, 3 do
+                H.skip(row[3] .. "'s 404 (this process opens a mode-000 file: root, or no POSIX modes)")
+            end
+        end
+        return
+    end
+    for _, row in ipairs(rows) do
+        local r = fetch(row[1])
+        eq(r.status, 404, row[3] .. " is 404")
+        ok(not r.body:find(root, 1, true) and not r.body:find(H.canon(root), 1, true), "its page shows no root path")
+        ok(r.body:find("<code>" .. row[2] .. "</code>", 1, true) ~= nil, "it names " .. row[2])
+    end
 end)
 
 H.finish()
