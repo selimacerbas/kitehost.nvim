@@ -414,22 +414,22 @@ local CLIENT_JS_TOKEN = table.concat({
     CLIENT_BODY,
 })
 
+-- A caller's header under another spelling of one of these names would go
+-- out as a second line beside the stream's own.
+local SSE_OWN = { ["content-type"] = true, ["cache-control"] = true, ["connection"] = true }
+
 local function sse_accept(inst, sock)
-    local h = {
-        ["Content-Type"] = "text/event-stream",
-        ["Cache-Control"] = "no-cache",
-        ["Connection"] = "keep-alive",
-    }
-    -- Send CORS on the SSE stream only when the instance was configured for
-    -- it; an unconditional wildcard would let any origin read this stream.
-    -- Match the header key case-insensitively so a user-supplied lowercase
-    -- key still carries through.
-    for k, v in pairs(inst.headers) do
-        if k:lower() == "access-control-allow-origin" then
-            h["Access-Control-Allow-Origin"] = v
-            break
+    local h = {}
+    -- k:lower() raises on a key that is not a string, and the stream would
+    -- never answer.
+    for k, v in pairs(inst.live_headers) do
+        if type(k) == "string" and not SSE_OWN[k:lower()] then
+            h[k] = v
         end
     end
+    h["Content-Type"] = "text/event-stream"
+    h["Cache-Control"] = "no-cache"
+    h["Connection"] = "keep-alive"
     write_headers(sock, 200, h)
     sock:write("retry: 1000\n\n")
     table.insert(inst.sse_clients, sock)
@@ -1236,7 +1236,7 @@ local function handle_request(conn, req)
         if not st or st.type ~= "file" then
             return http_404(sock, "/__live/asset")
         end
-        return stream_file(sock, real, inst.headers)
+        return stream_file(sock, real, inst.live_headers)
     end
 
     -- Map path
@@ -1526,6 +1526,15 @@ function S.start(cfg)
     end
 
     local headers = vim.tbl_extend("keep", cfg.headers or {}, {})
+    -- /__live/* answers no cross-origin read: the stream and the asset route
+    -- get the caller's headers minus any ACAO, under any spelling, and cors
+    -- applies to the root route only.
+    local live_headers = {}
+    for k, v in pairs(headers) do
+        if not (type(k) == "string" and k:lower() == "access-control-allow-origin") then
+            live_headers[k] = v
+        end
+    end
     if cfg.cors then
         headers["Access-Control-Allow-Origin"] = type(cfg.cors) == "string" and cfg.cors or "*"
     end
@@ -1546,6 +1555,7 @@ function S.start(cfg)
         root_real = root_real,
         default_index = cfg.default_index,
         headers = headers,
+        live_headers = live_headers,
         started_at = os.time(),
 
         -- live

@@ -91,4 +91,43 @@ H.case("Section 1: every response carries Referrer-Policy: no-referrer", functio
     eq(r.count["referrer-policy"], 1, "and sent once under that spelling too")
 end)
 
+-- With cors on, ACAO went out on the event stream and the asset route as
+-- well, so any website could read the reload stream and the files beside
+-- the document; an ACAO set by hand in headers did the same.
+H.case("Section 2: cors never reaches /__live/*", function()
+    local inst = serve({ cors = true })
+    local port = inst.port
+    eq(stream_head(port, "/__live/events").headers["access-control-allow-origin"], nil, "the event stream has no ACAO")
+    eq(raw(port, get("/__live/inject?event=x", port)).headers["access-control-allow-origin"], nil, "inject has none")
+    eq(
+        raw(port, get("/__live/asset?p=pic.png", port)).headers["access-control-allow-origin"],
+        nil,
+        "the asset route has none"
+    )
+    eq(
+        raw(port, get("/__live/script.js", port)).headers["access-control-allow-origin"],
+        nil,
+        "the client script has none"
+    )
+    eq(raw(port, get("/index.html", port)).headers["access-control-allow-origin"], "*", "a root-route file keeps it")
+    local manual = serve({ headers = { ["access-control-allow-origin"] = "*" } })
+    eq(
+        raw(manual.port, get("/__live/asset?p=pic.png", manual.port)).headers["access-control-allow-origin"],
+        nil,
+        "an ACAO set by hand in headers stays off the asset route"
+    )
+end)
+
+-- The stream sends the caller's headers as the asset route does, and its
+-- own fields once under any spelling of their names. A key that is not a
+-- string (a list-style headers table) raised in the copy, and the stream
+-- never answered, so live reload stopped without a word.
+H.case("Section 3: the event stream carries the caller's headers, its own fields once", function()
+    local inst = serve({ headers = { "X-Listed: 1", ["X-Frame-Options"] = "DENY", ["content-type"] = "text/plain" } })
+    local r = stream_head(inst.port, "/__live/events")
+    eq(r.headers["x-frame-options"], "DENY", "a caller's header reaches the stream")
+    eq(r.headers["content-type"], "text/event-stream", "the stream's own type holds against a caller's spelling")
+    eq(r.count["content-type"], 1, "and goes out once")
+end)
+
 H.finish()
