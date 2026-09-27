@@ -613,7 +613,9 @@ local function dir_listing_html(inst, fs_path, req_path)
         if not name then
             break
         end
-        if not inst.dir_show_hidden and name:sub(1, 1) == "." then
+        -- A name the dot rule refuses is not shown: show_hidden alone
+        -- named .env and .git to anyone the server answers, behind 404s.
+        if name:sub(1, 1) == "." and not (inst.dir_show_hidden and inst.serve_dotfiles) then
             -- skip hidden
         else
             table.insert(entries, { name = name, is_dir = (t == "directory") })
@@ -1124,7 +1126,7 @@ end
 
 -- -------- Public server API -----------------------------------------------
 
--- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, asset_root, allowed_hosts }
+-- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, asset_root, allowed_hosts }
 function S.start(cfg)
     -- Checked before any handle opens, so a bad value leaks nothing.
     -- An empty token is truthy and would pass the gate with no t= at all.

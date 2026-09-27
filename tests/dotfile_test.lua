@@ -38,6 +38,20 @@ vim.fn.mkdir(root .. "/sub", "p")
 H.write_file(root .. "/sub/.env", "SECRET-4")
 vim.fn.mkdir(root .. "/.well-known", "p")
 H.write_file(root .. "/.well-known/x", "wk")
+vim.fn.mkdir(root .. "/list/.git", "p")
+H.write_file(root .. "/list/.env", "SECRET-5")
+H.write_file(root .. "/list/page.txt", "page")
+
+-- The dot names a listing shows as entries; the parent row ("..") is none.
+local function dot_names(body)
+    local names = {}
+    for label in body:gmatch('<a href="[^"]*">([^<]*)</a>') do
+        if label:sub(1, 1) == "." and label ~= ".." then
+            names[#names + 1] = label
+        end
+    end
+    return names
+end
 
 H.case("Section 1: dot segments are 404", function()
     local base = serve(root, { cors = true })
@@ -55,6 +69,17 @@ H.case("Section 1: dot segments are 404", function()
     else
         H.skip("a link to .env is 404 (" .. tostring(link_err or "the link does not resolve") .. ")")
     end
+    -- A scanner probes /.env.local blind; the link's target has a plain
+    -- name, so only the request path carries the dot.
+    local alias = root .. "/.env.local"
+    local aliased, alias_err = uv.fs_symlink("index.html", alias)
+    if aliased and uv.fs_stat(alias) then
+        eq(H.http_get(base .. "/.env.local").status, 404, "a dot name linking to a plain name is 404")
+    else
+        H.skip(
+            "a dot name linking to a plain name is 404 (" .. tostring(alias_err or "the link does not resolve") .. ")"
+        )
+    end
 end)
 
 H.case("Section 2: serve_dotfiles = true serves them", function()
@@ -69,6 +94,26 @@ H.case("Section 3: a root inside a dot directory still serves", function()
     vim.fn.mkdir(dotted, "p")
     H.write_file(dotted .. "/index.html", "<html><body>dotted</body></html>")
     eq(H.http_get(serve(dotted) .. "/index.html").status, 200, "a root under .local serves /index.html")
+end)
+
+-- show_hidden alone listed .env and .git to anyone the server answers,
+-- linking names the dot rule then refused.
+H.case("Section 4: a show_hidden listing names no dot entry the server refuses", function()
+    local listing = { dirlist = { enabled = true, show_hidden = true } }
+    local body = H.http_get(serve(root, { features = listing }) .. "/list/").body
+    ok(body:find('href="/list/page.txt"', 1, true), "a show_hidden listing links its plain entry")
+    ok(not body:find('href="/list/.env"', 1, true), "and no .env link without serve_dotfiles")
+    eq(table.concat(dot_names(body), " "), "", "and names no dot entry")
+    body = H.http_get(serve(root, { features = listing, serve_dotfiles = true }) .. "/list/").body
+    ok(body:find('href="/list/.env"', 1, true), "with serve_dotfiles too it links .env")
+    ok(body:find('href="/list/.git/"', 1, true), "and .git/")
+    -- Serving dotfiles to a caller who asks for one by name lists none.
+    local plain = { dirlist = { enabled = true } }
+    body = H.http_get(serve(root, { features = plain, serve_dotfiles = true }) .. "/list/").body
+    ok(
+        body:find('href="/list/page.txt"', 1, true) and #dot_names(body) == 0,
+        "serve_dotfiles alone lists page.txt and no dot entry"
+    )
 end)
 
 H.finish()
