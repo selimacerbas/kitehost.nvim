@@ -75,7 +75,7 @@ local function write_headers(sock, status, headers)
     local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
     for k, v in pairs(headers or {}) do
-        if not (type(k) == "string" and k:lower() == "referrer-policy") then
+        if k:lower() ~= "referrer-policy" then
             table.insert(lines, ("%s: %s\r\n"):format(k, v))
         end
     end
@@ -730,7 +730,7 @@ end
 local function join_vary(headers, member)
     local configured = {}
     for k, v in pairs(headers) do
-        if type(k) == "string" and k:lower() == "vary" then
+        if k:lower() == "vary" then
             table.insert(configured, tostring(v))
             headers[k] = nil
         end
