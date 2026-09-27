@@ -190,6 +190,9 @@ starting with `#` are comments. >
     .git
     dist
 <
+A line starting with `/` is anchored at the served root: `/dist` skips
+`dist/` and not `sub/dist/`.
+
 The ignore file is re-parsed when the server retargets to a new root.
 
 ===============================================================================

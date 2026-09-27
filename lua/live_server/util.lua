@@ -387,6 +387,11 @@ function U.parse_liveignore(root)
         line = line:match("^%s*(.-)%s*$")
         if line ~= "" and line:sub(1, 1) ~= "#" then
             local pat = line:gsub("([%.%+%-%^%$%(%)%%])", "%%%1"):gsub("%*", ".*")
+            -- The path is matched with a leading slash (schedule_reload), so
+            -- a line starting with one is anchored at the root.
+            if pat:sub(1, 1) == "/" then
+                pat = "^" .. pat
+            end
             table.insert(patterns, pat)
         end
     end

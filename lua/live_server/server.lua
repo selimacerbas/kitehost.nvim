@@ -475,20 +475,35 @@ local function is_own_index(inst, rel)
     return own == "/" .. rel
 end
 
+-- A directory on that file's path, which is watched whatever its name: a
+-- default_index under .drafts/, or a plain-named link to .hidden/page.html,
+-- reloads though the dot rule drops the changes beside it.
+local function holds_own_index(inst, rel)
+    local own = inst.default_index and root_rel(inst.root_real, inst.default_index)
+    return own and own:sub(1, #rel + 2) == "/" .. rel .. "/"
+end
+
 local function schedule_reload(inst, changed_path)
     if not inst.live_enabled then
         return
     end
     local rel = changed_path and changed_rel(inst, changed_path)
+    local own = rel and is_own_index(inst, rel)
     -- A dot path's change names it to every events client, the name the
     -- listing hides, and reloads a page for a file the server never serves.
-    if rel and not inst.serve_dotfiles and has_dot_segment(rel) and not is_own_index(inst, rel) then
+    if rel and not inst.serve_dotfiles and has_dot_segment(rel) and not own then
         return
     end
-    if rel and rel ~= "" and #inst.ignore_patterns > 0 and util.match_ignore(rel, inst.ignore_patterns) then
+    -- Read with a leading slash, so a line starting with one anchors at
+    -- the root (parse_liveignore) on every watcher; the root itself is no
+    -- path a line names.
+    local ignorable = rel and rel ~= "" and rel ~= "/"
+    if ignorable and #inst.ignore_patterns > 0 and util.match_ignore("/" .. rel, inst.ignore_patterns) then
         return
     end
-    inst._last_change = rel or inst._last_change
+    -- The file the user started on reloads the page at /, and the path it
+    -- sits at may be the dot target of a plain-named link.
+    inst._last_change = own and "/" or rel or inst._last_change
     inst.debounce_timer:stop()
     inst.debounce_timer:start(inst.live_debounce, 0, function()
         S.reload(inst, inst._last_change or "")
@@ -499,7 +514,8 @@ end
 -- serve_dotfiles) spends no watch; with serve_dotfiles each is watched,
 -- .git included.
 local function dir_watched(inst, dir)
-    return inst.serve_dotfiles or not has_dot_segment(changed_rel(inst, dir))
+    local rel = changed_rel(inst, dir)
+    return inst.serve_dotfiles or not has_dot_segment(rel) or holds_own_index(inst, rel)
 end
 
 -- Recursively scan all subdirectories under root (for Linux fallback watchers)
@@ -1433,6 +1449,11 @@ function S.start(cfg)
         for _, iname in ipairs(index_names) do
             if type(iname) ~= "string" or iname == "" then
                 error("index_names must be a list of file names", 0)
+            end
+            -- A name is joined to the directory it indexes, so a path in it
+            -- read another directory's file as this one's index.
+            if iname:find("[/\\]") or iname == "." or iname == ".." then
+                error("index_names entry is not a file name: " .. iname, 0)
             end
         end
     end

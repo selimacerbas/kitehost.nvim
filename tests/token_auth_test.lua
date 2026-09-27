@@ -584,7 +584,8 @@ end)
 -- pattern started and then raised in the read callback of every request,
 -- which was never answered; serve_dotfiles = 1 read as false. Patterns
 -- with no token started and gated nothing, and an index_names string
--- raised in the read callback of every directory request.
+-- raised in the read callback of every directory request; a name with a
+-- path in it (../x) read a directory's index from another directory.
 H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_names", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
@@ -601,6 +602,11 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_name
         { "index_names", "index.html" },
         { "index_names", { 42 } },
         { "index_names", { "" } },
+        { "index_names", { "../x" }, "index_names entry is not a file name: ../x" },
+        { "index_names", { "sub/index.html" }, "index_names entry is not a file name: sub/index.html" },
+        { "index_names", { "sub\\index.html" }, "index_names entry is not a file name: sub\\index.html" },
+        { "index_names", { "." }, "index_names entry is not a file name: ." },
+        { "index_names", { ".." }, "index_names entry is not a file name: .." },
     }
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
@@ -729,8 +735,9 @@ end)
 
 -- The server read the caller's own table, which init.lua hands from the
 -- user's options, so a caller that holed or emptied it after start dropped
--- the gate.
-H.case("the server keeps its own copy of protected_paths", function()
+-- the gate; index_names changed after start would name an index the start
+-- check never read.
+H.case("the server keeps its own copy of protected_paths and index_names", function()
     local patterns = { "^/content%.md$" }
     local inst = server.start({
         port = 0,
@@ -747,6 +754,25 @@ H.case("the server keeps its own copy of protected_paths", function()
     eq(http_get(url).status, 401, "/content.md without the token is 401")
     patterns[1] = nil
     eq(http_get(url).status, 401, "and stays 401 after the caller's list is holed")
+    local names = { "index.html" }
+    local named = server.start({
+        port = 0,
+        root = tmpdir,
+        index_names = names,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(named)
+    end)
+    local root_url = ("http://127.0.0.1:%d/"):format(named.port)
+    eq(http_get(root_url).status, 200, "/ answers with index.html")
+    names[1] = 42
+    local got = http_get(root_url)
+    ok(
+        got.status == 200 and got.body:find("hi", 1, true) ~= nil,
+        ("and still does after the caller's index_names changes (got %d)"):format(got.status)
+    )
 end)
 
 -- ─── Summary ────────────────────────────────────────────────────────────────

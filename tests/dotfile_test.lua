@@ -188,7 +188,8 @@ end)
 -- never serves. The event names the path relative to the root: a watcher
 -- on Linux names it in full, which told every events client where the root
 -- sits on disk. The file the user started on is served at / whatever its
--- name, so its change reloads.
+-- name or the directory holding it, so its change reloads, naming /: the
+-- page at / is what reloads, and a dot path it sits under stays unnamed.
 H.case("Section 7: a dot path's change sends no reload", function()
     local function watched(extra, site)
         site = site or H.tmpdir()
@@ -222,6 +223,14 @@ H.case("Section 7: a dot path's change sends no reload", function()
     local function streamed(c, mark, pattern)
         return table.concat(c.chunks):find(pattern, mark + 1) ~= nil
     end
+    -- The paths the events after a mark name, for a row's message.
+    local function named(c, mark)
+        local paths = {}
+        for p in table.concat(c.chunks):sub(mark + 1):gmatch('"path":"([^"]*)"') do
+            paths[#paths + 1] = p
+        end
+        return "(named: " .. table.concat(paths, " ") .. ")"
+    end
     local site, c, mark = watched()
     H.write_file(site .. "/.env", "API_KEY=SECRET-7")
     H.write_file(site .. "/.git/index", "SECRET-8")
@@ -251,10 +260,48 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.wait(300)
     H.write_file(own_site .. "/.draft.html", "<html><body>DRAFT 2</body></html>")
     ok(
-        reloaded(oc, omark, 2000, '"path":"%.draft%.html"'),
-        "a write to the file the user started on, .draft.html, reloads"
+        reloaded(oc, omark, 2000, '"path":"/"') and not streamed(oc, omark, "draft"),
+        "a write to the file the user started on, .draft.html, reloads, naming / " .. named(oc, omark)
     )
     ok(not streamed(oc, omark, '"path":"%.env"'), "and a write to .env beside it still sends none")
+    -- A watcher per directory (Linux) spent no watch on the dot directory
+    -- holding the file the user started on, so it never reloaded, and the
+    -- other watchers named that dot path, a link's target too, to every
+    -- events client.
+    local held = H.tmpdir()
+    vim.fn.mkdir(held .. "/.drafts", "p")
+    H.write_file(held .. "/.drafts/page.html", "<html><body>DRAFT</body></html>")
+    local _, hc, hmark = watched({ default_index = held .. "/.drafts/page.html" }, held)
+    H.write_file(held .. "/.drafts/other.html", "SECRET-14")
+    vim.wait(300)
+    H.write_file(held .. "/.drafts/page.html", "<html><body>DRAFT 2</body></html>")
+    ok(
+        reloaded(hc, hmark, 2000, '"path":"/"') and not streamed(hc, hmark, "drafts/page"),
+        "a write to a default_index under .drafts/ reloads, naming / " .. named(hc, hmark)
+    )
+    ok(
+        not streamed(hc, hmark, "other%.html"),
+        "and a write to a file beside it in .drafts/ still sends none " .. named(hc, hmark)
+    )
+    local linked = H.tmpdir()
+    vim.fn.mkdir(linked .. "/.hidden", "p")
+    H.write_file(linked .. "/.hidden/real.html", "<html><body>REAL</body></html>")
+    local made, made_err = uv.fs_symlink(".hidden/real.html", linked .. "/page.html")
+    if made and uv.fs_stat(linked .. "/page.html") then
+        local _, lc, lmark = watched({ default_index = linked .. "/page.html" }, linked)
+        H.write_file(linked .. "/page.html", "<html><body>REAL 2</body></html>")
+        ok(
+            reloaded(lc, lmark, 2000, '"path":"/"') and not streamed(lc, lmark, "real%.html"),
+            "and one started on page.html, a link to .hidden/real.html, naming / and never its target "
+                .. named(lc, lmark)
+        )
+    else
+        H.skip(
+            "and one started on page.html, a link to .hidden/real.html, naming / and never its target ("
+                .. tostring(made_err or "the link does not resolve")
+                .. ")"
+        )
+    end
     -- A watcher on Linux names the full path, so the root's own is left out
     -- of the read, as the dot rule leaves it out of every request.
     local dotted = H.tmpdir() .. "/.local/site"
@@ -276,6 +323,36 @@ H.case("Section 7: a dot path's change sends no reload", function()
         "a .liveignore line naming a directory above the root drops no reload"
     )
     ok(not streamed(ic, imark, "notes%.log"), "and a line naming *.log still drops notes.log's")
+    -- A line with a leading slash matched the relative path only where a
+    -- directory above supplied the slash, so /dist dropped sub/dist/'s
+    -- reloads and never dist/'s; it anchors at the root on every watcher,
+    -- and a line without one matches anywhere in the path.
+    local function ignore_site(lines)
+        local site = H.tmpdir()
+        vim.fn.mkdir(site .. "/dist", "p")
+        vim.fn.mkdir(site .. "/sub/dist", "p")
+        H.write_file(site .. "/.liveignore", lines)
+        return site
+    end
+    local anchored = ignore_site("/dist\n")
+    local _, ac, amark = watched(nil, anchored)
+    H.write_file(anchored .. "/dist/x.js", "x")
+    vim.wait(300)
+    H.write_file(anchored .. "/sub/dist/y.js", "y")
+    ok(
+        reloaded(ac, amark, 2000, '"path":"sub/dist/y%.js"') and not streamed(ac, amark, '"path":"dist/'),
+        "a .liveignore line /dist drops dist/x.js's reload and not sub/dist/y.js's " .. named(ac, amark)
+    )
+    local loose = ignore_site("dist\n")
+    local _, uc, umark = watched(nil, loose)
+    H.write_file(loose .. "/dist/x.js", "x")
+    H.write_file(loose .. "/sub/dist/y.js", "y")
+    vim.wait(300)
+    H.write_file(loose .. "/page.html", "<html><body>loose</body></html>")
+    ok(
+        reloaded(uc, umark, 2000, '"path":"page%.html"') and not streamed(uc, umark, "dist/"),
+        "and a line dist drops both " .. named(uc, umark)
+    )
 end)
 
 -- libuv names an event on the watched directory itself by the directory's

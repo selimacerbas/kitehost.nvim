@@ -155,6 +155,8 @@ node_modules
 dist
 ```
 
+A line starting with `/` is anchored at the served root: `/dist` skips `dist/` and not `sub/dist/`.
+
 ### CORS
 
 Enable cross-origin headers for all responses:
