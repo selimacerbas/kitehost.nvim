@@ -197,11 +197,37 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
     r = asks("Access-Control-Request-Headers: x;y\r\n")
     eq(r.status, 204, "a preflight asking for a name that is no token is still answered")
     eq(r.headers["access-control-allow-headers"], nil, "and allowed no header")
+    -- Each item of the list is a token, not the value as a whole: ", ," and
+    -- "x a" held only token characters, commas and spaces, and were echoed.
+    eq(
+        asks("Access-Control-Request-Headers: , ,\r\n").headers["access-control-allow-headers"],
+        nil,
+        "a list of empty items is allowed no header"
+    )
+    eq(
+        asks("Access-Control-Request-Headers: x a\r\n").headers["access-control-allow-headers"],
+        nil,
+        "an item with a space inside it is allowed no header"
+    )
+    eq(
+        asks("Access-Control-Request-Headers: x-custom, authorization\r\n").headers["access-control-allow-headers"],
+        "x-custom, authorization",
+        "a list of tokens is echoed as sent"
+    )
     eq(
         raw(port, ("OPTIONS /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre)).status,
         405,
         "a preflight on /__live/* is 405"
     )
+    eq(
+        raw(port, ("OPTIONS /__live/script.js HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre)).status,
+        405,
+        "a preflight on /__live/script.js is 405 too"
+    )
+    -- Only an OPTIONS is a preflight: a GET that carries the field is a GET.
+    r = raw(port, ("GET /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre))
+    eq(r.status, 200, "a GET carrying Access-Control-Request-Method is served as a GET")
+    eq(r.body, "body{}", "with the file")
     r = raw(port, ("POST /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))
     eq(r.status, 405, "a POST is 405")
     eq(r.headers.allow, "GET", "and names the method allowed")
@@ -239,6 +265,18 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
         405,
         "no cors, no preflight answer"
     )
+    -- setup() hands the server cors = false, its default, never nil.
+    local off = serve({ cors = false })
+    r = raw(off.port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(off.port, pre))
+    eq(r.status, 405, "cors = false gets no preflight answer: 405")
+    eq(r.headers.allow, "GET", "with Allow: GET")
+    -- A browser sends a preflight without credentials, so it is answered
+    -- before the token gate, on a path the gate protects too.
+    local gated = serve({ cors = true, token = "tok", protected_paths = { "%.css$" } })
+    eq(raw(gated.port, get("/style.css", gated.port)).status, 401, "on a token server a protected file wants the token")
+    r = raw(gated.port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(gated.port, pre))
+    eq(r.status, 204, "and its preflight is answered with no token")
+    eq(r.headers["access-control-allow-origin"], "*", "with the cors origin")
     -- A caller's ACAO riding beside the cors one would be a second origin
     -- line, and a browser refuses a preflight with two.
     local both = serve({ cors = "https://a.example", headers = { ["access-CONTROL-allow-origin"] = "*" } })

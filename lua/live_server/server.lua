@@ -17,11 +17,13 @@ local S = {}
 
 -- Capability flags for callers to feature-detect against an independently
 -- versioned install (plugin managers update sibling plugins separately).
+-- An install without cors_list reads a cors list as its widest value, "*".
 S.features = {
     token_auth = true,
     host_binding = true,
     asset_route = true,
     host_check = true,
+    cors_list = true,
 }
 
 -- A document type added here joins ACTIVE_DOCUMENT, or the asset route
@@ -1146,12 +1148,28 @@ local function asset_headers(inst, real)
     return h
 end
 
--- The headers of a root-route response. With a cors list the list alone
--- decides ACAO (start dropped any of the caller's, whatever its case, so
--- an unlisted Origin never gets a hand-set "*"): a listed Origin is
--- echoed, and Vary tells a cache the answer depends on it.
-local function root_headers(inst, req)
+-- The root route's cors answer, read by its responses and its preflight
+-- alike so the two cannot drift: the Access-Control-Allow-Origin value or
+-- nil, and whether the answer varies by Origin. With a cors list the list
+-- alone decides (start dropped any ACAO of the caller's, whatever its
+-- case, so an unlisted Origin never gets a hand-set "*"): a listed Origin
+-- is echoed, and the answer varies by Origin whether or not it was listed.
+local function cors_origin(inst, req)
     if not inst.cors_list then
+        return inst.headers["Access-Control-Allow-Origin"], false
+    end
+    local origin = req.headers.origin and req.headers.origin[1]
+    if origin and vim.tbl_contains(inst.cors_list, origin) then
+        return origin, true
+    end
+    return nil, true
+end
+
+-- The headers of a root-route response; Vary tells a cache when the
+-- answer depends on the request's Origin.
+local function root_headers(inst, req)
+    local origin, varies = cors_origin(inst, req)
+    if not varies then
         return inst.headers
     end
     local h = {}
@@ -1159,10 +1177,7 @@ local function root_headers(inst, req)
         h[k] = v
     end
     join_vary(h, "Origin")
-    local origin = req.headers.origin and req.headers.origin[1]
-    if origin and vim.tbl_contains(inst.cors_list, origin) then
-        h["Access-Control-Allow-Origin"] = origin
-    end
+    h["Access-Control-Allow-Origin"] = origin
     return h
 end
 
@@ -1202,19 +1217,25 @@ local function handle_request(conn, req)
     then
         -- A browser refuses a read that carries a header outside the
         -- safelist unless the preflight names it. The names asked for are
-        -- echoed when they read as a token list, never as "*": Fetch leaves
-        -- Authorization out of it, and engines hold to that.
+        -- echoed when every comma-separated item is a token, never as "*":
+        -- Fetch leaves Authorization out of it, and engines hold to that.
         local asked = req.headers["access-control-request-headers"]
         asked = asked and table.concat(asked, ", ")
-        if asked and not asked:find("^[%w!#$%%&'*+.^_`|~%-, \t]+$") then
-            asked = nil
+        if asked then
+            for item in (asked .. ","):gmatch("([^,]*),") do
+                if not item:find("^[ \t]*[%w!#$%%&'*+%-.^_`|~]+[ \t]*$") then
+                    asked = nil
+                    break
+                end
+            end
         end
+        local origin, varies = cors_origin(inst, req)
         return send_response(sock, 204, {
-            ["Access-Control-Allow-Origin"] = root_headers(inst, req)["Access-Control-Allow-Origin"],
+            ["Access-Control-Allow-Origin"] = origin,
             ["Access-Control-Allow-Methods"] = "GET",
             ["Access-Control-Allow-Headers"] = asked,
             ["Access-Control-Max-Age"] = "600",
-            Vary = inst.cors_list and "Origin, Access-Control-Request-Headers" or "Access-Control-Request-Headers",
+            Vary = varies and "Origin, Access-Control-Request-Headers" or "Access-Control-Request-Headers",
         }, nil)
     end
     if req.method ~= "GET" then

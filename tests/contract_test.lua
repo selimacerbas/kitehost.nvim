@@ -2,7 +2,8 @@
 -- The calls the two known consumers make, held as rows: markdown-preview's
 -- start, its raw-TCP inject and its page's stream, and gh-markdown-preview's
 -- tokenless server, its back channel, its page's hello and its read of
--- inst.sse_clients. A change that breaks one of them reds here first.
+-- inst.sse_clients, and the capability flags a caller detects. A change
+-- that breaks one of them reds here first.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/contract_test.lua"
 
@@ -210,6 +211,23 @@ H.case("Section 2: gh-markdown-preview's tokenless server, back channel and page
     eq(decoded and obj.path, "render.html", "reload broadcasts with live reload off")
     server.send_event(inst, "close", "{}")
     eq(frame(back, "close"), "{}", "send_event's close reaches the back channel")
+end)
+
+-- A plugin manager updates each plugin on its own, so a caller reads these
+-- flags before it relies on a shape. A cors list reads as its widest value,
+-- "*", on an install that predates lists, so a list meant to narrow access
+-- needs a flag that says it will.
+H.case("Section 3: the capability flags a caller reads", function()
+    local names = vim.tbl_keys(server.features)
+    table.sort(names)
+    eq(
+        table.concat(names, " "),
+        "asset_route cors_list host_binding host_check token_auth",
+        "features names every capability a caller can detect"
+    )
+    for _, name in ipairs(names) do
+        eq(server.features[name], true, "features." .. name .. " is true")
+    end
 end)
 
 H.finish()
