@@ -44,6 +44,7 @@ write_file(tmpdir .. "/src/.npmrc", "DENIED")
 write_file(tmpdir .. "/src/store.p12", "DENIED")
 vim.fn.mkdir(tmpdir .. "/src/.ssh", "p")
 write_file(tmpdir .. "/src/.ssh/id_ed25519", "DENIED")
+write_file(tmpdir .. "/src/.ssh/config", "DENIED")
 vim.fn.mkdir(tmpdir .. "/src/.gnupg", "p")
 write_file(tmpdir .. "/src/.gnupg/pubring.kbx", "DENIED")
 vim.fn.mkdir(tmpdir .. "/src/.github/assets", "p")
@@ -82,8 +83,8 @@ eq(
     404,
     "a NUL in p is 404 (libuv would open the name before it)"
 )
--- Vite's default fs.deny names plus private keys: an image beside a
--- markdown file is served, its secrets are not.
+-- Vite's default fs.deny names: an image beside a markdown file is
+-- served, its secrets are not.
 for _, p in ipairs({ ".env", ".env.local", "sub/.git/config", "key.pem", "cert.crt", "id.key", ".ENV" }) do
     eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
 end
@@ -98,8 +99,9 @@ else
 end
 -- One row per group beyond the names above: a credential file by name, a
 -- key store by extension, a key in a credential directory, a credential
--- directory at any depth.
-for _, p in ipairs({ ".npmrc", "store.p12", ".ssh/id_ed25519", ".gnupg/pubring.kbx" }) do
+-- directory by name (the sub/.git row above reads it at depth), and a
+-- plain name inside one, which the directory entry alone refuses.
+for _, p in ipairs({ ".npmrc", "store.p12", ".ssh/id_ed25519", ".gnupg/pubring.kbx", ".ssh/config" }) do
     eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
 end
 -- realpath returns the spelling on disk, so a case-folding volume hands the
