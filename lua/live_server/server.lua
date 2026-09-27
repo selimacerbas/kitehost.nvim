@@ -413,9 +413,9 @@ end
 
 -- -------- LiveReload (SSE) ------------------------------------------------
 
--- Everything after the EventSource opens: reload handling and the logs,
--- shared by both clients below.
-local CLIENT_BODY = table.concat({
+-- Everything after the EventSource opens, reload handling and the logs,
+-- then the end of the script: shared by both clients below.
+local CLIENT_ON = table.concat({
     "es.addEventListener('reload',function(e){",
     "var d;try{d=JSON.parse(e.data)}catch(_){d={}}",
     "if(d.css){var ls=document.querySelectorAll('link[rel=\"stylesheet\"]');",
@@ -424,24 +424,34 @@ local CLIENT_BODY = table.concat({
     "location.reload()});",
     "es.onopen=function(){console.log('[live-server.nvim] connected')};",
     "es.onerror=function(e){console.warn('[live-server.nvim] SSE error',e)};",
-    "}catch(e){console.warn('[live-server.nvim] no EventSource',e)}}();",
 })
+local CLIENT_END = "}catch(e){console.warn('[live-server.nvim] no EventSource',e)}}();"
 
 -- A tokenless server's client, byte for byte the one it always served.
-local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" .. CLIENT_BODY
+local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" .. CLIENT_ON .. CLIENT_END
 
--- A token server gates its stream, so the page's own ?t= (or the copy kept
--- for reloads that drop the query) goes on it. The token is never
--- written into the script, which any page may load. Without one the 401
--- logged only "SSE error", so the client says first where it comes from.
+-- A token server gates its stream, so the page's ?t= goes on it, and a
+-- copy is kept for pages reached without one. A page's own URL may use t
+-- for something else (a time, a tab): kept at once, that value replaced
+-- the working token for the rest of the tab. So a query value is kept only
+-- once the stream opens with it, and one the server refuses (the stream
+-- closed) gives way, once, to a kept token. The token is never written
+-- into the script, which any page may load. Without one the 401 logged
+-- only "SSE error", so the client says first why: no t, or the storage
+-- error that kept it from being kept.
 local CLIENT_JS_TOKEN = table.concat({
     "!function(){try{",
-    "var t=new URLSearchParams(location.search).get('t');",
-    "try{if(t){sessionStorage.setItem('live-server.nvim:t',t)}",
-    "else{t=sessionStorage.getItem('live-server.nvim:t')}}catch(_){}",
-    "if(!t){console.warn('[live-server.nvim] no token: open the page through the URL the server printed (with ?t=)')}",
-    "var es=new EventSource('/__live/events'+(t?'?t='+encodeURIComponent(t):''));",
-    CLIENT_BODY,
+    "var k='live-server.nvim:t',q=new URLSearchParams(location.search).get('t'),s=null,x;",
+    "try{s=sessionStorage.getItem(k)}catch(e){x=e}",
+    "var w=function(m){console.warn('[live-server.nvim] '+m)};",
+    "if(!(q||s)){w(x?'the token could not be kept: '+x:'no token: open the page with ?t=<token> in its URL')}",
+    "var c=function(t){var es=new EventSource('/__live/events'+(t?'?t='+encodeURIComponent(t):''));",
+    "es.addEventListener('open',function(){if(q&&t===q){",
+    "try{sessionStorage.setItem(k,t)}catch(e){w('the token could not be kept: '+e)}}});",
+    "es.addEventListener('error',function(){if(es.readyState===2&&q&&t===q&&s&&s!==q){c(s)}});",
+    CLIENT_ON,
+    "};c(q||s);",
+    CLIENT_END,
 })
 
 -- A caller's header under another spelling of one of these names would go

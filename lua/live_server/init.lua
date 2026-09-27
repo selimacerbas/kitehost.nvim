@@ -175,9 +175,8 @@ function start_for_path(path, port)
     end
 
     -- One URL, printed and opened: a page opened by hand needs its token,
-    -- and the client's no-token warning points at the printed one. Both
-    -- branches above leave a server on the port, so the bound address is
-    -- what the URL names.
+    -- which the printed URL carries. Both branches above leave a server on
+    -- the port, so the bound address is what the URL names.
     local s = M.state.servers[active_port]
     local url = browser_url(s.host, active_port, s.token)
     if started_here then
