@@ -284,11 +284,13 @@ end
 
 -- -------- Path mapping & file read ----------------------------------------
 
--- Canonicalize a request path so the auth gate and the file mapper can never
--- disagree. Strip the query, percent-decode, then lexically resolve '.'/'..'
--- and collapse duplicate slashes. Without this a peer could evade a
--- protected_paths pattern with an encoded or slash-padded variant that still
--- resolves to the protected file: //content.md, /content%2emd, /x/../content.md.
+-- Canonicalize a request path, which the gate reads before the mapper does;
+-- the gate reads the name on disk second, and a name that passes one read
+-- and not the other is refused. Strip the query, percent-decode, then
+-- lexically resolve '.'/'..' and collapse duplicate slashes. Without this a
+-- peer could evade a protected_paths pattern with an encoded or slash-padded
+-- variant that still resolves to the protected file: //content.md,
+-- /content%2emd, /x/../content.md.
 local function normalize_path(req_path)
     local raw = req_path:match("^([^?#]*)") or req_path
     raw = util.url_decode(raw)
@@ -978,9 +980,10 @@ local function handle_request(conn, req)
         return send_response(sock, 405, { ["Content-Type"] = "text/plain" }, "Method Not Allowed")
     end
 
-    -- Canonicalize the path once; auth matching, endpoint dispatch,
-    -- and file mapping all use this same string so an encoded or
-    -- slash-padded variant can't reach a protected file ungated.
+    -- Canonicalize the path once; the gate reads it first and the name on
+    -- disk second (refusal below), and a name that passes one read and not
+    -- the other is refused, so an encoded or slash-padded variant can't
+    -- reach a protected file ungated.
     local path_only = normalize_path(req.path)
     if not path_only then
         return http_400(sock, "Bad request path")

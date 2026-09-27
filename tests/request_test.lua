@@ -3,7 +3,9 @@
 -- doubled Host, a NUL byte, a half-close and a truncated head, which curl
 -- cannot send.
 -- Section 1 pins the behaviour the buffered pipeline keeps from the server
--- before it; each later section holds one change made on top of it.
+-- before it; each later section holds one change made on top of it. The
+-- last two read the index and listing routes, through curl where a request
+-- needs no shape curl cannot send.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/request_test.lua"
 

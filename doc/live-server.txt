@@ -106,12 +106,14 @@ Options:
     Default port suggestion in the port picker.
 
 `host` (string, default `"127.0.0.1"`)
-    Bind address; `"0.0.0.0"` serves every file under the root to anyone
-    who can reach the port.
+    Bind address; `"0.0.0.0"` serves every file under the root, except a
+    dot path unless `serve_dotfiles` is set, to anyone who can reach the
+    port.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
-    `protected_paths` names require `?t=<token>`; other files stay open.
+    `protected_paths` names require `?t=<token>`; other files stay open,
+    except a dot path unless `serve_dotfiles` is set.
 
 `protected_paths` (string[], default `{}`)
     Lua patterns of request paths that also require the token.

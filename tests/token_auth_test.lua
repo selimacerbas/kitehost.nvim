@@ -1,7 +1,11 @@
 -- tests/token_auth_test.lua
 -- Verify that cfg.token gates /__live/events, /__live/inject, and any path
 -- listed in cfg.protected_paths, while leaving static assets (index.html)
--- reachable without auth.
+-- reachable without auth. The gate reads the request path, then the name
+-- on disk of the file, index or directory about to be served (a case
+-- variant, a link); a NUL or a backslash in the path is 400 before it; a
+-- link out of the root is 404; and start refuses a bad token,
+-- protected_paths or serve_dotfiles before any socket opens.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
@@ -422,8 +426,8 @@ ok(
     ("and / lists the root with the listing on (got %d)"):format(r.status)
 )
 server.stop(dir_on)
--- The root's own index, with no default_index set, is judged like any
--- candidate: a link out of the root answers 404 at / too.
+-- The root's own index, with no default_index set, linked out of the root:
+-- the candidate's resolution and the gate each refuse it, 404 at / too.
 local root_index = vim.fs.joinpath(ws, "index.html")
 local rlinked, rlink_err = uv.fs_symlink(outside_index, root_index)
 local root_linked = rlinked and uv.fs_stat(root_index) ~= nil

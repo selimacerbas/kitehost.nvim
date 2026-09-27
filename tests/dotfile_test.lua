@@ -1,8 +1,9 @@
 -- tests/dotfile_test.lua
--- Dotfiles hold secrets (.env, .git/config) and the listing already hid
--- them, yet the root route served them to anyone the server answers
--- (measured). The request path is checked, and the file served by
--- its path under the root, never the root's own path.
+-- Dotfiles hold secrets (.env, .git/config), yet the root route served them
+-- to anyone the server answers (measured). The request path is checked, and
+-- the file served by its path under the root, never the root's own path.
+-- Since the rule the listing hides them too, where show_hidden alone named
+-- them, and a change to one sends no reload.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/dotfile_test.lua"
 

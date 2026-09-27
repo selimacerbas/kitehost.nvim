@@ -42,13 +42,13 @@ local defaults = {
     -- Optional auth: when token is set, /__live/events and /__live/inject
     -- require ?t=<token>, as does any request path matching protected_paths
     -- (Lua patterns), and /__live/asset where a caller of server.start()
-    -- passes asset_root, which setup() never does. Everything else is still
-    -- served openly: with a non-loopback host the whole served root is
-    -- reachable from the network.
+    -- passes asset_root, which setup() never does. Every other file but a
+    -- dot path is still served openly: with a non-loopback host the whole
+    -- served root but its dot paths is reachable from the network.
     token = nil,
     protected_paths = {},
     -- Extra Host names a loopback bind answers besides localhost and the
-    -- loopback addresses; true turns the check off (warned once).
+    -- loopback addresses; true turns the check off (warned at each start).
     allowed_hosts = nil,
     serve_dotfiles = false, -- serve .env, .git/ and other dot paths (default: 404)
 
