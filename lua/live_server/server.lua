@@ -1380,7 +1380,10 @@ end
 function S.start(cfg)
     -- Checked before any handle opens, so a bad value leaks nothing.
     -- An empty token is truthy and would pass the gate with no t= at all.
-    if cfg.token ~= nil and (type(cfg.token) ~= "string" or cfg.token == "") then
+    -- Read once: a caller's table may compute the field, and the value the
+    -- gate keeps must be the one that passed the check.
+    local token = cfg.token
+    if token ~= nil and (type(token) ~= "string" or token == "") then
         error("token must be a non-empty string", 0)
     end
     -- luv truncates a port it cannot hold and listens on another one.
@@ -1437,7 +1440,7 @@ function S.start(cfg)
     end
     -- The patterns gate by the token, so without one they started and
     -- gated nothing, without a word; an empty list asks for none.
-    if protected ~= nil and #protected > 0 and cfg.token == nil then
+    if protected ~= nil and #protected > 0 and token == nil then
         error("protected_paths needs a token", 0)
     end
     -- Each name is joined to a directory's path in the read callback, where
@@ -1535,7 +1538,7 @@ function S.start(cfg)
         notify_on_reload = cfg.notify_on_reload or false,
 
         -- auth
-        token = cfg.token, -- nil = no auth; string = required on protected paths
+        token = token, -- nil = no auth; string = required on protected paths
         -- A copy of the checked list: the caller's table (init.lua hands the
         -- user's own) holed or emptied after start dropped the gate.
         protected_paths = vim.list_extend({}, protected or {}),

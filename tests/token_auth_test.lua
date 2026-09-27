@@ -814,6 +814,22 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_name
     answers_401(("http://127.0.0.1:%d/content.md"):format(readable.port), "a readable pattern gates as before")
     vim.wait(100)
     eq(#notes, before, "and a list of readable patterns warns nothing")
+    -- The token is read from the caller's table once: a table that computes
+    -- the field could pass the check with one value and hand the gate another.
+    local reads = 0
+    local computed = setmetatable({ port = 0, root = tmpdir, protected_paths = { "^/content%.md$" } }, {
+        __index = function(_, key)
+            if key == "token" then
+                reads = reads + 1
+                return "secret-token"
+            end
+        end,
+    })
+    local once = server.start(computed)
+    H.defer(function()
+        server.stop(once)
+    end)
+    eq(reads, 1, "start reads cfg.token once")
 end)
 
 -- The server read the caller's own table, which init.lua hands from the
