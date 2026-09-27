@@ -210,6 +210,14 @@ local function host_name(value)
     return (name:lower():gsub("%.$", ""))
 end
 
+-- An origin as a browser sends one in Origin (RFC 6454 6.2):
+-- scheme://host with an optional port, and no userinfo, path or trailing
+-- slash, so nothing in it can end a header line.
+local function is_origin(s)
+    local authority = s:match("^%a[%w+.-]*://(.+)$")
+    return authority ~= nil and host_name(authority) ~= nil and not authority:find(":$")
+end
+
 -- The Origin and Fetch Metadata fields the gates read, as sent, each once.
 local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Mode" }
 
@@ -666,6 +674,31 @@ local function wants_injection(req)
     return mode == nil or mode == "navigate"
 end
 
+-- Folds every Vary in headers, under any spelling of the name, and member
+-- into the one field sent, with no empty member (RFC 9110 5.6.1 forbids
+-- generating one) and each member once, since a repeated member adds
+-- nothing.
+local function join_vary(headers, member)
+    local configured = {}
+    for k, v in pairs(headers) do
+        if type(k) == "string" and k:lower() == "vary" then
+            table.insert(configured, tostring(v))
+            headers[k] = nil
+        end
+    end
+    table.sort(configured)
+    table.insert(configured, member)
+    local members, seen = {}, {}
+    for m in table.concat(configured, ","):gmatch("[^,]+") do
+        m = m:match("^%s*(.-)%s*$")
+        if m ~= "" and not seen[m:lower()] then
+            seen[m:lower()] = true
+            table.insert(members, m)
+        end
+    end
+    headers.Vary = table.concat(members, ", ")
+end
+
 local function send_html_with_injection(inst, sock, html, extra_headers, req)
     if inst.inject_script and wants_injection(req) then
         local tag = '<script src="/__live/script.js"></script>'
@@ -680,29 +713,9 @@ local function send_html_with_injection(inst, sock, html, extra_headers, req)
         headers[k] = v
     end
     -- With the script on, the body differs by Sec-Fetch-Mode, so a cache
-    -- must not answer a navigation with a copy a page's fetch received. A
-    -- configured Vary under any spelling of the name joins the one field
-    -- sent, with no empty member (RFC 9110 5.6.1 forbids generating one)
-    -- and each member once, since a repeated member adds nothing.
+    -- must not answer a navigation with a copy a page's fetch received.
     if inst.inject_script then
-        local configured = {}
-        for k, v in pairs(headers) do
-            if type(k) == "string" and k:lower() == "vary" then
-                table.insert(configured, tostring(v))
-                headers[k] = nil
-            end
-        end
-        table.sort(configured)
-        table.insert(configured, "Sec-Fetch-Mode")
-        local members, seen = {}, {}
-        for member in table.concat(configured, ","):gmatch("[^,]+") do
-            member = member:match("^%s*(.-)%s*$")
-            if member ~= "" and not seen[member:lower()] then
-                seen[member:lower()] = true
-                table.insert(members, member)
-            end
-        end
-        headers.Vary = table.concat(members, ", ")
+        join_vary(headers, "Sec-Fetch-Mode")
     end
     send_response(sock, 200, headers, html)
 end
@@ -1057,6 +1070,26 @@ local function asset_denied(rel)
         or ASSET_DENY.exts[base:match("%.([^.]+)$") or ""] ~= nil
 end
 
+-- The headers of a root-route response. With a cors list the list alone
+-- decides ACAO (start dropped any of the caller's, whatever its case, so
+-- an unlisted Origin never gets a hand-set "*"): a listed Origin is
+-- echoed, and Vary tells a cache the answer depends on it.
+local function root_headers(inst, req)
+    if not inst.cors_list then
+        return inst.headers
+    end
+    local h = {}
+    for k, v in pairs(inst.headers) do
+        h[k] = v
+    end
+    join_vary(h, "Origin")
+    local origin = req.headers.origin and req.headers.origin[1]
+    if origin and vim.tbl_contains(inst.cors_list, origin) then
+        h["Access-Control-Allow-Origin"] = origin
+    end
+    return h
+end
+
 -- Answers one parsed request: the token gate, the routes and every
 -- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
@@ -1091,10 +1124,21 @@ local function handle_request(conn, req)
         and req.headers["access-control-request-method"]
         and not path_only:find("^/__live/")
     then
+        -- A browser refuses a read that carries a header outside the
+        -- safelist unless the preflight names it. The names asked for are
+        -- echoed when they read as a token list, never as "*": Fetch leaves
+        -- Authorization out of it, and engines hold to that.
+        local asked = req.headers["access-control-request-headers"]
+        asked = asked and table.concat(asked, ", ")
+        if asked and not asked:find("^[%w!#$%%&'*+.^_`|~%-, \t]+$") then
+            asked = nil
+        end
         return send_response(sock, 204, {
-            ["Access-Control-Allow-Origin"] = inst.headers["Access-Control-Allow-Origin"],
+            ["Access-Control-Allow-Origin"] = root_headers(inst, req)["Access-Control-Allow-Origin"],
             ["Access-Control-Allow-Methods"] = "GET",
+            ["Access-Control-Allow-Headers"] = asked,
             ["Access-Control-Max-Age"] = "600",
+            Vary = inst.cors_list and "Origin, Access-Control-Request-Headers" or "Access-Control-Request-Headers",
         }, nil)
     end
     if req.method ~= "GET" then
@@ -1303,13 +1347,13 @@ local function handle_request(conn, req)
             if status then
                 return refuse(status)
             end
-            return serve_path(inst, sock, candidate, req, inst.headers)
+            return serve_path(inst, sock, candidate, req, root_headers(inst, req))
         end
         if inst.dir_enabled then
             -- The path as normalized: the request's own spelling carries its
             -- query and whatever markup a raw target holds into every href.
             local html = dir_listing_html(inst, mapped, path_only)
-            return send_html_with_injection(inst, sock, html, inst.headers, req)
+            return send_html_with_injection(inst, sock, html, root_headers(inst, req), req)
         else
             return http_404(sock, req.path .. " (no index)")
         end
@@ -1318,7 +1362,7 @@ local function handle_request(conn, req)
         if status then
             return refuse(status)
         end
-        return serve_path(inst, sock, mapped, req, inst.headers)
+        return serve_path(inst, sock, mapped, req, root_headers(inst, req))
     else
         return http_404(sock, req.path)
     end
@@ -1526,6 +1570,26 @@ function S.start(cfg)
         end
         headers[k] = v
     end
+    -- A cors value goes out as a header value, so a CR or LF in it wrote a
+    -- header line of its own; a value that is no origin as a browser sends
+    -- it could never match, and a list is walked with ipairs, which skips a
+    -- map's keys. "*" is the documented spelling of true. Read once and the
+    -- list copied, so the value served is the one checked.
+    local cors = cfg.cors
+    if cors ~= nil and cors ~= false and cors ~= true and cors ~= "*" then
+        local list = type(cors) == "table" and cors or { cors }
+        if type(cors) == "table" and not vim.islist(cors) then
+            error("cors must be true, an origin or a list of origins", 0)
+        end
+        for _, origin in ipairs(list) do
+            if type(origin) ~= "string" then
+                error("cors must be true, an origin or a list of origins", 0)
+            end
+            if not is_origin(origin) then
+                error("cors entry is not an origin (scheme://host[:port]): " .. vim.inspect(origin), 0)
+            end
+        end
+    end
 
     local tcp = uv.new_tcp()
     local host = cfg.host or "127.0.0.1"
@@ -1565,12 +1629,12 @@ function S.start(cfg)
     for k, v in pairs(headers) do
         if k:lower() ~= "access-control-allow-origin" then
             live_headers[k] = v
-        elseif cfg.cors then
+        elseif cors then
             headers[k] = nil
         end
     end
-    if cfg.cors then
-        headers["Access-Control-Allow-Origin"] = type(cfg.cors) == "string" and cfg.cors or "*"
+    if cors and type(cors) ~= "table" then
+        headers["Access-Control-Allow-Origin"] = type(cors) == "string" and cors or "*"
     end
 
     local inst = {
@@ -1590,7 +1654,8 @@ function S.start(cfg)
         default_index = cfg.default_index,
         headers = headers,
         live_headers = live_headers,
-        cors = cfg.cors and true or false,
+        cors = cors and true or false,
+        cors_list = type(cors) == "table" and vim.list_extend({}, cors) or nil,
         started_at = os.time(),
 
         -- live

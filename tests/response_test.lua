@@ -1,7 +1,8 @@
 -- tests/response_test.lua
 -- What every response carries and what it must not: the referrer policy,
--- the cors headers (never on /__live/*), the preflight answer, and a 404
--- that names the request, never a filesystem path.
+-- the cors headers (never on /__live/*), the preflight answer and the
+-- request headers it allows, a cors list's echo of a listed Origin, and a
+-- 404 that names the request, never a filesystem path.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -158,7 +159,11 @@ end)
 -- browser's preflight got 405 and it refused the read. /__live/* answers
 -- no cross-origin read, so its preflight keeps the 405, and every 405
 -- names the one method served (RFC 9110 15.5.6). The path checks still
--- come first: a NUL in the path is 400 whatever the method.
+-- come first: a NUL in the path is 400 whatever the method. A preflight
+-- that named no request header refused every read carrying one outside
+-- the safelist (a custom header, Authorization, a JSON Content-Type), so
+-- the names asked for are echoed, never "*", which leaves Authorization
+-- out, and Vary says the answer depends on them.
 H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
     local inst = serve({ cors = true })
     local port = inst.port
@@ -169,6 +174,28 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
     eq(r.headers["access-control-allow-methods"], "GET", "and the one method served")
     eq(r.headers["access-control-max-age"], "600", "which the browser keeps for ten minutes")
     eq(r.headers["content-length"], nil, "and no Content-Length, which a 204 must not send (RFC 9110 8.6)")
+    eq(r.headers["access-control-allow-headers"], nil, "a preflight that asks for no header is allowed none")
+    eq(r.headers.vary, "Access-Control-Request-Headers", "and Vary names the field it reads")
+    local function asks(headers)
+        return raw(port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s%s\r\n"):format(port, pre, headers))
+    end
+    r = asks("Access-Control-Request-Headers: x-custom\r\n")
+    eq(r.headers["access-control-allow-headers"], "x-custom", "the header a preflight asks for is allowed")
+    eq(r.headers.vary, "Access-Control-Request-Headers", "with the Vary")
+    eq(r.count.vary, 1, "on one line")
+    eq(
+        asks("Access-Control-Request-Headers: authorization, content-type\r\n").headers["access-control-allow-headers"],
+        "authorization, content-type",
+        "a list is echoed as asked, Authorization named, never *"
+    )
+    eq(
+        asks("Access-Control-Request-Headers: x-a\r\nAccess-Control-Request-Headers: x-b\r\n").headers["access-control-allow-headers"],
+        "x-a, x-b",
+        "two lines are echoed as one list"
+    )
+    r = asks("Access-Control-Request-Headers: x;y\r\n")
+    eq(r.status, 204, "a preflight asking for a name that is no token is still answered")
+    eq(r.headers["access-control-allow-headers"], nil, "and allowed no header")
     eq(
         raw(port, ("OPTIONS /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre)).status,
         405,
@@ -217,6 +244,81 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
     r = raw(both.port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(both.port, pre))
     eq(r.count["access-control-allow-origin"], 1, "a preflight beside a caller's ACAO sends one origin line")
     eq(r.headers["access-control-allow-origin"], "https://a.example", "and it is the cors one")
+end)
+
+-- cors offered any origin (true) or exactly one (a string), so a page read
+-- by two frontends had to open the root route to every website. A list
+-- echoes a listed request Origin, and Vary: Origin keeps a cache from
+-- answering one origin with the copy another got. The list alone decides:
+-- a caller's own ACAO in headers, in any case, handed an unlisted Origin
+-- its "*" and a listed one a second origin line, which a browser refuses.
+-- The server keeps its own copy of the list, so an entry added after
+-- start, which no check has read, is never echoed.
+H.case("Section 5: a cors list echoes only a listed Origin", function()
+    local list = { "http://a.example", "http://127.0.0.1:5173" }
+    local inst = serve({ cors = list })
+    local port = inst.port
+    local r = raw(port, get("/style.css", port, "Origin: http://a.example\r\n"))
+    eq(r.headers["access-control-allow-origin"], "http://a.example", "a listed Origin is echoed")
+    eq(r.headers.vary, "Origin", "and a cache is told the answer depends on it")
+    eq(
+        raw(port, get("/style.css", port, "Origin: http://127.0.0.1:5173\r\n")).headers["access-control-allow-origin"],
+        "http://127.0.0.1:5173",
+        "each listed Origin is echoed, its port included"
+    )
+    r = raw(port, get("/style.css", port, "Origin: http://b.example\r\n"))
+    eq(r.headers["access-control-allow-origin"], nil, "an unlisted Origin gets none")
+    eq(r.headers.vary, "Origin", "with Vary all the same")
+    eq(raw(port, get("/style.css", port)).headers["access-control-allow-origin"], nil, "no Origin, no ACAO")
+    r = raw(port, get("/", port, "Origin: http://a.example\r\n"))
+    eq(r.headers["access-control-allow-origin"], "http://a.example", "the root's index echoes it too")
+    eq(r.headers.vary, "Origin", "with its Vary")
+    local listing = serve({ cors = list, features = { dirlist = { enabled = true } } })
+    r = raw(listing.port, get("/assets/", listing.port, "Origin: http://a.example\r\n"))
+    eq(r.status, 200, "a listing is served")
+    eq(r.headers["access-control-allow-origin"], "http://a.example", "and echoes a listed Origin")
+    eq(
+        raw(port, get("/__live/asset?p=pic.png", port, "Origin: http://a.example\r\n")).headers["access-control-allow-origin"],
+        nil,
+        "a listed Origin gets no ACAO on /__live/*"
+    )
+    -- Vary is one field: a page with the script on varies by Sec-Fetch-Mode
+    -- as well, and a caller's own Vary, under any spelling, joins it.
+    local live = serve({ cors = list, live = { enabled = false, inject_script = true } })
+    r = raw(live.port, get("/index.html", live.port, "Origin: http://a.example\r\n"))
+    eq(r.headers.vary, "Origin, Sec-Fetch-Mode", "a page with the script on names both")
+    eq(r.count.vary, 1, "on one line")
+    local own = serve({ cors = list, headers = { vary = "Accept" } })
+    r = raw(own.port, get("/style.css", own.port, "Origin: http://a.example\r\n"))
+    eq(r.headers.vary, "Accept, Origin", "a file joins a configured Vary with Origin")
+    eq(r.count.vary, 1, "on one line")
+    local manual = serve({ cors = { "http://a.example" }, headers = { ["access-control-allow-origin"] = "*" } })
+    r = raw(manual.port, get("/style.css", manual.port, "Origin: http://b.example\r\n"))
+    eq(r.headers["access-control-allow-origin"], nil, "a hand-set ACAO * never reaches an unlisted Origin")
+    r = raw(manual.port, get("/style.css", manual.port, "Origin: http://a.example\r\n"))
+    eq(r.count["access-control-allow-origin"], 1, "and a listed one gets exactly one ACAO")
+    eq(r.headers["access-control-allow-origin"], "http://a.example", "its echo")
+    local pre = "Access-Control-Request-Method: GET\r\n"
+    local function preflight(origin)
+        return raw(
+            port,
+            ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: %s\r\n%s\r\n"):format(port, origin, pre)
+        )
+    end
+    r = preflight("http://a.example")
+    eq(r.status, 204, "a preflight from a listed Origin is answered")
+    eq(r.headers["access-control-allow-origin"], "http://a.example", "with its Origin echoed")
+    eq(r.headers.vary, "Origin, Access-Control-Request-Headers", "and Vary naming both fields it reads")
+    eq(r.count.vary, 1, "on one line")
+    r = preflight("http://b.example")
+    eq(r.headers["access-control-allow-origin"], nil, "a preflight from an unlisted Origin gets no ACAO")
+    eq(r.headers.vary, "Origin, Access-Control-Request-Headers", "with the same Vary")
+    table.insert(list, "http://c.example")
+    eq(
+        raw(port, get("/style.css", port, "Origin: http://c.example\r\n")).headers["access-control-allow-origin"],
+        nil,
+        "an entry added to the caller's list after start is never echoed"
+    )
 end)
 
 H.finish()

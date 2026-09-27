@@ -5,8 +5,8 @@
 -- on disk of the file, index or directory about to be served (a case
 -- variant, a link); a NUL or a backslash in the path is 400 before it; a
 -- link out of the root is 404; and start refuses a bad token,
--- protected_paths (patterns with no token among them), serve_dotfiles or
--- index_names before any socket opens.
+-- protected_paths (patterns with no token among them), serve_dotfiles,
+-- index_names, headers or cors before any socket opens.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
@@ -672,8 +672,11 @@ end)
 -- "Access-Control-Allow-Origin " let any site read the event stream
 -- (measured); a colon in a name or a CR or LF in a value sends a header
 -- other than the one named, a key that is not a string went out as a
--- number, and a headers string opened the socket before it raised.
-H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names or headers", function()
+-- number, and a headers string opened the socket before it raised. A cors
+-- value goes out as a header value too, so a CR or LF in it wrote a line
+-- of its own; one that is no origin as a browser sends it could never
+-- match, and a list is walked with ipairs, which skips a map's keys.
+H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names, headers or cors", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
     local bad = {
@@ -708,6 +711,27 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names 
             "headers: a name must be a token and a value a line: X-Custom",
         },
         { "headers", "x", "headers must be a table" },
+        { "cors", "http://a.example\r\nSet-Cookie: x=1", "cors entry is not an origin" },
+        { "cors", "http://a.example\n", "cors entry is not an origin" },
+        { "cors", "http://a .example", "cors entry is not an origin" },
+        { "cors", "http://a.example\1", "cors entry is not an origin" },
+        { "cors", "http://a.example/", "cors entry is not an origin" },
+        { "cors", "http://a.example/app", "cors entry is not an origin" },
+        { "cors", "http://a.example:", "cors entry is not an origin" },
+        { "cors", "http://user@a.example", "cors entry is not an origin" },
+        { "cors", "a.example", "cors entry is not an origin" },
+        { "cors", "null", "cors entry is not an origin" },
+        { "cors", "", "cors entry is not an origin" },
+        { "cors", 1, "cors must be true, an origin or a list of origins" },
+        { "cors", { "http://a.example", 42 }, "cors must be true, an origin or a list of origins" },
+        { "cors", { "http://a.example", "*" }, "cors entry is not an origin" },
+        { "cors", { "http://a.example", "http://b.example\r\nX: y" }, "cors entry is not an origin" },
+        { "cors", { origin = "http://a.example" }, "cors must be true, an origin or a list of origins" },
+        {
+            "cors",
+            { [1] = "http://a.example", [3] = "http://b.example" },
+            "cors must be true, an origin or a list of origins",
+        },
     }
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
@@ -744,6 +768,29 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names 
     ok(started, 'headers = { ["X-Custom"] = "1" } starts: ' .. tostring(started and "" or res))
     if started then
         server.stop(res)
+    end
+    -- "*" is the documented spelling of true.
+    for _, cors in ipairs({
+        true,
+        false,
+        "*",
+        "http://a.example",
+        "https://127.0.0.1:5173",
+        "http://[::1]:8080",
+        { "http://a.example", "https://b.example:8443" },
+        {},
+    }) do
+        started, res = pcall(server.start, { port = 0, root = tmpdir, cors = cors })
+        ok(
+            started,
+            ("cors = %s starts: %s"):format(
+                vim.inspect(cors, { newline = " ", indent = "" }),
+                tostring(started and "" or res)
+            )
+        )
+        if started then
+            server.stop(res)
+        end
     end
     -- The start check reads a pattern against the empty subject, so a
     -- malformed part after a literal ("/[") is never parsed there. The
