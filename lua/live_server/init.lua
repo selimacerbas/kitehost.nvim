@@ -128,6 +128,7 @@ function start_for_path(path, port)
 
     local s = M.state.servers[port]
     local active_port = port
+    local started_here = false
     if s then
         server.update_target(s, root, index)
         util.notify(
@@ -170,15 +171,20 @@ function start_for_path(path, port)
         end
         active_port = inst_or_err.port
         M.state.servers[active_port] = inst_or_err
-        -- The URL the browser is sent, printed too: a page opened by hand
-        -- needs its token, and the client's no-token warning points here.
-        local url = browser_url(inst_or_err.host, active_port, inst_or_err.token)
-        util.notify(("LiveServer %d started → %s at %s"):format(active_port, root, url), M.opts)
+        started_here = true
     end
 
+    -- One URL, printed and opened: a page opened by hand needs its token,
+    -- and the client's no-token warning points at the printed one. Both
+    -- branches above leave a server on the port, so the bound address is
+    -- what the URL names.
+    local s = M.state.servers[active_port]
+    local url = browser_url(s.host, active_port, s.token)
+    if started_here then
+        util.notify(("LiveServer %d started → %s at %s"):format(active_port, root, url), M.opts)
+    end
     if M.opts.open_on_start then
-        local s = M.state.servers[active_port]
-        util.open_browser(browser_url(s and s.host or M.opts.host, active_port, s and s.token))
+        util.open_browser(url)
         M.state.opened_ports[active_port] = true
     end
 end

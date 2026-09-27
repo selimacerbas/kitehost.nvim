@@ -49,8 +49,12 @@ local picked_port = 0
 util.pick_port = function(_, cb)
     cb(picked_port)
 end
-vim.notify = function(msg)
+-- The level is kept: an error notice would set v:errmsg and fail the
+-- suite through the real function, so the last row reads it here instead.
+local levels = {}
+vim.notify = function(msg, level)
     table.insert(notices, msg)
+    table.insert(levels, level or vim.log.levels.INFO)
 end
 
 -- A fresh module per start: setup() merges onto the options it holds, so a
@@ -156,12 +160,20 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
     eq(
         notes[1],
         ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
-        "a tokenless start notice keeps its shape: the port, the root, the opened URL"
+        "a tokenless start notice prints its URL with no query"
     )
     ok(
         notes[1] ~= nil and notes[1]:find("?t=", 1, true) == nil,
         "a tokenless start notice holds no ?t=: " .. tostring(notes[1])
     )
 end)
+
+local errors = 0
+for _, level in ipairs(levels) do
+    if level >= vim.log.levels.ERROR then
+        errors = errors + 1
+    end
+end
+eq(errors, 0, "no start in this suite raised an error notice")
 
 H.finish()
