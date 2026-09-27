@@ -40,6 +40,17 @@ write_file(tmpdir .. "/src/key.pem", "DENIED")
 write_file(tmpdir .. "/src/cert.crt", "DENIED")
 write_file(tmpdir .. "/src/id.key", "DENIED")
 write_file(tmpdir .. "/src/SERVER.PEM", "DENIED")
+write_file(tmpdir .. "/src/.npmrc", "DENIED")
+write_file(tmpdir .. "/src/store.p12", "DENIED")
+vim.fn.mkdir(tmpdir .. "/src/.ssh", "p")
+write_file(tmpdir .. "/src/.ssh/id_ed25519", "DENIED")
+vim.fn.mkdir(tmpdir .. "/src/.gnupg", "p")
+write_file(tmpdir .. "/src/.gnupg/pubring.kbx", "DENIED")
+vim.fn.mkdir(tmpdir .. "/src/.github/assets", "p")
+write_file(tmpdir .. "/src/.github/assets/logo.png", "PNGDATA")
+write_file(tmpdir .. "/src/my pic.png", "PNGDATA")
+write_file(tmpdir .. "/src/gr\195\188n.png", "PNGDATA")
+write_file(tmpdir .. "/src/id_card.png", "PNGDATA")
 
 local TOKEN = lutil.random_token(16)
 
@@ -76,6 +87,21 @@ eq(
 for _, p in ipairs({ ".env", ".env.local", "sub/.git/config", "key.pem", "cert.crt", "id.key", ".ENV" }) do
     eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
 end
+-- The name asked for is read too: the resolved name (nested.txt) passes,
+-- and a link named .env still serves the secret it points at.
+local named = tmpdir .. "/src/sub/.env"
+local named_ok, named_err = uv.fs_symlink("nested.txt", named)
+if named_ok and uv.fs_stat(named) then
+    eq(http_get(base .. "/__live/asset?p=sub/.env&t=" .. TOKEN).status, 404, "a .env linking to a plain name is 404")
+else
+    H.skip("a .env linking to a plain name is 404 (" .. tostring(named_err or "the link does not resolve") .. ")")
+end
+-- One row per group beyond the names above: a credential file by name, a
+-- key store by extension, a key in a credential directory, a credential
+-- directory at any depth.
+for _, p in ipairs({ ".npmrc", "store.p12", ".ssh/id_ed25519", ".gnupg/pubring.kbx" }) do
+    eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
+end
 -- realpath returns the spelling on disk, so a case-folding volume hands the
 -- check .ENV as .env; a name upper case on disk needs the lowercased read.
 eq(http_get(base .. "/__live/asset?p=SERVER.PEM&t=" .. TOKEN).status, 404, "p=SERVER.PEM is 404")
@@ -86,9 +112,14 @@ if aliased and uv.fs_stat(alias) then
 else
     H.skip("an image name linking to .env is 404 (" .. tostring(alias_err or "the link does not resolve") .. ")")
 end
--- A deny list, not the root route's dot rule: markdown-preview serves a
--- document's images from a .images directory.
+-- A deny list, not the root route's dot rule: a document may keep its
+-- images in a dot directory (.images); markdown-preview sends every relative
+-- image here, so the names a document uses stay served: another dot
+-- directory, a space, a non-ASCII name, a name that starts like a key file.
 eq(http_get(base .. "/__live/asset?p=.images/pic.png&t=" .. TOKEN).status, 200, "an image under a dot directory is 200")
+for _, p in ipairs({ ".github/assets/logo.png", "my%20pic.png", "gr%C3%BCn.png", "id_card.png" }) do
+    eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 200, "p=" .. p .. " is 200")
+end
 -- A regular file alone: stream_file opens before it reads the type, and a
 -- FIFO blocks that open past SIGTERM, so a FIFO row would hang this suite
 -- wherever the check is missing. A directory takes the same check; without

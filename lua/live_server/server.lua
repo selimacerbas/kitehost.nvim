@@ -848,22 +848,72 @@ local function has_dot_segment(p)
     return false
 end
 
--- The names Vite's fs.deny refuses by default, plus private keys: the asset
--- route serves a document's neighbours, never its secrets. Lowercased, as a
--- case-folding volume maps .ENV to .env.
+-- The asset route serves a document's neighbours, never its secrets. An
+-- image may sit in any dot directory (.images), so the rule is a list of
+-- names, not the dot rule. Lowercased, as a case-folding volume maps .ENV
+-- to .env.
+local ASSET_DENY = {
+    -- Credential files by name: Vite's .env, .npmrc and .yarnrc.yml, plus
+    -- the ones other tools keep.
+    names = {
+        [".env"] = true,
+        [".envrc"] = true,
+        [".npmrc"] = true,
+        [".yarnrc.yml"] = true,
+        [".pypirc"] = true,
+        [".netrc"] = true,
+        ["_netrc"] = true,
+        [".pgpass"] = true,
+        [".my.cnf"] = true,
+        [".htpasswd"] = true,
+        [".git-credentials"] = true,
+        [".gitconfig"] = true,
+        [".s3cfg"] = true,
+        [".boto"] = true,
+        [".vault-token"] = true,
+        ["id_rsa"] = true,
+        ["id_dsa"] = true,
+        ["id_ecdsa"] = true,
+        ["id_ecdsa_sk"] = true,
+        ["id_ed25519"] = true,
+        ["id_ed25519_sk"] = true,
+    },
+    -- Key and certificate files by extension: Vite's set plus Java and
+    -- PuTTY key stores.
+    exts = {
+        pem = true,
+        crt = true,
+        cer = true,
+        der = true,
+        key = true,
+        p12 = true,
+        pfx = true,
+        jks = true,
+        keystore = true,
+        ppk = true,
+    },
+    -- Dot directories that hold credentials, refused at any depth.
+    dirs = {
+        [".git"] = true,
+        [".ssh"] = true,
+        [".aws"] = true,
+        [".kube"] = true,
+        [".docker"] = true,
+        [".gnupg"] = true,
+    },
+}
+
 local function asset_denied(rel)
     rel = rel:lower()
     for seg in rel:gmatch("[^/]+") do
-        if seg == ".git" then
+        if ASSET_DENY.dirs[seg] then
             return true
         end
     end
     local base = rel:match("([^/]+)$") or ""
-    return base == ".env"
+    return ASSET_DENY.names[base] ~= nil
         or base:sub(1, 5) == ".env."
-        or base:match("%.pem$") ~= nil
-        or base:match("%.crt$") ~= nil
-        or base:match("%.key$") ~= nil
+        or ASSET_DENY.exts[base:match("%.([^.]+)$") or ""] ~= nil
 end
 
 -- Answers one parsed request: the token gate, the routes and every
@@ -990,7 +1040,8 @@ local function handle_request(conn, req)
         if not aroot_real then
             return http_404(sock, "/__live/asset")
         end
-        -- The resolved name too: an innocent p may be a link to a secret.
+        -- Containment and the resolved name come from one realpath: p may be
+        -- a link out of the root or to a secret.
         local name, real = root_rel(aroot_real, util.joinpath(aroot_real, rel))
         if not name or asset_denied(name) then
             return http_404(sock, "/__live/asset")
