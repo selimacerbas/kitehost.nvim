@@ -492,6 +492,17 @@ H.case("Section 7: a listing's links come from the path, encoded", function()
     res = ask(port, get("/a%23b/", port))
     body = res[1] and res[1].body or ""
     ok(body:find('href="/a%23b/f.txt"', 1, true) ~= nil, "a directory named a#b keeps its href encoded")
+    -- The title showed the encoded path (Index of /docs%28old%29/): it is
+    -- the path as read, while each href encodes its segments.
+    vim.fn.mkdir(tree .. "/docs(old)", "p")
+    H.write_file(tree .. "/docs(old)/f.txt", "f")
+    res = ask(port, get("/docs%28old%29/", port))
+    body = res[1] and res[1].body or ""
+    ok(
+        body:find("<title>Index of /docs(old)/</title>", 1, true) ~= nil,
+        "a directory named docs(old) is titled as read"
+    )
+    ok(body:find('href="/docs%28old%29/f.txt"', 1, true) ~= nil, "and its entries link encoded")
     res = ask(port, get('/sub/?x="><b>X</b>', port))
     ok(
         res[1] ~= nil and res[1].status == 200 and not res[1].body:find("<b>X</b>", 1, true),

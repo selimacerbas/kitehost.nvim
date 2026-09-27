@@ -167,4 +167,85 @@ H.case("Section 6: an index the dot rule refuses is not the directory's", functi
     )
 end)
 
+-- A write to .env or .git/index sent its name to every events client, the
+-- name the listing hides, and reloaded the page for a change the server
+-- never serves. The watcher names the path relative to the root on macOS
+-- and in full on Linux, so a row reads the name's end.
+H.case("Section 7: a dot path's change sends no reload", function()
+    local function watched(extra, site)
+        site = site or H.tmpdir()
+        vim.fn.mkdir(site .. "/.git", "p")
+        local base = serve(
+            site,
+            vim.tbl_extend("keep", extra or {}, { live = { enabled = true, debounce = 20, inject_script = false } })
+        )
+        local port = tonumber(base:match(":(%d+)$"))
+        local c = assert(H.raw_connect(port))
+        assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
+        local head = c:read(2000, function(b)
+            return b:find("retry: 1000\n\n", 1, true) ~= nil
+        end)
+        ok(head:find("retry: 1000", 1, true) ~= nil, "the events stream opens")
+        -- FSEvents delivered a fixture written just before the watcher
+        -- started after the stream opened (measured), so the stream settles
+        -- and each row reads what follows the mark.
+        vim.wait(300)
+        return site, c, #table.concat(c.chunks)
+    end
+    local function reloaded(c, mark, ms, pattern)
+        local got = c:read(ms, function(b)
+            return b:find(pattern, mark + 1) ~= nil
+        end)
+        return got:find(pattern, mark + 1) ~= nil
+    end
+    local site, c, mark = watched()
+    H.write_file(site .. "/.env", "API_KEY=SECRET-7")
+    H.write_file(site .. "/.git/index", "SECRET-8")
+    vim.wait(300)
+    ok(not reloaded(c, mark, 1, "event: reload"), "a write to .env or .git/index sends no reload event")
+    H.write_file(site .. "/page.html", "<html><body>changed</body></html>")
+    ok(reloaded(c, mark, 2000, '"path":"[^"]*page%.html"'), "a write to page.html reloads within 2 s, naming page.html")
+    local open_site, open_c, open_mark = watched({ serve_dotfiles = true })
+    H.write_file(open_site .. "/.env", "API_KEY=open")
+    ok(reloaded(open_c, open_mark, 2000, '"path":"[^"]*%.env"'), "with serve_dotfiles a write to .env reloads")
+    -- A watcher on Linux names the full path, so the root's own is left out
+    -- of the read, as the dot rule leaves it out of every request.
+    local dotted = H.tmpdir() .. "/.local/site"
+    vim.fn.mkdir(dotted, "p")
+    local _, dc, dmark = watched(nil, dotted)
+    H.write_file(dotted .. "/page.html", "<html><body>dotted</body></html>")
+    ok(reloaded(dc, dmark, 2000, '"path":"[^"]*page%.html"'), "a root under .local reloads for page.html")
+end)
+
+-- The listing read an entry's own name, so a plain-named link to a dot name
+-- (cfg -> .git, dotlink -> .env) was listed and then 404 on click.
+H.case("Section 8: a listing judges a link by its target's name", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/.git", "p")
+    H.write_file(site .. "/.git/config", "SECRET-9")
+    H.write_file(site .. "/.env", "SECRET-10")
+    H.write_file(site .. "/page.txt", "page")
+    local cfg, cfg_err = uv.fs_symlink(".git", site .. "/cfg")
+    local dl, dl_err = uv.fs_symlink(".env", site .. "/dotlink")
+    if not (cfg and dl and uv.fs_stat(site .. "/cfg") and uv.fs_stat(site .. "/dotlink")) then
+        local why = " (" .. tostring(cfg_err or dl_err or "the link does not resolve") .. ")"
+        H.skip("a listing without the flags names no link to a dot name" .. why)
+        H.skip("with show_hidden and serve_dotfiles both links are listed" .. why)
+        return
+    end
+    local body = H.http_get(serve(site, { features = { dirlist = { enabled = true } } }) .. "/").body
+    ok(
+        body:find('href="/page.txt"', 1, true) ~= nil
+            and not body:find('href="/cfg', 1, true)
+            and not body:find('href="/dotlink', 1, true),
+        "a listing without the flags names no link to a dot name"
+    )
+    local all = { dirlist = { enabled = true, show_hidden = true } }
+    body = H.http_get(serve(site, { features = all, serve_dotfiles = true }) .. "/").body
+    ok(
+        body:find('href="/cfg', 1, true) ~= nil and body:find('href="/dotlink', 1, true) ~= nil,
+        "with show_hidden and serve_dotfiles both links are listed"
+    )
+end)
+
 H.finish()

@@ -327,6 +327,34 @@ local function sanitize_and_map(norm_path, root_real)
     return real
 end
 
+-- A file's path under a resolved base as the filesystem spells it
+-- (realpath: the case on disk, links followed), then the resolved path; nil
+-- when realpath fails or the path resolves outside the base. A base that
+-- ends in a separator ("/", "D:\") keeps it on the name, where a pattern
+-- anchored at ^/ expects it.
+local function root_rel(base_real, path)
+    local ok_real, real = pcall(uv.fs_realpath, path)
+    if not ok_real or not real or not util.path_has_prefix(real, base_real) then
+        return nil
+    end
+    local base = base_real:gsub("[/\\]$", "")
+    local rel = real:sub(#base + 1):gsub("\\", "/")
+    return rel == "" and "/" or rel, real
+end
+
+-- A path segment naming a dotfile or dot directory; .well-known stays
+-- public as the first segment, the path root where RFC 8615 reserves it.
+local function has_dot_segment(p)
+    local first = true
+    for seg in p:gmatch("[^/]+") do
+        if seg:sub(1, 1) == "." and not (first and seg == ".well-known") then
+            return true
+        end
+        first = false
+    end
+    return false
+end
+
 local function read_file_all(abs_path)
     local fd = uv.fs_open(abs_path, "r", 438)
     if not fd then
@@ -409,8 +437,33 @@ local function sse_broadcast(inst, event, payload)
     end
 end
 
+-- A changed path as the root names it, slash-separated: the recursive
+-- watcher reports it relative to the root (measured on macOS), a
+-- per-directory one by its full path, and the root's own path is never
+-- read, as the dot rule never reads it.
+local function changed_rel(inst, changed_path)
+    local p = changed_path:gsub("\\", "/")
+    local base = inst.root_real:gsub("\\", "/"):gsub("/$", "")
+    if p == base then
+        return "/"
+    elseif p:sub(1, #base + 1) == base .. "/" then
+        return p:sub(#base + 1)
+    end
+    return "/" .. p
+end
+
 local function schedule_reload(inst, changed_path)
     if not inst.live_enabled then
+        return
+    end
+    -- A dot path's change names it to every events client, the name the
+    -- listing hides, and reloads a page for a file the server never serves.
+    if
+        changed_path
+        and changed_path ~= ""
+        and not inst.serve_dotfiles
+        and has_dot_segment(changed_rel(inst, changed_path))
+    then
         return
     end
     if changed_path and changed_path ~= "" and #inst.ignore_patterns > 0 then
@@ -599,6 +652,8 @@ end
 
 -- -------- Directory listing -----------------------------------------------
 
+-- req_path is the normalized path, decoded: the title shows it as read,
+-- and each href encodes its segments.
 local function dir_listing_html(inst, fs_path, req_path)
     local entries = {}
     local iter = uv.fs_scandir(fs_path)
@@ -608,6 +663,7 @@ local function dir_listing_html(inst, fs_path, req_path)
     if req_path ~= "/" then
         table.insert(entries, { name = "..", is_dir = true, up = true })
     end
+    local show_all = inst.dir_show_hidden and inst.serve_dotfiles
     while true do
         local name, t = uv.fs_scandir_next(iter)
         if not name then
@@ -615,9 +671,15 @@ local function dir_listing_html(inst, fs_path, req_path)
         end
         -- A name the dot rule refuses is not shown: show_hidden alone
         -- named .env and .git to anyone the server answers, behind 404s.
-        if name:sub(1, 1) == "." and not (inst.dir_show_hidden and inst.serve_dotfiles) then
-            -- skip hidden
-        else
+        local hidden = name:sub(1, 1) == "."
+        -- A link is judged by its target's name under the root, one
+        -- realpath per link: cfg -> .git was listed and 404 on click, and a
+        -- target outside the root or missing has no name the rule can read.
+        if not hidden and not show_all and t == "link" then
+            local rel = root_rel(inst.root_real, util.joinpath(fs_path, name))
+            hidden = not rel or has_dot_segment(rel)
+        end
+        if show_all or not hidden then
             table.insert(entries, { name = name, is_dir = (t == "directory") })
         end
     end
@@ -628,16 +690,18 @@ local function dir_listing_html(inst, fs_path, req_path)
         return a.name:lower() < b.name:lower()
     end)
 
+    -- Each segment encoded, so no byte of a name reaches an href raw.
+    local enc_path = req_path:gsub("[^/]+", util.url_encode)
     local rows = {}
     for _, e in ipairs(entries) do
         local label = util.html_escape(e.name)
         local href
         if e.up then
-            local parent = req_path:gsub("/+$", ""):match("^(.*)/[^/]*$") or "/"
+            local parent = enc_path:gsub("/+$", ""):match("^(.*)/[^/]*$") or "/"
             href = parent == "" and "/" or parent .. "/"
         else
-            href = req_path
-                .. (req_path:sub(-1) == "/" and "" or "/")
+            href = enc_path
+                .. (enc_path:sub(-1) == "/" and "" or "/")
                 .. util.url_encode(e.name)
                 .. (e.is_dir and "/" or "")
         end
@@ -818,34 +882,6 @@ local function needs_auth(inst, p)
         if p:find(pat) then
             return true
         end
-    end
-    return false
-end
-
--- A file's path under a resolved base as the filesystem spells it
--- (realpath: the case on disk, links followed), then the resolved path; nil
--- when realpath fails or the path resolves outside the base. A base that
--- ends in a separator ("/", "D:\") keeps it on the name, where a pattern
--- anchored at ^/ expects it.
-local function root_rel(base_real, path)
-    local ok_real, real = pcall(uv.fs_realpath, path)
-    if not ok_real or not real or not util.path_has_prefix(real, base_real) then
-        return nil
-    end
-    local base = base_real:gsub("[/\\]$", "")
-    local rel = real:sub(#base + 1):gsub("\\", "/")
-    return rel == "" and "/" or rel, real
-end
-
--- A path segment naming a dotfile or dot directory; .well-known stays
--- public as the first segment, the path root where RFC 8615 reserves it.
-local function has_dot_segment(p)
-    local first = true
-    for seg in p:gmatch("[^/]+") do
-        if seg:sub(1, 1) == "." and not (first and seg == ".well-known") then
-            return true
-        end
-        first = false
     end
     return false
 end
@@ -1142,10 +1178,9 @@ local function handle_request(conn, req)
             return refuse(status)
         end
         if inst.dir_enabled then
-            -- The path as normalized, each segment encoded: the
-            -- request's own spelling carries its query and whatever markup
-            -- a raw target holds into every href.
-            local html = dir_listing_html(inst, mapped, (path_only:gsub("[^/]+", util.url_encode)))
+            -- The path as normalized: the request's own spelling carries its
+            -- query and whatever markup a raw target holds into every href.
+            local html = dir_listing_html(inst, mapped, path_only)
             return send_html_with_injection(inst, sock, html, inst.headers, req)
         else
             return http_404(sock, req.path .. " (no index)")

@@ -240,8 +240,8 @@ server.stop(unlisted)
 eq(http_get(("http://127.0.0.1:%d/docs/"):format(listed.port)).status, 401, "/docs/ serving a protected index is 401")
 -- A directory whose index.html links out of the root has no index of its
 -- own: the file route refuses the link by name, so /sub/ shows what the
--- directory itself holds, the listing naming the link, never the bytes
--- of the file behind it.
+-- directory itself holds, never the bytes of the file behind it, and the
+-- listing leaves out the link, whose target has no name under the root.
 local outside = vim.fs.joinpath(H.tmpdir(), "leak.html")
 H.write_file(outside, "outside the root")
 vim.fn.mkdir(vim.fs.joinpath(tmpdir, "sub"), "p")
@@ -249,7 +249,8 @@ local sub_index = vim.fs.joinpath(tmpdir, "sub", "index.html")
 local olinked, olink_err = uv.fs_symlink(outside, sub_index)
 local function lists_sub(res)
     return res.status == 200
-        and res.body:find(">index.html</a>", 1, true) ~= nil
+        and res.body:find("Index of /sub/", 1, true) ~= nil
+        and not res.body:find(">index.html</a>", 1, true)
         and not res.body:find("outside the root", 1, true)
 end
 if olinked and uv.fs_stat(sub_index) then
