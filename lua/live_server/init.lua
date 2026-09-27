@@ -47,6 +47,10 @@ local defaults = {
     -- reachable from the network.
     token = nil,
     protected_paths = {},
+    -- Extra Host names a loopback bind answers besides localhost and the
+    -- loopback addresses; true turns the check off (warned once).
+    allowed_hosts = nil,
+    serve_dotfiles = false, -- serve .env, .git/ and other dot paths (default: 404)
 
     live_reload = {
         enabled = true, -- watch files & push SSE "reload"
@@ -132,6 +136,8 @@ function start_for_path(path, port)
             cors = M.opts.cors,
             token = M.opts.token,
             protected_paths = M.opts.protected_paths,
+            allowed_hosts = M.opts.allowed_hosts,
+            serve_dotfiles = M.opts.serve_dotfiles,
             index_names = M.opts.index_names,
             notify_on_reload = M.opts.notify_on_reload,
             live = {
