@@ -172,11 +172,13 @@ end)
 -- name the listing hides, and reloaded the page for a change the server
 -- never serves. The event names the path relative to the root: a watcher
 -- on Linux names it in full, which told every events client where the root
--- sits on disk.
+-- sits on disk. The file the user started on is served at / whatever its
+-- name, so its change reloads.
 H.case("Section 7: a dot path's change sends no reload", function()
     local function watched(extra, site)
         site = site or H.tmpdir()
         vim.fn.mkdir(site .. "/.git", "p")
+        vim.fn.mkdir(site .. "/.hidden", "p")
         local base = serve(
             site,
             vim.tbl_extend("keep", extra or {}, { live = { enabled = true, debounce = 20, inject_script = false } })
@@ -200,16 +202,44 @@ H.case("Section 7: a dot path's change sends no reload", function()
         end)
         return got:find(pattern, mark + 1) ~= nil
     end
+    -- A late event sits before the one a row waited for, so a row that
+    -- says none arrived reads the whole stream after its mark.
+    local function streamed(c, mark, pattern)
+        return table.concat(c.chunks):find(pattern, mark + 1) ~= nil
+    end
     local site, c, mark = watched()
     H.write_file(site .. "/.env", "API_KEY=SECRET-7")
     H.write_file(site .. "/.git/index", "SECRET-8")
     vim.wait(300)
-    ok(not reloaded(c, mark, 1, "event: reload"), "a write to .env or .git/index sends no reload event")
+    local early = reloaded(c, mark, 1, "event: reload")
     H.write_file(site .. "/page.html", "<html><body>changed</body></html>")
-    ok(reloaded(c, mark, 2000, '"path":"page%.html"'), "a write to page.html reloads within 2 s, naming page.html")
+    local page = reloaded(c, mark, 2000, '"path":"page%.html"')
+    ok(
+        not early and not streamed(c, mark, '"path":"%.env"') and not streamed(c, mark, '"path":"%.git'),
+        "a write to .env or .git/index sends no reload event"
+    )
+    ok(page, "a write to page.html reloads within 2 s, naming page.html")
     local open_site, open_c, open_mark = watched({ serve_dotfiles = true })
     H.write_file(open_site .. "/.env", "API_KEY=open")
     ok(reloaded(open_c, open_mark, 2000, '"path":"%.env"'), "with serve_dotfiles a write to .env reloads")
+    -- A watcher per directory (Linux) spent a watch on every dot directory
+    -- but .git, whose changes the rule drops, and none on .git when
+    -- serve_dotfiles admits it.
+    H.write_file(open_site .. "/.hidden/x", "x")
+    ok(reloaded(open_c, open_mark, 2000, '"path":"%.hidden/x"'), "and a write to .hidden/x")
+    H.write_file(open_site .. "/.git/index", "index")
+    ok(reloaded(open_c, open_mark, 2000, '"path":"%.git/index"'), "and a write to .git/index")
+    local own_site = H.tmpdir()
+    H.write_file(own_site .. "/.draft.html", "<html><body>DRAFT</body></html>")
+    local _, oc, omark = watched({ default_index = own_site .. "/.draft.html" }, own_site)
+    H.write_file(own_site .. "/.env", "API_KEY=SECRET-13")
+    vim.wait(300)
+    H.write_file(own_site .. "/.draft.html", "<html><body>DRAFT 2</body></html>")
+    ok(
+        reloaded(oc, omark, 2000, '"path":"%.draft%.html"'),
+        "a write to the file the user started on, .draft.html, reloads"
+    )
+    ok(not streamed(oc, omark, '"path":"%.env"'), "and a write to .env beside it still sends none")
     -- A watcher on Linux names the full path, so the root's own is left out
     -- of the read, as the dot rule leaves it out of every request.
     local dotted = H.tmpdir() .. "/.local/site"
@@ -217,6 +247,80 @@ H.case("Section 7: a dot path's change sends no reload", function()
     local _, dc, dmark = watched(nil, dotted)
     H.write_file(dotted .. "/page.html", "<html><body>dotted</body></html>")
     ok(reloaded(dc, dmark, 2000, '"path":"page%.html"'), "a root under .local reloads for page.html")
+    -- .liveignore read that full path too, so a line naming a directory
+    -- above the root dropped every reload there.
+    local ignoring = H.tmpdir() .. "/dist/site"
+    vim.fn.mkdir(ignoring, "p")
+    H.write_file(ignoring .. "/.liveignore", "dist\n*.log\n")
+    local _, ic, imark = watched(nil, ignoring)
+    H.write_file(ignoring .. "/notes.log", "log")
+    vim.wait(300)
+    H.write_file(ignoring .. "/page.html", "<html><body>ignoring</body></html>")
+    ok(
+        reloaded(ic, imark, 2000, '"path":"page%.html"'),
+        "a .liveignore line naming a directory above the root drops no reload"
+    )
+    ok(not streamed(ic, imark, "notes%.log"), "and a line naming *.log still drops notes.log's")
+end)
+
+-- libuv names an event on the watched directory itself by the directory's
+-- own name, which read as a child of that name: the payload named the
+-- root's directory, and a root named .drafts dropped the reload. The libuv
+-- of Neovim 0.10 on macOS reports no such event (measured), so the rows
+-- are read where a watcher sees one.
+H.case("Section 7b: a change to the root itself reloads, naming /", function()
+    local function own_event_seen()
+        local dir = H.tmpdir()
+        local ev = assert(uv.new_fs_event())
+        H.defer(function()
+            if not ev:is_closing() then
+                ev:close()
+            end
+        end)
+        local seen = false
+        assert(ev:start(dir, {}, function()
+            seen = true
+        end))
+        vim.wait(300)
+        seen = false
+        assert(uv.fs_chmod(dir, 448))
+        vim.wait(1000, function()
+            return seen
+        end, 5)
+        return seen
+    end
+    local rows = {
+        { "site", "a chmod of the root reloads, naming /" },
+        { ".drafts", "and of a root named .drafts" },
+    }
+    if not own_event_seen() then
+        for _, row in ipairs(rows) do
+            H.skip(row[2] .. " (this watcher reports no event for the directory it watches)")
+        end
+        return
+    end
+    for _, row in ipairs(rows) do
+        local site = H.tmpdir() .. "/" .. row[1]
+        vim.fn.mkdir(site, "p")
+        local base = serve(site, { live = { enabled = true, debounce = 20, inject_script = false } })
+        local port = tonumber(base:match(":(%d+)$"))
+        local c = assert(H.raw_connect(port))
+        assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
+        c:read(2000, function(b)
+            return b:find("retry: 1000\n\n", 1, true) ~= nil
+        end)
+        vim.wait(300)
+        local mark = #table.concat(c.chunks)
+        assert(uv.fs_chmod(site, 448))
+        local got = c:read(2000, function(b)
+            return b:find('"path":"/"', mark + 1, true) ~= nil
+        end)
+        local named = {}
+        for p in got:sub(mark + 1):gmatch('"path":"([^"]*)"') do
+            named[#named + 1] = p
+        end
+        ok(got:find('"path":"/"', mark + 1, true) ~= nil, ("%s (named: %s)"):format(row[2], table.concat(named, " ")))
+    end
 end)
 
 -- The listing read an entry's own name, so a plain-named link to a dot name

@@ -441,20 +441,37 @@ local function sse_broadcast(inst, event, payload)
     end
 end
 
--- A changed path relative to the root, slash-separated, which both the dot
--- filter and the reload event read: the recursive watcher reports it so
--- (measured on macOS); a per-directory one (Linux) names the full path,
--- which told every events client where the root sits and put the root's
--- own segments under the dot rule, which never reads them.
+-- A changed path relative to the root, slash-separated, which the dot
+-- filter, the .liveignore match and the reload event read: the recursive
+-- watcher reports it so (measured on macOS); a per-directory one (Linux)
+-- names the full path, which told every events client where the root sits
+-- and put the root's own segments under the dot rule and .liveignore,
+-- neither of which reads them. The root itself is "/".
 local function changed_rel(inst, changed_path)
     local p = changed_path:gsub("\\", "/")
     local base = inst.root_real:gsub("\\", "/"):gsub("/$", "")
     if p == base then
-        return ""
+        return "/"
     elseif p:sub(1, #base + 1) == base .. "/" then
-        return p:sub(#base + 2)
+        p = p:sub(#base + 2)
+    end
+    -- libuv names an event on the watched directory itself by that
+    -- directory's own name (inotify, and FSEvents in Neovim 0.12's libuv:
+    -- measured), which read as a child of that name; with no such child
+    -- the name is the root's own.
+    local own = util.basename(inst.root_real)
+    if p == own and not uv.fs_lstat(util.joinpath(inst.root_real, own)) then
+        return "/"
     end
     return p
+end
+
+-- The file the user started on is served at / whatever its name, so its
+-- change reloads as a page's does; it is read by realpath, as the gate
+-- reads it.
+local function is_own_index(inst, rel)
+    local own = inst.default_index and root_rel(inst.root_real, inst.default_index)
+    return own == "/" .. rel
 end
 
 local function schedule_reload(inst, changed_path)
@@ -464,13 +481,11 @@ local function schedule_reload(inst, changed_path)
     local rel = changed_path and changed_rel(inst, changed_path)
     -- A dot path's change names it to every events client, the name the
     -- listing hides, and reloads a page for a file the server never serves.
-    if rel and not inst.serve_dotfiles and has_dot_segment(rel) then
+    if rel and not inst.serve_dotfiles and has_dot_segment(rel) and not is_own_index(inst, rel) then
         return
     end
-    if changed_path and changed_path ~= "" and #inst.ignore_patterns > 0 then
-        if util.match_ignore(changed_path, inst.ignore_patterns) then
-            return
-        end
+    if rel and rel ~= "" and #inst.ignore_patterns > 0 and util.match_ignore(rel, inst.ignore_patterns) then
+        return
     end
     inst._last_change = rel or inst._last_change
     inst.debounce_timer:stop()
@@ -479,9 +494,16 @@ local function schedule_reload(inst, changed_path)
     end)
 end
 
+-- A directory whose changes never reload (a dot path, without
+-- serve_dotfiles) spends no watch; with serve_dotfiles each is watched,
+-- .git included.
+local function dir_watched(inst, dir)
+    return inst.serve_dotfiles or not has_dot_segment(changed_rel(inst, dir))
+end
+
 -- Recursively scan all subdirectories under root (for Linux fallback watchers)
-local function scan_dirs(root)
-    local dirs = { root }
+local function scan_dirs(inst)
+    local dirs = { inst.root_real }
     local function walk(dir)
         local handle = uv.fs_scandir(dir)
         if not handle then
@@ -492,14 +514,14 @@ local function scan_dirs(root)
             if not name then
                 break
             end
-            if typ == "directory" and name ~= ".git" and name ~= "node_modules" then
-                local full = util.joinpath(dir, name)
+            local full = util.joinpath(dir, name)
+            if typ == "directory" and name ~= "node_modules" and dir_watched(inst, full) then
                 dirs[#dirs + 1] = full
                 walk(full)
             end
         end
     end
-    walk(root)
+    walk(inst.root_real)
     return dirs
 end
 
@@ -524,7 +546,7 @@ local function add_dir_watch(inst, dir)
         -- Watch newly created subdirectories
         if fname and fname ~= "" then
             local st = uv.fs_stat(full)
-            if st and st.type == "directory" and not inst._fs_events[full] then
+            if st and st.type == "directory" and not inst._fs_events[full] and dir_watched(inst, full) then
                 add_dir_watch(inst, full)
             end
         end
@@ -585,7 +607,7 @@ local function start_fs_watch(inst)
 
     -- Linux (or recursive failed): per-directory watchers
     inst._fs_events = {}
-    for _, dir in ipairs(scan_dirs(inst.root_real)) do
+    for _, dir in ipairs(scan_dirs(inst)) do
         add_dir_watch(inst, dir)
     end
 end
