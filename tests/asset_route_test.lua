@@ -6,6 +6,8 @@
 --   - refuses secrets by name (.env, .git, key files) and anything but a file
 --   - serves nothing from an asset root that is no path, or one inside a
 --     credential directory such as .ssh (Section 4)
+--   - sandboxes the HTML, SVG and XML documents it serves, never the root
+--     route's index (Section 5)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -54,6 +56,12 @@ write_file(tmpdir .. "/src/.github/assets/logo.png", "PNGDATA")
 write_file(tmpdir .. "/src/my pic.png", "PNGDATA")
 write_file(tmpdir .. "/src/gr\195\188n.png", "PNGDATA")
 write_file(tmpdir .. "/src/id_card.png", "PNGDATA")
+write_file(tmpdir .. "/src/page.html", "<html><body>x</body></html>")
+write_file(tmpdir .. "/src/page.htm", "<html><body>x</body></html>")
+write_file(tmpdir .. "/src/page.xhtml", "<html xmlns='http://www.w3.org/1999/xhtml'/>")
+write_file(tmpdir .. "/src/pic.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>")
+write_file(tmpdir .. "/src/UPPER.SVG", "<svg xmlns='http://www.w3.org/2000/svg'/>")
+write_file(tmpdir .. "/src/feed.xml", "<feed/>")
 
 local TOKEN = lutil.random_token(16)
 
@@ -229,6 +237,56 @@ write_file(tmpdir .. "/.ssh/pic.png", "PNGDATA")
 inst = asset_server(tmpdir .. "/.ssh")
 base = ("http://127.0.0.1:%d"):format(inst.port)
 eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "an asset root inside .ssh serves nothing")
+server.stop(inst)
+
+H.section("Section 5: active documents on the asset route are sandboxed")
+
+-- A crafted SVG or HTML file beside a markdown document ran script in the
+-- server's origin and could read the preview page; a sandboxed response
+-- gets an opaque origin and no script.
+local function sandbox_server(headers)
+    return server.start({
+        port = 0,
+        root = tmpdir .. "/www",
+        token = TOKEN,
+        asset_root = tmpdir .. "/src",
+        headers = headers,
+        live = { inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+end
+local function raw_get(path)
+    local req = ("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(path, inst.port)
+    return H.response(assert(H.raw_request(inst.port, req)))
+end
+inst = sandbox_server(nil)
+-- realpath returns the name as spelled on disk, and the MIME lookup reads
+-- UPPER.SVG as an SVG, so the extension is read lowercased.
+for _, name in ipairs({ "page.html", "page.htm", "page.xhtml", "pic.svg", "feed.xml", "UPPER.SVG" }) do
+    local res = raw_get("/__live/asset?p=" .. name .. "&t=" .. TOKEN)
+    eq(res.headers["content-security-policy"], "sandbox", name .. " on the asset route is sandboxed")
+end
+local img = raw_get("/__live/asset?p=pic.png&t=" .. TOKEN)
+eq(img.status, 200, "an image on the asset route is 200")
+eq(img.headers["content-security-policy"], nil, "an image is not sandboxed")
+-- A sandboxed index would make its own event stream cross-origin.
+local index = raw_get("/index.html")
+eq(index.status, 200, "the root route's index is 200")
+eq(index.headers["content-security-policy"], nil, "the root route's index is never sandboxed")
+server.stop(inst)
+-- A caller's policy under another spelling of the name would go out as a
+-- second line beside the sandbox, and the key's spelling would decide what a
+-- document carries. The image is read after the document, so a sandbox
+-- written into the shared headers shows there.
+inst = sandbox_server({ ["content-security-policy"] = "default-src *" })
+local doc = raw_get("/__live/asset?p=pic.svg&t=" .. TOKEN)
+eq(doc.count["content-security-policy"], 1, "a caller's lowercase policy is no second line")
+eq(doc.headers["content-security-policy"], "sandbox", "the sandbox replaces a caller's lowercase policy")
+eq(
+    raw_get("/__live/asset?p=pic.png&t=" .. TOKEN).headers["content-security-policy"],
+    "default-src *",
+    "an image keeps the caller's policy"
+)
 server.stop(inst)
 
 H.finish()

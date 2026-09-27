@@ -1091,6 +1091,31 @@ local function asset_denied(rel)
         or ASSET_DENY.exts[base:match("%.([^.]+)$") or ""] ~= nil
 end
 
+-- The asset route's files a browser would render as a document in this
+-- server's origin. Never applied to the index page: a sandboxed page has
+-- an opaque origin, and its event stream would then be cross-origin.
+local ACTIVE_DOCUMENT = { html = true, htm = true, xhtml = true, svg = true, xml = true }
+
+-- The headers of an asset-route response. The extension is read as
+-- guess_mime reads it, lowercased, so PAGE.HTML on disk, served as HTML,
+-- is sandboxed too. The server's policy replaces a caller's under any
+-- spelling of the name, as it does under the exact one, so the spelling
+-- never decides what a document carries.
+local function asset_headers(inst, real)
+    local ext = real:match("%.([%w]+)$")
+    if not (ext and ACTIVE_DOCUMENT[ext:lower()]) then
+        return inst.live_headers
+    end
+    local h = {}
+    for k, v in pairs(inst.live_headers) do
+        if k:lower() ~= "content-security-policy" then
+            h[k] = v
+        end
+    end
+    h["Content-Security-Policy"] = "sandbox"
+    return h
+end
+
 -- The headers of a root-route response. With a cors list the list alone
 -- decides ACAO (start dropped any of the caller's, whatever its case, so
 -- an unlisted Origin never gets a hand-set "*"): a listed Origin is
@@ -1316,7 +1341,7 @@ local function handle_request(conn, req)
         if not st or st.type ~= "file" then
             return http_404(sock, "/__live/asset")
         end
-        return stream_file(sock, real, inst.live_headers, "/__live/asset")
+        return stream_file(sock, real, asset_headers(inst, real), "/__live/asset")
     end
 
     -- Map path
