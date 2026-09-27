@@ -154,4 +154,46 @@ H.case("Section 3: the event stream carries the caller's headers, its own fields
     eq(r.count["connection"], 1, "and its Connection once")
 end)
 
+-- cors = true promised cross-origin reads of the root route, but the
+-- browser's preflight got 405 and it refused the read. /__live/* answers
+-- no cross-origin read, so its preflight keeps the 405, and every 405
+-- names the one method served (RFC 9110 15.5.6). The path checks still
+-- come first: a NUL in the path is 400 whatever the method.
+H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
+    local inst = serve({ cors = true })
+    local port = inst.port
+    local pre = "Origin: http://a.example\r\nAccess-Control-Request-Method: GET\r\n"
+    local r = raw(port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre))
+    eq(r.status, 204, "a preflight on the root route is 204")
+    eq(r.headers["access-control-allow-origin"], "*", "with the cors origin")
+    eq(r.headers["access-control-allow-methods"], "GET", "and the one method served")
+    eq(r.headers["access-control-max-age"], "600", "which the browser keeps for ten minutes")
+    eq(r.headers["content-length"], nil, "and no Content-Length, which a 204 must not send (RFC 9110 8.6)")
+    eq(
+        raw(port, ("OPTIONS /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre)).status,
+        405,
+        "a preflight on /__live/* is 405"
+    )
+    r = raw(port, ("POST /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))
+    eq(r.status, 405, "a POST is 405")
+    eq(r.headers.allow, "GET", "and names the method allowed")
+    eq(
+        raw(port, ("POST /style.css%%00 HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)).status,
+        400,
+        "a POST with a NUL in its path is 400 before 405"
+    )
+    local plain = serve()
+    eq(
+        raw(plain.port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(plain.port, pre)).status,
+        405,
+        "no cors, no preflight answer"
+    )
+    -- A caller's ACAO riding beside the cors one would be a second origin
+    -- line, and a browser refuses a preflight with two.
+    local both = serve({ cors = "https://a.example", headers = { ["access-CONTROL-allow-origin"] = "*" } })
+    r = raw(both.port, ("OPTIONS /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(both.port, pre))
+    eq(r.count["access-control-allow-origin"], 1, "a preflight beside a caller's ACAO sends one origin line")
+    eq(r.headers["access-control-allow-origin"], "https://a.example", "and it is the cors one")
+end)
+
 H.finish()

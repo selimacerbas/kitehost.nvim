@@ -54,6 +54,7 @@ end
 -- suite row catches, never with a wrong one.
 local REASONS = {
     [200] = "OK",
+    [204] = "No Content",
     [301] = "Moved Permanently",
     [302] = "Found",
     [400] = "Bad Request",
@@ -1068,9 +1069,6 @@ local function handle_request(conn, req)
             "Misdirected Request: this Host is no loopback name (see allowed_hosts)"
         )
     end
-    if req.method ~= "GET" then
-        return send_response(sock, 405, { ["Content-Type"] = "text/plain" }, "Method Not Allowed")
-    end
 
     -- Canonicalize the path once; the gate reads it first and the name on
     -- disk second (refusal below), and a name that passes one read and not
@@ -1083,6 +1081,24 @@ local function handle_request(conn, req)
     -- Dotfiles hold secrets and the listing already hides them.
     if not inst.serve_dotfiles and has_dot_segment(path_only) then
         return http_404(sock, req.path)
+    end
+    -- A cors preflight for the root route; /__live/* answers no
+    -- cross-origin read, so its preflight gets the 405 below. Both read the
+    -- canonical path: /%5F_live/events is served as /__live/events.
+    if
+        req.method == "OPTIONS"
+        and inst.cors
+        and req.headers["access-control-request-method"]
+        and not path_only:find("^/__live/")
+    then
+        return send_response(sock, 204, {
+            ["Access-Control-Allow-Origin"] = inst.headers["Access-Control-Allow-Origin"],
+            ["Access-Control-Allow-Methods"] = "GET",
+            ["Access-Control-Max-Age"] = "600",
+        }, nil)
+    end
+    if req.method ~= "GET" then
+        return send_response(sock, 405, { ["Content-Type"] = "text/plain", ["Allow"] = "GET" }, "Method Not Allowed")
     end
     local query = req.path:match("%?(.*)$") or ""
 
@@ -1574,6 +1590,7 @@ function S.start(cfg)
         default_index = cfg.default_index,
         headers = headers,
         live_headers = live_headers,
+        cors = cfg.cors and true or false,
         started_at = os.time(),
 
         -- live
