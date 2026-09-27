@@ -72,7 +72,7 @@ uv.random, uv.fs_open = real_random, real_open
 -- A bad length raises before any source is read. Infinity equals its own
 -- floor, and the /dev/urandom read it reached raised before the descriptor
 -- closed, one descriptor lost per call; a length of 2^31 held the editor
--- 16 s reading 2 GB (measured).
+-- for seconds reading 2 GB (measured).
 local function raises_length_error(len, label)
     local good, err = pcall(util.random_token, len)
     ok(not good and tostring(err):find("byte_len must be", 1, true) ~= nil, label .. ": " .. tostring(err))
@@ -89,6 +89,7 @@ end
 raises_length_error(2 ^ 31, "a length of 2^31 raises the length error")
 raises_length_error(1.5, "a fractional length raises the length error")
 raises_length_error("16", "a string length raises the length error")
+raises_length_error(false, "false is no length and raises the length error")
 local long = util.random_token(1024)
 ok(#long == 2048 and long:match("^[0-9a-f]+$") ~= nil, "a length of 1024 returns 2048 hex characters")
 math.randomseed = real_seed

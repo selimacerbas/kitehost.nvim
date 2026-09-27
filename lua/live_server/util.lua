@@ -74,7 +74,9 @@ end
 -- generator. 1024 bytes is far above any secret's size and keeps the read
 -- and the hex conversion trivial.
 function U.random_token(byte_len)
-    byte_len = byte_len or 16 -- 16 bytes = 32 hex characters = 128 bits
+    if byte_len == nil then
+        byte_len = 16 -- 32 hex characters, 128 bits; false is no length
+    end
     if type(byte_len) ~= "number" or byte_len % 1 ~= 0 or byte_len < 1 or byte_len > 1024 then
         error("random_token: byte_len must be an integer from 1 to 1024", 2)
     end
