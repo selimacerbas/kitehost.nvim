@@ -4,8 +4,8 @@
 -- cannot send.
 -- Section 1 pins the behaviour the buffered pipeline keeps from the server
 -- before it; each later section holds one change made on top of it. The
--- last two read the index and listing routes, through curl where a request
--- needs no shape curl cannot send.
+-- last two read the index and listing routes: Section 6 through curl,
+-- Section 7 over raw TCP.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/request_test.lua"
 
@@ -505,6 +505,21 @@ H.case("Section 7: a listing's links come from the path, encoded", function()
         "a directory named docs(old) is titled as read"
     )
     ok(body:find('href="/docs%28old%29/f.txt"', 1, true) ~= nil, "and its entries link encoded")
+    -- The title and heading are built from the decoded path, so the page's
+    -- escape alone keeps a directory's name from reading as markup.
+    local tag = "<img src=x onerror=alert(1)>"
+    local made, mkdir_err = vim.uv.fs_mkdir(tree .. "/" .. tag, 493)
+    local tag_row = "a directory named " .. tag .. " is titled escaped, never as a tag"
+    if made then
+        local enc = tag:gsub("[^%w]", function(ch)
+            return ("%%%02X"):format(ch:byte())
+        end)
+        res = ask(port, get("/" .. enc .. "/", port))
+        body = res[1] and res[1].body or ""
+        ok(body:find("<title>Index of /&lt;img", 1, true) ~= nil and not body:find("<img", 1, true), tag_row)
+    else
+        H.skip(tag_row .. " (" .. tostring(mkdir_err) .. ")")
+    end
     res = ask(port, get('/sub/?x="><b>X</b>', port))
     ok(
         res[1] ~= nil and res[1].status == 200 and not res[1].body:find("<b>X</b>", 1, true),

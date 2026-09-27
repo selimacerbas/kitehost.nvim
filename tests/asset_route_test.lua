@@ -4,6 +4,8 @@
 --   - requires ?t=<token> when token auth is configured
 --   - rejects traversal (a symlink out of the root too), absolute paths, and schemes
 --   - refuses secrets by name (.env, .git, key files) and anything but a file
+--   - serves nothing from an asset root that is no path, or one inside a
+--     credential directory such as .ssh (Section 4)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 

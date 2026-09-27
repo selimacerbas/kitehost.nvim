@@ -1398,10 +1398,11 @@ function S.start(cfg)
             allowed_set[key] = true
         end
     end
-    -- needs_auth walks the patterns with ipairs, so a map or a holed list
-    -- protected nothing; a number matched as its digits, and a table, a
-    -- boolean or a malformed pattern ("(", "%") raised inside the read
-    -- callback, and every request went unanswered (measured).
+    -- needs_auth walks the patterns with ipairs, so a map protected nothing
+    -- and the entries after a hole were never read; a number matched as its
+    -- digits, and a table, a boolean or a malformed pattern ("(", "%")
+    -- raised inside the read callback, and every request went unanswered
+    -- (measured).
     local protected = cfg.protected_paths
     if protected ~= nil then
         if type(protected) ~= "table" or not vim.islist(protected) then

@@ -579,12 +579,12 @@ end)
 -- Each refused before any socket opens. An empty token is truthy, so it
 -- would mark every request as the token's holder and pass the gate with
 -- no t= at all. protected_paths is walked with ipairs, which skips a
--- map's keys and stops at a hole, so a map or a holed list protected
--- nothing without a word; a malformed pattern started and then raised in
--- the read callback of every request, which was never answered;
--- serve_dotfiles = 1 read as false. Patterns with no token started and
--- gated nothing, and an index_names string raised in the read callback of
--- every directory request.
+-- map's keys and stops at a hole, so a map protected nothing and the
+-- entries after a hole were never read, without a word; a malformed
+-- pattern started and then raised in the read callback of every request,
+-- which was never answered; serve_dotfiles = 1 read as false. Patterns
+-- with no token started and gated nothing, and an index_names string
+-- raised in the read callback of every directory request.
 H.case("start refuses a bad token, protected_paths, serve_dotfiles or index_names", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }

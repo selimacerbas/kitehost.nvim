@@ -131,6 +131,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 ### CSS hot-inject
 
 When `css_inject` is enabled (default), editing a `.css` file triggers an instant stylesheet swap in the browser — no full page reload, no DOM state lost. All other file changes still trigger a full reload.
+A change under a dot path (`.env`, `.git/`) pushes no reload unless `serve_dotfiles` is set, the file you started on excepted, and `.liveignore` patterns match the path relative to the served root.
 
 ### Auto-start
 
@@ -233,6 +234,7 @@ All under the which-key group **`<leader>l`**:
   * It only injects into **HTML** pages.
   * Ensure the served root actually changed (the watcher is per root).
   * Check `.liveignore` isn't excluding the file.
+  * A change under a dot path pushes no reload unless `serve_dotfiles` is set.
   * Try `:LiveServerToggleLive` off/on, or `:LiveServerReload` to force.
 
 ---
