@@ -168,6 +168,45 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
     )
 end)
 
+-- The rows above print on the default host with notify on, where the bound
+-- address and the configured one agree, so a notice built apart from the
+-- opened URL, one printed on a retarget or one that ignored notify = false
+-- all passed. The notice carries the token into :messages, which is why
+-- notify = false must silence it.
+H.case("Section 3: the start notice is silenced, printed once, and is the opened URL", function()
+    local _, _, _, notes = start_with({ notify = false, token = "abc" })
+    eq(#notes, 0, "notify = false prints no start notice: " .. table.concat(notes, " | "))
+
+    local url, inst
+    _, url, inst, notes = start_with({ notify = true, token = "abc" })
+    local port = inst and inst.port or -1
+    local before = #notes
+    local ls = require("live_server")
+    H.defer(function()
+        picked_port = 0
+    end)
+    picked_port = port
+    ls.start_picker()
+    picked_port = 0
+    local later = vim.list_slice(notes, before + 1)
+    ok(#later > 0 and later[1]:find("retargeted", 1, true) ~= nil, "a retarget says so: " .. table.concat(later, " | "))
+    ok(
+        not table.concat(later, " | "):find("started", 1, true),
+        "and prints no started notice: " .. table.concat(later, " | ")
+    )
+
+    -- A wildcard bind is opened on loopback, and the notice must name that
+    -- address, not the one configured.
+    _, url, inst, notes = start_with({ notify = true, host = "0.0.0.0", token = "abc" })
+    port = inst and inst.port or -1
+    eq(url, ("http://127.0.0.1:%d/?t=abc"):format(port), "a wildcard bind opens its loopback URL")
+    eq(
+        notes[1],
+        ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
+        "and its start notice prints that URL byte for byte"
+    )
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

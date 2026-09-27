@@ -72,11 +72,12 @@ local start_for_path -- forward declaration (used by auto_start and start_picker
 
 -- The URL a browser opens for a server: a wildcard bind is reached on
 -- loopback, and a server's token rides in the query, so the page's first
--- request and its injected client carry it.
+-- request and its injected client carry it. token is a started server's,
+-- which start keeps non-empty, or nil.
 local function browser_url(host, port, token)
     local display = (host == "0.0.0.0") and "127.0.0.1" or host
     local url = ("http://%s:%d/"):format(display, port)
-    if token and token ~= "" then
+    if token then
         url = url .. "?t=" .. util.url_encode(token)
     end
     return url
