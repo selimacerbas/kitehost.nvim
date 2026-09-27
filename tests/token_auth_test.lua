@@ -245,7 +245,8 @@ eq(http_get(("http://127.0.0.1:%d/docs/"):format(listed.port)).status, 401, "/do
 -- A directory whose index.html links out of the root has no index of its
 -- own: the file route refuses the link by name, so /sub/ shows what the
 -- directory itself holds, never the bytes of the file behind it, and the
--- listing leaves out the link, whose target has no name under the root.
+-- listing leaves out the link, which containment refuses whatever the
+-- flags.
 local outside = vim.fs.joinpath(H.tmpdir(), "leak.html")
 H.write_file(outside, "outside the root")
 vim.fn.mkdir(vim.fs.joinpath(tmpdir, "sub"), "p")
@@ -262,10 +263,22 @@ if olinked and uv.fs_stat(sub_index) then
     ok(lists_sub(res), ("an index linked out of the root leaves /sub/ its listing (got %d)"):format(res.status))
     res = http_get(("http://127.0.0.1:%d/sub/?t=%s"):format(listed.port, TOKEN))
     ok(lists_sub(res), ("and the same listing with the token (got %d)"):format(res.status))
+    local shows_all = server.start({
+        port = 0,
+        root = tmpdir,
+        token = TOKEN,
+        serve_dotfiles = true,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = true, show_hidden = true } },
+    })
+    res = http_get(("http://127.0.0.1:%d/sub/"):format(shows_all.port))
+    ok(lists_sub(res), ("and the same listing with show_hidden and serve_dotfiles (got %d)"):format(res.status))
+    server.stop(shows_all)
 else
     local why = " (" .. tostring(olink_err or "the link does not resolve") .. ")"
     H.skip("an index linked out of the root leaves /sub/ its listing" .. why)
     H.skip("and the same listing with the token" .. why)
+    H.skip("and the same listing with show_hidden and serve_dotfiles" .. why)
 end
 server.stop(listed)
 -- A listing is read by the directory's name with its slash, as the request
@@ -484,18 +497,24 @@ eq(r.curl_exit, 7, "the port refuses connections after stop without a token")
 -- would mark every request as the token's holder and pass the gate with
 -- no t= at all. protected_paths is walked with ipairs, which skips a
 -- map's keys and stops at a hole, so a map or a holed list protected
--- nothing without a word; serve_dotfiles = 1 read as false.
+-- nothing without a word; a malformed pattern started and then raised in
+-- the read callback of every request, which was never answered;
+-- serve_dotfiles = 1 read as false.
 H.case("start refuses a bad token, protected_paths or serve_dotfiles", function()
+    -- { option, value, the text the refusal must carry (the option's name
+    -- unless given) }
     local bad = {
         { "token", "" },
         { "token", 42 },
         { "protected_paths", { content = "^/content%.md$" } },
         { "protected_paths", { [1] = "^/a$", [3] = "^/b$" } },
         { "protected_paths", { 42 } },
+        { "protected_paths", { "(" }, "protected_paths pattern is malformed: (" },
+        { "protected_paths", { "^/a$", "%" }, "protected_paths pattern is malformed: %" },
         { "serve_dotfiles", 1 },
     }
     for _, c in ipairs(bad) do
-        local name, value = c[1], c[2]
+        local name, value, says = c[1], c[2], c[3] or c[1]
         local shown = ("%s = %s"):format(name, vim.inspect(value, { newline = " ", indent = "" }))
         local tcps = H.handle_count("tcp")
         local started, res = pcall(server.start, { port = 0, root = tmpdir, [name] = value })
@@ -504,10 +523,19 @@ H.case("start refuses a bad token, protected_paths or serve_dotfiles", function(
             server.stop(res)
         end
         ok(
-            not started and tostring(res):find(name, 1, true) ~= nil,
-            ("%s is refused, naming %s: %s"):format(shown, name, tostring(res))
+            not started and tostring(res):find(says, 1, true) ~= nil,
+            ("%s is refused, naming %s: %s"):format(shown, says, tostring(res))
         )
         eq(after, tcps, ("%s opens no socket"):format(shown))
+    end
+    local started, res = pcall(server.start, {
+        port = 0,
+        root = tmpdir,
+        protected_paths = { "^/content%.md$", "[%w_]+%.key$", "^/a/(b)$" },
+    })
+    ok(started, "a list of well-formed patterns starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
     end
 end)
 

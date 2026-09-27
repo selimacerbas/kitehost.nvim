@@ -346,13 +346,15 @@ end
 
 -- A path segment naming a dotfile or dot directory; .well-known stays
 -- public as the first segment, the path root where RFC 8615 reserves it.
-local function has_dot_segment(p)
-    local first = true
+-- The first skip segments are not read: a listed directory's own passed
+-- the rule when the directory was reached.
+local function has_dot_segment(p, skip)
+    local i = 0
     for seg in p:gmatch("[^/]+") do
-        if seg:sub(1, 1) == "." and not (first and seg == ".well-known") then
+        i = i + 1
+        if i > (skip or 0) and seg:sub(1, 1) == "." and not (i == 1 and seg == ".well-known") then
             return true
         end
-        first = false
     end
     return false
 end
@@ -439,33 +441,30 @@ local function sse_broadcast(inst, event, payload)
     end
 end
 
--- A changed path as the root names it, slash-separated: the recursive
--- watcher reports it relative to the root (measured on macOS), a
--- per-directory one by its full path, and the root's own path is never
--- read, as the dot rule never reads it.
+-- A changed path relative to the root, slash-separated, which both the dot
+-- filter and the reload event read: the recursive watcher reports it so
+-- (measured on macOS); a per-directory one (Linux) names the full path,
+-- which told every events client where the root sits and put the root's
+-- own segments under the dot rule, which never reads them.
 local function changed_rel(inst, changed_path)
     local p = changed_path:gsub("\\", "/")
     local base = inst.root_real:gsub("\\", "/"):gsub("/$", "")
     if p == base then
-        return "/"
+        return ""
     elseif p:sub(1, #base + 1) == base .. "/" then
-        return p:sub(#base + 1)
+        return p:sub(#base + 2)
     end
-    return "/" .. p
+    return p
 end
 
 local function schedule_reload(inst, changed_path)
     if not inst.live_enabled then
         return
     end
+    local rel = changed_path and changed_rel(inst, changed_path)
     -- A dot path's change names it to every events client, the name the
     -- listing hides, and reloads a page for a file the server never serves.
-    if
-        changed_path
-        and changed_path ~= ""
-        and not inst.serve_dotfiles
-        and has_dot_segment(changed_rel(inst, changed_path))
-    then
+    if rel and not inst.serve_dotfiles and has_dot_segment(rel) then
         return
     end
     if changed_path and changed_path ~= "" and #inst.ignore_patterns > 0 then
@@ -473,7 +472,7 @@ local function schedule_reload(inst, changed_path)
             return
         end
     end
-    inst._last_change = changed_path or inst._last_change
+    inst._last_change = rel or inst._last_change
     inst.debounce_timer:stop()
     inst.debounce_timer:start(inst.live_debounce, 0, function()
         S.reload(inst, inst._last_change or "")
@@ -666,6 +665,27 @@ local function dir_listing_html(inst, fs_path, req_path)
         table.insert(entries, { name = "..", is_dir = true, up = true })
     end
     local show_all = inst.dir_show_hidden and inst.serve_dotfiles
+    -- A link is judged by where it points, one realpath per link: outside
+    -- the root or nowhere, containment refuses it on click whatever the
+    -- flags; a dot name below this directory (cfg -> .git) is 404 on click
+    -- and shown, as a dot entry is, with both flags alone. The directory's
+    -- own segments passed the dot rule when it was reached, so a plain link
+    -- inside a listed .hidden/ is shown.
+    local dir_rel
+    local function link_shown(name)
+        local rel = root_rel(inst.root_real, util.joinpath(fs_path, name))
+        if not rel then
+            return false
+        elseif show_all then
+            return true
+        end
+        dir_rel = dir_rel or root_rel(inst.root_real, fs_path) or "/"
+        local skip = 0
+        if dir_rel ~= "/" and rel:sub(1, #dir_rel + 1) == dir_rel .. "/" then
+            skip = select(2, dir_rel:gsub("[^/]+", ""))
+        end
+        return not has_dot_segment(rel, skip)
+    end
     while true do
         local name, t = uv.fs_scandir_next(iter)
         if not name then
@@ -673,15 +693,11 @@ local function dir_listing_html(inst, fs_path, req_path)
         end
         -- A name the dot rule refuses is not shown: show_hidden alone
         -- named .env and .git to anyone the server answers, behind 404s.
-        local hidden = name:sub(1, 1) == "."
-        -- A link is judged by its target's name under the root, one
-        -- realpath per link: cfg -> .git was listed and 404 on click, and a
-        -- target outside the root or missing has no name the rule can read.
-        if not hidden and not show_all and t == "link" then
-            local rel = root_rel(inst.root_real, util.joinpath(fs_path, name))
-            hidden = not rel or has_dot_segment(rel)
+        local shown = show_all or name:sub(1, 1) ~= "."
+        if shown and t == "link" then
+            shown = link_shown(name)
         end
-        if show_all or not hidden then
+        if shown then
             table.insert(entries, { name = name, is_dir = (t == "directory") })
         end
     end
@@ -1335,8 +1351,9 @@ function S.start(cfg)
         end
     end
     -- needs_auth walks the patterns with ipairs, so a map or a holed list
-    -- protected nothing; a number matched as its digits, and a table or a
-    -- boolean raised inside the read callback (measured).
+    -- protected nothing; a number matched as its digits, and a table, a
+    -- boolean or a malformed pattern ("(", "%") raised inside the read
+    -- callback, and every request went unanswered (measured).
     local protected = cfg.protected_paths
     if protected ~= nil then
         if type(protected) ~= "table" or not vim.islist(protected) then
@@ -1345,6 +1362,9 @@ function S.start(cfg)
         for _, pat in ipairs(protected) do
             if type(pat) ~= "string" then
                 error("protected_paths must be a list of Lua patterns", 0)
+            end
+            if not pcall(string.find, "", pat) then
+                error("protected_paths pattern is malformed: " .. pat, 0)
             end
         end
     end

@@ -170,8 +170,9 @@ end)
 
 -- A write to .env or .git/index sent its name to every events client, the
 -- name the listing hides, and reloaded the page for a change the server
--- never serves. The watcher names the path relative to the root on macOS
--- and in full on Linux, so a row reads the name's end.
+-- never serves. The event names the path relative to the root: a watcher
+-- on Linux names it in full, which told every events client where the root
+-- sits on disk.
 H.case("Section 7: a dot path's change sends no reload", function()
     local function watched(extra, site)
         site = site or H.tmpdir()
@@ -205,48 +206,96 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.wait(300)
     ok(not reloaded(c, mark, 1, "event: reload"), "a write to .env or .git/index sends no reload event")
     H.write_file(site .. "/page.html", "<html><body>changed</body></html>")
-    ok(reloaded(c, mark, 2000, '"path":"[^"]*page%.html"'), "a write to page.html reloads within 2 s, naming page.html")
+    ok(reloaded(c, mark, 2000, '"path":"page%.html"'), "a write to page.html reloads within 2 s, naming page.html")
     local open_site, open_c, open_mark = watched({ serve_dotfiles = true })
     H.write_file(open_site .. "/.env", "API_KEY=open")
-    ok(reloaded(open_c, open_mark, 2000, '"path":"[^"]*%.env"'), "with serve_dotfiles a write to .env reloads")
+    ok(reloaded(open_c, open_mark, 2000, '"path":"%.env"'), "with serve_dotfiles a write to .env reloads")
     -- A watcher on Linux names the full path, so the root's own is left out
     -- of the read, as the dot rule leaves it out of every request.
     local dotted = H.tmpdir() .. "/.local/site"
     vim.fn.mkdir(dotted, "p")
     local _, dc, dmark = watched(nil, dotted)
     H.write_file(dotted .. "/page.html", "<html><body>dotted</body></html>")
-    ok(reloaded(dc, dmark, 2000, '"path":"[^"]*page%.html"'), "a root under .local reloads for page.html")
+    ok(reloaded(dc, dmark, 2000, '"path":"page%.html"'), "a root under .local reloads for page.html")
 end)
 
 -- The listing read an entry's own name, so a plain-named link to a dot name
--- (cfg -> .git, dotlink -> .env) was listed and then 404 on click.
-H.case("Section 8: a listing judges a link by its target's name", function()
+-- (cfg -> .git, dotlink -> .env) was listed and then 404 on click. A link is
+-- judged by where it points: outside the root or nowhere, no flag opens it;
+-- a dot name below the listed directory is shown with both flags alone, as
+-- a dot entry is; the directory's own segments passed the rule already.
+H.case("Section 8: a listing judges a link by where it points", function()
     local site = H.tmpdir()
+    local sep = package.config:sub(1, 1)
     vim.fn.mkdir(site .. "/.git", "p")
     H.write_file(site .. "/.git/config", "SECRET-9")
     H.write_file(site .. "/.env", "SECRET-10")
     H.write_file(site .. "/page.txt", "page")
-    local cfg, cfg_err = uv.fs_symlink(".git", site .. "/cfg")
-    local dl, dl_err = uv.fs_symlink(".env", site .. "/dotlink")
-    if not (cfg and dl and uv.fs_stat(site .. "/cfg") and uv.fs_stat(site .. "/dotlink")) then
-        local why = " (" .. tostring(cfg_err or dl_err or "the link does not resolve") .. ")"
-        H.skip("a listing without the flags names no link to a dot name" .. why)
-        H.skip("with show_hidden and serve_dotfiles both links are listed" .. why)
+    vim.fn.mkdir(site .. "/.hidden", "p")
+    H.write_file(site .. "/.hidden/target.txt", "target")
+    H.write_file(site .. "/.hidden/.inner", "SECRET-11")
+    vim.fn.mkdir(site .. "/sub/.well-known", "p")
+    H.write_file(site .. "/sub/.well-known/x", "SECRET-12")
+    H.write_file(site .. "/sub/f.txt", "f")
+    -- { target, link, whether the target exists }
+    local links = {
+        { ".git", "cfg", true },
+        { ".env", "dotlink", true },
+        { "target.txt", ".hidden/plain", true },
+        { ".inner", ".hidden/hid2", true },
+        { "missing.txt", "gone", false },
+        { ".well-known" .. sep .. "x", "sub/wk", true },
+    }
+    local why
+    for _, l in ipairs(links) do
+        local at = site .. "/" .. l[2]
+        local linked, err = uv.fs_symlink(l[1], at)
+        if not linked or not uv.fs_lstat(at) or (l[3] and not uv.fs_stat(at)) then
+            why = " (" .. tostring(err or "the link does not resolve") .. ")"
+            break
+        end
+    end
+    local rows = {
+        "a listing without the flags names no link to a dot name",
+        "with show_hidden and serve_dotfiles both links are listed",
+        "with serve_dotfiles /.hidden/ names a link to a plain name inside it",
+        "and no link to a dot name inside it",
+        "with both flags /.hidden/ names that link too",
+        "a dangling link is not named without the flags",
+        "nor with show_hidden and serve_dotfiles",
+        "a link in sub/ to its .well-known is not named",
+    }
+    if why then
+        for _, row in ipairs(rows) do
+            H.skip(row .. why)
+        end
         return
     end
-    local body = H.http_get(serve(site, { features = { dirlist = { enabled = true } } }) .. "/").body
-    ok(
-        body:find('href="/page.txt"', 1, true) ~= nil
-            and not body:find('href="/cfg', 1, true)
-            and not body:find('href="/dotlink', 1, true),
-        "a listing without the flags names no link to a dot name"
-    )
+    local listing = { dirlist = { enabled = true } }
     local all = { dirlist = { enabled = true, show_hidden = true } }
-    body = H.http_get(serve(site, { features = all, serve_dotfiles = true }) .. "/").body
-    ok(
-        body:find('href="/cfg', 1, true) ~= nil and body:find('href="/dotlink', 1, true) ~= nil,
-        "with show_hidden and serve_dotfiles both links are listed"
-    )
+    local plain = serve(site, { features = listing })
+    local dotted = serve(site, { features = listing, serve_dotfiles = true })
+    local open = serve(site, { features = all, serve_dotfiles = true })
+    -- The hrefs a listing names; a negative row reads a body that names a
+    -- plain entry too, so a dead listener fails it.
+    local function hrefs(base, path)
+        local found = {}
+        for href in H.http_get(base .. path).body:gmatch('href="([^"]*)"') do
+            found[href] = true
+        end
+        return found
+    end
+    local root_plain, root_open = hrefs(plain, "/"), hrefs(open, "/")
+    local hidden_dotted, hidden_open = hrefs(dotted, "/.hidden/"), hrefs(open, "/.hidden/")
+    local sub_plain = hrefs(plain, "/sub/")
+    ok(root_plain["/page.txt"] and not root_plain["/cfg"] and not root_plain["/dotlink"], rows[1])
+    ok(root_open["/cfg"] and root_open["/dotlink"], rows[2])
+    ok(hidden_dotted["/.hidden/plain"], rows[3])
+    ok(hidden_dotted["/.hidden/target.txt"] and not hidden_dotted["/.hidden/hid2"], rows[4])
+    ok(hidden_open["/.hidden/plain"], rows[5])
+    ok(root_plain["/page.txt"] and not root_plain["/gone"], rows[6])
+    ok(root_open["/page.txt"] and not root_open["/gone"], rows[7])
+    ok(sub_plain["/sub/f.txt"] and not sub_plain["/sub/wk"], rows[8])
 end)
 
 H.finish()
