@@ -431,19 +431,26 @@ H.case("Section 6: a directory's index resolves inside the root", function()
     ok(not r.body:find(on_disk, 1, true), "and its page does not name the directory's path on disk")
 
     -- A linked index.html pointing out of the root is refused twice: by this
-    -- resolution and by the gate's read of the name on disk.
+    -- resolution and by the gate's read of the name on disk. An index.htm
+    -- beside it tells the two apart: the resolution passes over the link to
+    -- the next name, while the gate alone answered 404 for the directory.
     local base = H.tmpdir()
     vim.fn.mkdir(base .. "/site/sub", "p")
+    vim.fn.mkdir(base .. "/site/both", "p")
     vim.fn.mkdir(base .. "/outside", "p")
     H.write_file(base .. "/outside/secret.html", "<html><body>OUTSIDE</body></html>")
     H.write_file(base .. "/site/index.html", "<html><body>in</body></html>")
+    H.write_file(base .. "/site/both/index.htm", "<html><body>beside the link</body></html>")
     local link = base .. "/site/sub/index.html"
     local linked, link_err = uv.fs_symlink("../../outside/secret.html", link)
-    if not (linked and uv.fs_stat(link)) then
-        local why = " (" .. tostring(link_err or "the link does not resolve") .. ")"
+    local both = base .. "/site/both/index.html"
+    local blinked, blink_err = uv.fs_symlink("../../outside/secret.html", both)
+    if not (linked and blinked and uv.fs_stat(link) and uv.fs_stat(both)) then
+        local why = " (" .. tostring(link_err or blink_err or "the link does not resolve") .. ")"
         H.skip("/sub/ whose index links outside the root is 404" .. why)
         H.skip("and its body is not the outside file" .. why)
         H.skip("the link asked for by name stays 404" .. why)
+        H.skip("an index.htm beside an index.html linked out of the root is served" .. why)
         return
     end
     local inst = serve({ root = base .. "/site" })
@@ -454,6 +461,41 @@ H.case("Section 6: a directory's index resolves inside the root", function()
         H.http_get(("http://127.0.0.1:%d/sub/index.html"):format(inst.port)).status,
         404,
         "the link asked for by name stays 404"
+    )
+    r = H.http_get(("http://127.0.0.1:%d/both/"):format(inst.port))
+    ok(
+        r.status == 200 and r.body:find("beside the link", 1, true) ~= nil,
+        ("an index.htm beside an index.html linked out of the root is served (got %d)"):format(r.status)
+    )
+end)
+
+-- A listing's links are built from the path the server resolved, each
+-- segment encoded. The request's own spelling carried its query into every
+-- href, so a listing fetched with ?t= linked nowhere, and a raw target's
+-- markup reached an href unescaped (measured).
+H.case("Section 7: a listing's links come from the path, encoded", function()
+    local tree = H.tmpdir()
+    vim.fn.mkdir(tree .. "/sub", "p")
+    H.write_file(tree .. "/sub/f.txt", "f")
+    vim.fn.mkdir(tree .. "/a#b", "p")
+    H.write_file(tree .. "/a#b/f.txt", "f")
+    local inst = serve({ root = tree, token = "tok", features = { dirlist = { enabled = true } } })
+    local port = inst.port
+    local res = ask(port, get("/sub/?t=tok", port))
+    local body = res[1] and res[1].body or ""
+    ok(
+        body:find('href="/"', 1, true) ~= nil
+            and body:find('href="/sub/f.txt"', 1, true) ~= nil
+            and not body:find('href="[^"]*%?'),
+        "a listing fetched with ?t=tok links its parent and entries by the path alone"
+    )
+    res = ask(port, get("/a%23b/", port))
+    body = res[1] and res[1].body or ""
+    ok(body:find('href="/a%23b/f.txt"', 1, true) ~= nil, "a directory named a#b keeps its href encoded")
+    res = ask(port, get('/sub/?x="><b>X</b>', port))
+    ok(
+        res[1] ~= nil and res[1].status == 200 and not res[1].body:find("<b>X</b>", 1, true),
+        ("a raw target's markup never reaches the listing (got %s)"):format(tostring(res[1] and res[1].status))
     )
 end)
 

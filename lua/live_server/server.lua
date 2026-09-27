@@ -646,7 +646,7 @@ local function dir_listing_html(inst, fs_path, req_path)
         )
     end
 
-    local title = "Index of " .. util.html_escape(req_path)
+    local title = "Index of " .. util.html_escape(req_path:sub(-1) == "/" and req_path or req_path .. "/")
     local css = [[
     <style>
       :root{color-scheme:light dark}
@@ -991,7 +991,10 @@ local function handle_request(conn, req)
             if status then
                 return refuse(status)
             end
-            local html = dir_listing_html(inst, mapped, req.path)
+            -- The path the server resolved, each segment encoded: the
+            -- request's own spelling carries its query and whatever markup
+            -- a raw target holds into every href.
+            local html = dir_listing_html(inst, mapped, (path_only:gsub("[^/]+", util.url_encode)))
             return send_html_with_injection(inst, sock, html, inst.headers, req)
         else
             return http_404(sock, req.path .. " (no index)")
