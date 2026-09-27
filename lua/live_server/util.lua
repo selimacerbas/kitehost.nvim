@@ -386,8 +386,10 @@ function U.parse_liveignore(root)
     for line in content:gmatch("[^\r\n]+") do
         line = line:match("^%s*(.-)%s*$")
         if line ~= "" and line:sub(1, 1) ~= "#" then
-            -- Every pattern character is escaped: an unescaped bracket or
-            -- question mark raised inside the watcher and lost the reload.
+            -- Every pattern character is escaped: an unescaped bracket raised
+            -- inside the watcher once its literal prefix matched a path, and an
+            -- unescaped question mark made the character before it optional,
+            -- so a line a?b dropped every path holding a b.
             local pat = line:gsub("([%.%+%-%^%$%(%)%%%[%]%?])", "%%%1"):gsub("%*", ".*")
             -- The path is matched with a leading slash (schedule_reload), so
             -- a line starting with one is anchored at the root.

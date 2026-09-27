@@ -363,15 +363,23 @@ H.case("Section 7: a dot path's change sends no reload", function()
         reloaded(cc, cmark, 2000, '"path":"style%.css","css":true'),
         "a started-on style.css reloads as a stylesheet swap, named " .. named(cc, cmark)
     )
-    -- A .liveignore line holding a bracket or a question mark raised inside
-    -- the watcher once its literal prefix matched a path, and the reload
-    -- was lost; every pattern character is escaped.
+    -- A .liveignore line holding a bracket raised inside the watcher once
+    -- its literal prefix matched a path, and the reload was lost; a question
+    -- mark made the character before it optional, so a?b dropped every path
+    -- holding a b; every pattern character is escaped.
     local bracket = ignore_site("draft[\n")
     local _, bc, bmark = watched(nil, bracket)
     H.write_file(bracket .. "/draft.html", "<html><body>bracket</body></html>")
     ok(
         reloaded(bc, bmark, 2000, '"path":"draft%.html"'),
         "a .liveignore line with a bracket is read and draft.html reloads " .. named(bc, bmark)
+    )
+    local question = ignore_site("a?b\n")
+    local _, qc, qmark = watched(nil, question)
+    H.write_file(question .. "/axb.txt", "x")
+    ok(
+        reloaded(qc, qmark, 2000, '"path":"axb%.txt"'),
+        "a .liveignore line a?b is literal, so axb.txt reloads " .. named(qc, qmark)
     )
 end)
 
