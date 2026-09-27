@@ -116,4 +116,17 @@ H.case("Section 4: a show_hidden listing names no dot entry the server refuses",
     )
 end)
 
+-- :LiveServerStart on a file serves it at /, and a draft named .draft.html
+-- answered 404 there: the user's own choice is exempt from the dot rule,
+-- while the same name asked for as a path stays refused.
+H.case("Section 5: the file the user started on", function()
+    local drafts = H.tmpdir()
+    H.write_file(drafts .. "/.draft.html", "<html><body>DRAFT</body></html>")
+    local base = serve(drafts, { default_index = drafts .. "/.draft.html" })
+    local r = H.http_get(base .. "/")
+    eq(r.status, 200, "/ serves a default_index named .draft.html")
+    ok(r.body:find("DRAFT", 1, true) ~= nil, "with its body")
+    eq(H.http_get(base .. "/.draft.html").status, 404, "/.draft.html asked for by name stays 404")
+end)
+
 H.finish()

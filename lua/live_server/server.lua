@@ -975,19 +975,18 @@ local function handle_request(conn, req)
     -- The check above reads the request's spelling; the filesystem may serve
     -- another name for it: /CONTENT.MD on a case-folding volume, or a link,
     -- is content.md. The file or listing about to be served is checked
-    -- again by its path under the root as realpath spells it.
-    local function refusal(path)
+    -- again by its path under the root as realpath spells it. own marks the
+    -- root's own index, the file the user started on: where it sits and
+    -- what it is named are the caller's choice (outside the root, a
+    -- .draft.html), so containment and the dot rule pass it, while a name
+    -- under the root is still read by the gate.
+    local function refusal(path, own)
         local rel = root_rel(inst.root_real, path)
         if not rel then
-            -- default_index may sit outside the root by design, and only /
-            -- names it: a link back to the root (/loop/) reaches it under a
-            -- path the first check read otherwise, past a ^/$ pattern. Any
-            -- other name linked out of the root would serve what the file
-            -- route refuses.
-            if path ~= inst.default_index or path_only ~= "/" then
+            if not own then
                 return 404
             end
-        elseif not inst.serve_dotfiles and has_dot_segment(rel) then
+        elseif not own and not inst.serve_dotfiles and has_dot_segment(rel) then
             return 404
         elseif not authorized(rel) then
             return 401
@@ -1063,9 +1062,16 @@ local function handle_request(conn, req)
 
     local st = uv.fs_stat(mapped)
     if st and st.type == "directory" then
-        local candidate
-        if inst.default_index and mapped == inst.root_real then
-            candidate = inst.default_index
+        local candidate, own
+        -- / alone names the root's own index: a link back to the root
+        -- (/loop/) is a directory like any other, never a way to the
+        -- default_index past a ^/$ pattern. A directory or a FIFO so named
+        -- is no index, as with the names below.
+        if inst.default_index and path_only == "/" then
+            local dst = uv.fs_stat(inst.default_index)
+            if dst and dst.type == "file" then
+                candidate, own = inst.default_index, true
+            end
         else
             for _, iname in ipairs(inst.index_names) do
                 -- Resolved as a file request is: a linked index.html that
@@ -1080,18 +1086,21 @@ local function handle_request(conn, req)
                 end
             end
         end
-        if candidate and uv.fs_stat(candidate) then
-            local status = refusal(candidate)
+        if candidate then
+            local status = refusal(candidate, own)
             if status then
                 return refuse(status)
             end
             return serve_path(inst, sock, candidate, req, inst.headers)
         end
+        -- The gate reads the directory before any page says it exists: a
+        -- "(no index)" told a protected directory reached by a case variant
+        -- apart from a missing one.
+        local status = refusal(mapped)
+        if status then
+            return refuse(status)
+        end
         if inst.dir_enabled then
-            local status = refusal(mapped)
-            if status then
-                return refuse(status)
-            end
             -- The path as normalized, each segment encoded: the
             -- request's own spelling carries its query and whatever markup
             -- a raw target holds into every href.

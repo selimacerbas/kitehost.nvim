@@ -216,6 +216,26 @@ if H.fs_folds_case then
 else
     H.skip("/SECRET/ without the token lists nothing (a case-sensitive volume has no such directory)")
 end
+-- With the listing off, a directory the gate refuses answered "(no index)"
+-- before the gate read it, so a case variant told a protected directory
+-- apart from a missing one.
+local unlisted = server.start({
+    port = 0,
+    root = tmpdir,
+    token = TOKEN,
+    protected_paths = { "^/secret", "^/docs/index%.html$" },
+    live = { enabled = false, inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+if H.fs_folds_case then
+    local res = http_get(("http://127.0.0.1:%d/SECRET/"):format(unlisted.port))
+    eq(res.status, 401, "/SECRET/ without the token is 401 with the listing off")
+    ok(not res.body:find("(no index)", 1, true), "and its body never says (no index)")
+else
+    H.skip("/SECRET/ without the token is 401 with the listing off (a case-sensitive volume has no such directory)")
+    H.skip("and its body never says (no index) (a case-sensitive volume has no such directory)")
+end
+server.stop(unlisted)
 -- The first check reads /docs; only the index about to be served matches.
 eq(http_get(("http://127.0.0.1:%d/docs/"):format(listed.port)).status, 401, "/docs/ serving a protected index is 401")
 -- A directory whose index.html links out of the root has no index of its
@@ -279,14 +299,22 @@ else
 end
 server.stop(open_ws)
 local gated_ws = ws_server({ "^/$" })
+-- The link names the root on disk, which ^/$ refuses as it refuses /; with
+-- the token it is a directory with no index, never the outside file.
 if looped then
     eq(
         http_get(("http://127.0.0.1:%d/loop/"):format(gated_ws.port)).status,
-        404,
-        "a link to the root is 404 past ^/$ without the token"
+        401,
+        "a link to the root is 401 past ^/$ without the token, as / is"
+    )
+    r = http_get(("http://127.0.0.1:%d/loop/?t=%s"):format(gated_ws.port, TOKEN))
+    ok(
+        r.status == 404 and not r.body:find("outside the root", 1, true),
+        ("and with the token it serves no outside default_index (got %d)"):format(r.status)
     )
 else
-    H.skip("a link to the root is 404 past ^/$ without the token" .. loop_skip)
+    H.skip("a link to the root is 401 past ^/$ without the token, as / is" .. loop_skip)
+    H.skip("and with the token it serves no outside default_index" .. loop_skip)
 end
 eq(http_get(("http://127.0.0.1:%d/"):format(gated_ws.port)).status, 401, "/ under ^/$ is 401 without the token")
 eq(
@@ -295,6 +323,67 @@ eq(
     "/ under ^/$ is 200 with the token"
 )
 server.stop(gated_ws)
+-- The root's own index is exempt from containment and the dot rule, never
+-- from the gate by name: a default_index spelled through a link to the
+-- root (macOS's /var names /private/var) is read as realpath names it.
+local via_root = vim.fs.joinpath(H.tmpdir(), "L")
+local vlinked, vlink_err = uv.fs_symlink(tmpdir, via_root)
+local spelled
+if vlinked and uv.fs_stat(via_root) then
+    spelled = vim.fs.joinpath(via_root, "index.html")
+elseif uv.fs_realpath(f1) ~= f1 then
+    spelled = f1
+end
+if spelled then
+    local own = server.start({
+        port = 0,
+        root = tmpdir,
+        default_index = spelled,
+        token = TOKEN,
+        protected_paths = { "^/index%.html$" },
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    eq(
+        http_get(("http://127.0.0.1:%d/"):format(own.port)).status,
+        401,
+        "a default_index spelled through a link to the root is 401 without the token"
+    )
+    eq(http_get(("http://127.0.0.1:%d/?t=%s"):format(own.port, TOKEN)).status, 200, "and 200 with it")
+    server.stop(own)
+else
+    local why = " (" .. tostring(vlink_err or "no link resolves and the root is spelled as realpath names it") .. ")"
+    H.skip("a default_index spelled through a link to the root is 401 without the token" .. why)
+    H.skip("and 200 with it" .. why)
+end
+-- A directory named as default_index is no index: its page named the path
+-- on disk where / is a plain 404, or the root's listing when that is on.
+local dir_ws = H.tmpdir()
+vim.fn.mkdir(vim.fs.joinpath(dir_ws, "page.html"), "p")
+local function dir_index_server(listing)
+    return server.start({
+        port = 0,
+        root = dir_ws,
+        default_index = vim.fs.joinpath(dir_ws, "page.html"),
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = listing } },
+    })
+end
+local dir_off = dir_index_server(false)
+r = http_get(("http://127.0.0.1:%d/"):format(dir_off.port))
+eq(r.status, 404, "a directory named as default_index is 404 at / with the listing off")
+ok(
+    not r.body:find(dir_ws, 1, true) and not r.body:find(assert(uv.fs_realpath(dir_ws)), 1, true),
+    "and that 404 names no path on disk"
+)
+server.stop(dir_off)
+local dir_on = dir_index_server(true)
+r = http_get(("http://127.0.0.1:%d/"):format(dir_on.port))
+ok(
+    r.status == 200 and r.body:find('href="/page.html/"', 1, true) ~= nil,
+    ("and / lists the root with the listing on (got %d)"):format(r.status)
+)
+server.stop(dir_on)
 -- The root's own index, with no default_index set, is judged like any
 -- candidate: a link out of the root answers 404 at / too.
 local root_index = vim.fs.joinpath(ws, "index.html")
