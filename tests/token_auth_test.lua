@@ -263,6 +263,43 @@ else
     H.skip("and the same listing with the token" .. why)
 end
 server.stop(listed)
+-- A listing is read by the directory's name with its slash, as the request
+-- that lists it spells it: ^/secret/ gated every file under secret/ and
+-- never its listing. The name without the slash is read too, as the
+-- request path's check reads /secret for /secret/.
+local function dir_gated(pattern)
+    return server.start({
+        port = 0,
+        root = tmpdir,
+        token = TOKEN,
+        protected_paths = { pattern },
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = true } },
+    })
+end
+local slashed_dir = dir_gated("^/secret/")
+eq(
+    http_get(("http://127.0.0.1:%d/secret/"):format(slashed_dir.port)).status,
+    401,
+    "/secret/ under ^/secret/ is 401 without the token"
+)
+eq(http_get(("http://127.0.0.1:%d/secret/?t=%s"):format(slashed_dir.port, TOKEN)).status, 200, "and 200 with it")
+server.stop(slashed_dir)
+local bare_dir = dir_gated("^/secret$")
+if dlinked and uv.fs_stat(vim.fs.joinpath(tmpdir, "pub")) then
+    eq(
+        http_get(("http://127.0.0.1:%d/pub/"):format(bare_dir.port)).status,
+        401,
+        "a link to secret/ under ^/secret$ is 401 without the token"
+    )
+else
+    H.skip(
+        "a link to secret/ under ^/secret$ is 401 without the token ("
+            .. tostring(dlink_err or "the link does not resolve")
+            .. ")"
+    )
+end
+server.stop(bare_dir)
 -- default_index may sit outside the root and is served for / alone: a link
 -- in the root back to the root reached it under a name the first check read
 -- as another path, past a ^/$ pattern.
@@ -438,21 +475,34 @@ server.stop(inst)
 r = http_get(("http://127.0.0.1:%d/"):format(port))
 eq(r.curl_exit, 7, "the port refuses connections after stop without a token")
 
--- An empty token is truthy, so it would mark every request as the
--- token's holder and pass the gate with no t= at all.
-H.case("a token is a non-empty string or nothing", function()
-    for _, bad in ipairs({ "", 42 }) do
+-- Each refused before any socket opens. An empty token is truthy, so it
+-- would mark every request as the token's holder and pass the gate with
+-- no t= at all. protected_paths is walked with ipairs, which skips a
+-- map's keys and stops at a hole, so a map or a holed list protected
+-- nothing without a word; serve_dotfiles = 1 read as false.
+H.case("start refuses a bad token, protected_paths or serve_dotfiles", function()
+    local bad = {
+        { "token", "" },
+        { "token", 42 },
+        { "protected_paths", { content = "^/content%.md$" } },
+        { "protected_paths", { [1] = "^/a$", [3] = "^/b$" } },
+        { "protected_paths", { 42 } },
+        { "serve_dotfiles", 1 },
+    }
+    for _, c in ipairs(bad) do
+        local name, value = c[1], c[2]
+        local shown = ("%s = %s"):format(name, vim.inspect(value, { newline = " ", indent = "" }))
         local tcps = H.handle_count("tcp")
-        local started, res = pcall(server.start, { port = 0, root = tmpdir, token = bad })
+        local started, res = pcall(server.start, { port = 0, root = tmpdir, [name] = value })
         local after = H.handle_count("tcp")
         if started then
             server.stop(res)
         end
         ok(
-            not started and tostring(res):find("token", 1, true) ~= nil,
-            ("token = %s is refused, naming token: %s"):format(vim.inspect(bad), tostring(res))
+            not started and tostring(res):find(name, 1, true) ~= nil,
+            ("%s is refused, naming %s: %s"):format(shown, name, tostring(res))
         )
-        eq(after, tcps, ("token = %s opens no socket"):format(vim.inspect(bad)))
+        eq(after, tcps, ("%s opens no socket"):format(shown))
     end
 end)
 

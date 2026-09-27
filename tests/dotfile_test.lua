@@ -38,6 +38,8 @@ vim.fn.mkdir(root .. "/sub", "p")
 H.write_file(root .. "/sub/.env", "SECRET-4")
 vim.fn.mkdir(root .. "/.well-known", "p")
 H.write_file(root .. "/.well-known/x", "wk")
+vim.fn.mkdir(root .. "/sub/.well-known", "p")
+H.write_file(root .. "/sub/.well-known/x", "SECRET-6")
 vim.fn.mkdir(root .. "/list/.git", "p")
 H.write_file(root .. "/list/.env", "SECRET-5")
 H.write_file(root .. "/list/page.txt", "page")
@@ -61,6 +63,11 @@ H.case("Section 1: dot segments are 404", function()
         ok(not r.body:find("SECRET-", 1, true), p .. " shows no secret")
     end
     eq(H.http_get(base .. "/.well-known/x").body, "wk", "/.well-known/ is served")
+    -- RFC 8615 reserves the prefix at the path's root alone, so a nested
+    -- .well-known is a dot directory like any other.
+    local nested = H.http_get(base .. "/sub/.well-known/x")
+    eq(nested.status, 404, "/sub/.well-known/x is 404")
+    ok(not nested.body:find("SECRET-", 1, true), "/sub/.well-known/x shows no secret")
     eq(H.http_get(base .. "/index.html").status, 200, "a plain file is served")
     local link = root .. "/pub.txt"
     local linked, link_err = uv.fs_symlink(".env", link)
@@ -127,6 +134,37 @@ H.case("Section 5: the file the user started on", function()
     eq(r.status, 200, "/ serves a default_index named .draft.html")
     ok(r.body:find("DRAFT", 1, true) ~= nil, "with its body")
     eq(H.http_get(base .. "/.draft.html").status, 404, "/.draft.html asked for by name stays 404")
+end)
+
+-- An index.html linking to a dot name answered 404 for its whole
+-- directory; it is no index of that directory, as one linking out of the
+-- root is not, so the next name or the listing answers.
+H.case("Section 6: an index the dot rule refuses is not the directory's", function()
+    local site = H.tmpdir()
+    for _, dir in ipairs({ "both", "solo" }) do
+        vim.fn.mkdir(site .. "/" .. dir, "p")
+        H.write_file(site .. "/" .. dir .. "/.page.html", "<html><body>DOTPAGE</body></html>")
+    end
+    H.write_file(site .. "/both/index.htm", "<html><body>PLAIN</body></html>")
+    local both, both_err = uv.fs_symlink(".page.html", site .. "/both/index.html")
+    local solo, solo_err = uv.fs_symlink(".page.html", site .. "/solo/index.html")
+    if not (both and solo and uv.fs_stat(site .. "/both/index.html") and uv.fs_stat(site .. "/solo/index.html")) then
+        local why = " (" .. tostring(both_err or solo_err or "the link does not resolve") .. ")"
+        H.skip("an index.htm beside an index.html linking to a dot name is served" .. why)
+        H.skip("with no other index the directory is listed" .. why)
+        return
+    end
+    local base = serve(site, { features = { dirlist = { enabled = true } } })
+    local r = H.http_get(base .. "/both/")
+    ok(
+        r.status == 200 and r.body:find("PLAIN", 1, true) ~= nil,
+        ("an index.htm beside an index.html linking to a dot name is served (got %d)"):format(r.status)
+    )
+    r = H.http_get(base .. "/solo/")
+    ok(
+        r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("DOTPAGE", 1, true),
+        ("with no other index the directory is listed (got %d)"):format(r.status)
+    )
 end)
 
 H.finish()

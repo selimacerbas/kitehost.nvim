@@ -97,6 +97,19 @@ if named_ok and uv.fs_stat(named) then
 else
     H.skip("a .env linking to a plain name is 404 (" .. tostring(named_err or "the link does not resolve") .. ")")
 end
+-- A file's name never ends in a separator or a dot segment, yet macOS's
+-- realpath resolves one on a file: sub/.env/ read an empty base name past
+-- the list and served the link's target.
+if named_ok and uv.fs_stat(named) then
+    for _, p in ipairs({ "sub/.env/", "sub/.env/." }) do
+        eq(http_get(base .. "/__live/asset?p=" .. p .. "&t=" .. TOKEN).status, 404, "p=" .. p .. " is 404")
+    end
+else
+    local why = " (" .. tostring(named_err or "the link does not resolve") .. ")"
+    H.skip("p=sub/.env/ is 404" .. why)
+    H.skip("p=sub/.env/. is 404" .. why)
+end
+eq(http_get(base .. "/__live/asset?p=pic.png/&t=" .. TOKEN).status, 404, "p=pic.png/ is 404")
 -- One row per group beyond the names above: a credential file by name, a
 -- key store by extension, a key in a credential directory, a credential
 -- directory by name (the sub/.git row above reads it at depth), and a
@@ -184,6 +197,35 @@ inst = server.start({
 })
 base = ("http://127.0.0.1:%d"):format(inst.port)
 eq(http_get(base .. "/__live/asset?p=pic.png").status, 404, "asset route 404s when asset_root unset")
+server.stop(inst)
+
+H.section("Section 4: the asset root itself")
+
+local function asset_server(aroot)
+    return server.start({
+        port = 0,
+        root = tmpdir .. "/www",
+        token = TOKEN,
+        asset_root = aroot,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+end
+-- A callback returning a table raised inside the read callback, and the
+-- connection was never answered.
+inst = asset_server(function()
+    return {}
+end)
+base = ("http://127.0.0.1:%d"):format(inst.port)
+eq(http_get(base .. "/__live/asset?p=a.png&t=" .. TOKEN).status, 404, "an asset_root callback returning a table is 404")
+server.stop(inst)
+-- The list read the names below the asset root alone, so a document kept in
+-- ~/.ssh served the keys beside it.
+vim.fn.mkdir(tmpdir .. "/.ssh", "p")
+write_file(tmpdir .. "/.ssh/pic.png", "PNGDATA")
+inst = asset_server(tmpdir .. "/.ssh")
+base = ("http://127.0.0.1:%d"):format(inst.port)
+eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "an asset root inside .ssh serves nothing")
 server.stop(inst)
 
 H.finish()

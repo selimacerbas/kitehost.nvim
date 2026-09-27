@@ -838,12 +838,14 @@ local function root_rel(base_real, path)
 end
 
 -- A path segment naming a dotfile or dot directory; .well-known stays
--- public (RFC 8615).
+-- public as the first segment, the path root where RFC 8615 reserves it.
 local function has_dot_segment(p)
+    local first = true
     for seg in p:gmatch("[^/]+") do
-        if seg:sub(1, 1) == "." and seg ~= ".well-known" then
+        if seg:sub(1, 1) == "." and not (first and seg == ".well-known") then
             return true
         end
+        first = false
     end
     return false
 end
@@ -903,14 +905,22 @@ local ASSET_DENY = {
     },
 }
 
-local function asset_denied(rel)
-    rel = rel:lower()
-    for seg in rel:gmatch("[^/]+") do
+-- Whether a segment of path names a credential directory; a Windows path
+-- separates with a backslash too.
+local function in_credential_dir(path)
+    for seg in path:lower():gmatch("[^/\\]+") do
         if ASSET_DENY.dirs[seg] then
             return true
         end
     end
-    local base = rel:match("([^/]+)$") or ""
+    return false
+end
+
+local function asset_denied(rel)
+    if in_credential_dir(rel) then
+        return true
+    end
+    local base = rel:lower():match("([^/]+)$") or ""
     return ASSET_DENY.names[base] ~= nil
         or base:sub(1, 5) == ".env."
         or ASSET_DENY.exts[base:match("%.([^.]+)$") or ""] ~= nil
@@ -975,20 +985,28 @@ local function handle_request(conn, req)
     -- The check above reads the request's spelling; the filesystem may serve
     -- another name for it: /CONTENT.MD on a case-folding volume, or a link,
     -- is content.md. The file or listing about to be served is checked
-    -- again by its path under the root as realpath spells it. own marks the
-    -- root's own index, the file the user started on: where it sits and
-    -- what it is named are the caller's choice (outside the root, a
-    -- .draft.html), so containment and the dot rule pass it, while a name
-    -- under the root is still read by the gate.
-    local function refusal(path, own)
+    -- again by its path under the root as realpath spells it. kind "own"
+    -- marks the root's own index, the file the user started on: where it
+    -- sits and what it is named are the caller's choice (outside the root,
+    -- a .draft.html), so containment and the dot rule pass it, while a name
+    -- under the root is still read by the gate. kind "dir" marks a
+    -- directory about to be listed or answered.
+    local function refusal(path, kind)
+        local own = kind == "own"
         local rel = root_rel(inst.root_real, path)
         if not rel then
-            if not own then
-                return 404
+            if own then
+                return nil
             end
-        elseif not own and not inst.serve_dotfiles and has_dot_segment(rel) then
             return 404
-        elseif not authorized(rel) then
+        end
+        if not own and not inst.serve_dotfiles and has_dot_segment(rel) then
+            return 404
+        end
+        -- A directory is named with its slash, as the request that lists
+        -- it is, so ^/secret/ gates the listing too; the name without it
+        -- stays read, as the request path's check reads /secret.
+        if not authorized(rel) or (kind == "dir" and rel ~= "/" and not authorized(rel .. "/")) then
             return 401
         end
     end
@@ -1023,20 +1041,41 @@ local function handle_request(conn, req)
             local ok_root, res = pcall(aroot)
             aroot = ok_root and res or nil
         end
+        -- A callback's table or number is no asset root: luv's realpath
+        -- raised on it inside the read callback, and the peer waited.
+        if type(aroot) ~= "string" then
+            aroot = nil
+        end
         local rel = qparam("p")
         rel = rel and util.url_decode(rel) or ""
+        -- A file's name never ends in a separator or a dot segment, yet
+        -- macOS's realpath resolves one on a file, and the list below read
+        -- sub/.env/ as an empty name.
+        local last = rel:match("[^/]*$")
         -- Relative paths only: reject absolute paths, drive
         -- letters / URL schemes (':'), backslashes and a NUL (libuv cuts
         -- a name at it) outright; realpath containment below handles
         -- '..' traversal.
-        if not aroot or rel == "" or rel:find("^/") or rel:find(":") or rel:find("\\") or rel:find("%z") then
+        if
+            not aroot
+            or rel == ""
+            or last == ""
+            or last == "."
+            or last == ".."
+            or rel:find("^/")
+            or rel:find(":")
+            or rel:find("\\")
+            or rel:find("%z")
+        then
             return http_404(sock, "/__live/asset")
         end
         if asset_denied(rel) then
             return http_404(sock, "/__live/asset")
         end
+        -- The list reads the asset root's own path too: a document kept in
+        -- ~/.ssh or ~/.aws would serve the credentials beside it.
         local aroot_real = uv.fs_realpath(aroot)
-        if not aroot_real then
+        if not aroot_real or in_credential_dir(aroot_real) then
             return http_404(sock, "/__live/asset")
         end
         -- Containment and the resolved name come from one realpath: p may be
@@ -1062,7 +1101,7 @@ local function handle_request(conn, req)
 
     local st = uv.fs_stat(mapped)
     if st and st.type == "directory" then
-        local candidate, own
+        local candidate, kind
         -- / alone names the root's own index: a link back to the root
         -- (/loop/) is a directory like any other, never a way to the
         -- default_index past a ^/$ pattern. A directory or a FIFO so named
@@ -1070,24 +1109,26 @@ local function handle_request(conn, req)
         if inst.default_index and path_only == "/" then
             local dst = uv.fs_stat(inst.default_index)
             if dst and dst.type == "file" then
-                candidate, own = inst.default_index, true
+                candidate, kind = inst.default_index, "own"
             end
         else
             for _, iname in ipairs(inst.index_names) do
                 -- Resolved as a file request is: a linked index.html that
-                -- points outside the root is not this directory's, a directory
-                -- named index.html is no page, and a FIFO so named would
-                -- block the editor's loop.
+                -- points outside the root or at a name the dot rule refuses
+                -- is not this directory's, so the next name or the listing
+                -- answers; a directory named index.html is no page, and a
+                -- FIFO so named would block the editor's loop.
                 local try = sanitize_and_map((path_only == "/" and "" or path_only) .. "/" .. iname, inst.root_real)
                 local tst = try and uv.fs_stat(try)
-                if tst and tst.type == "file" then
+                local trel = tst and tst.type == "file" and root_rel(inst.root_real, try)
+                if trel and (inst.serve_dotfiles or not has_dot_segment(trel)) then
                     candidate = try
                     break
                 end
             end
         end
         if candidate then
-            local status = refusal(candidate, own)
+            local status = refusal(candidate, kind)
             if status then
                 return refuse(status)
             end
@@ -1096,7 +1137,7 @@ local function handle_request(conn, req)
         -- The gate reads the directory before any page says it exists: a
         -- "(no index)" told a protected directory reached by a case variant
         -- apart from a missing one.
-        local status = refusal(mapped)
+        local status = refusal(mapped, "dir")
         if status then
             return refuse(status)
         end
@@ -1254,6 +1295,25 @@ function S.start(cfg)
             end
             allowed_set[key] = true
         end
+    end
+    -- needs_auth walks the patterns with ipairs, so a map or a holed list
+    -- protected nothing; a number matched as its digits, and a table or a
+    -- boolean raised inside the read callback (measured).
+    local protected = cfg.protected_paths
+    if protected ~= nil then
+        if type(protected) ~= "table" or not vim.islist(protected) then
+            error("protected_paths must be a list of Lua patterns", 0)
+        end
+        for _, pat in ipairs(protected) do
+            if type(pat) ~= "string" then
+                error("protected_paths must be a list of Lua patterns", 0)
+            end
+        end
+    end
+    -- Any value but true read as false, so serve_dotfiles = 1 served no
+    -- dotfile without a word.
+    if cfg.serve_dotfiles ~= nil and type(cfg.serve_dotfiles) ~= "boolean" then
+        error("serve_dotfiles must be true or false", 0)
     end
 
     local tcp = uv.new_tcp()
