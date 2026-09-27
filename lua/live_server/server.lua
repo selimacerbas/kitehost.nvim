@@ -70,8 +70,14 @@ local function write_headers(sock, status, headers)
     local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
     for k, v in pairs(headers or {}) do
-        table.insert(lines, ("%s: %s\r\n"):format(k, v))
+        if not (type(k) == "string" and k:lower() == "referrer-policy") then
+            table.insert(lines, ("%s: %s\r\n"):format(k, v))
+        end
     end
+    -- A page URL can carry ?t=<token>; no request its page makes sends the
+    -- URL on as a Referer, whatever policy a caller's headers name. A
+    -- page's own meta or referrerpolicy attribute can still override it.
+    table.insert(lines, "Referrer-Policy: no-referrer\r\n")
     table.insert(lines, "\r\n")
     sock:write(table.concat(lines))
 end
