@@ -24,6 +24,7 @@ S.features = {
     host_check = true,
 }
 
+-- A document type added here joins ACTIVE_DOCUMENT, or goes out unsandboxed.
 local MIME = {
     html = "text/html; charset=utf-8",
     htm = "text/html; charset=utf-8",
@@ -1098,21 +1099,26 @@ local ACTIVE_DOCUMENT = { html = true, htm = true, xhtml = true, svg = true, xml
 
 -- The headers of an asset-route response. The extension is read as
 -- guess_mime reads it, lowercased, so PAGE.HTML on disk, served as HTML,
--- is sandboxed too. The server's policy replaces a caller's under any
--- spelling of the name, as it does under the exact one, so the spelling
--- never decides what a document carries.
+-- is sandboxed too. A caller's policy is kept: every spelling of the name
+-- folds, sorted, into one field with the sandbox last. CSP enforces each
+-- comma-separated policy in a field, and the HTML standard reads the last
+-- sandbox directive, so a caller's sandbox allow-scripts cannot loosen it.
 local function asset_headers(inst, real)
     local ext = real:match("%.([%w]+)$")
     if not (ext and ACTIVE_DOCUMENT[ext:lower()]) then
         return inst.live_headers
     end
-    local h = {}
+    local h, policies = {}, {}
     for k, v in pairs(inst.live_headers) do
-        if k:lower() ~= "content-security-policy" then
+        if k:lower() == "content-security-policy" then
+            table.insert(policies, v)
+        else
             h[k] = v
         end
     end
-    h["Content-Security-Policy"] = "sandbox"
+    table.sort(policies)
+    table.insert(policies, "sandbox")
+    h["Content-Security-Policy"] = table.concat(policies, ", ")
     return h
 end
 

@@ -62,6 +62,7 @@ write_file(tmpdir .. "/src/page.xhtml", "<html xmlns='http://www.w3.org/1999/xht
 write_file(tmpdir .. "/src/pic.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>")
 write_file(tmpdir .. "/src/UPPER.SVG", "<svg xmlns='http://www.w3.org/2000/svg'/>")
 write_file(tmpdir .. "/src/feed.xml", "<feed/>")
+write_file(tmpdir .. "/src/notes.txt", "notes")
 
 local TOKEN = lutil.random_token(16)
 
@@ -264,28 +265,78 @@ inst = sandbox_server(nil)
 -- UPPER.SVG as an SVG, so the extension is read lowercased.
 for _, name in ipairs({ "page.html", "page.htm", "page.xhtml", "pic.svg", "feed.xml", "UPPER.SVG" }) do
     local res = raw_get("/__live/asset?p=" .. name .. "&t=" .. TOKEN)
+    eq(res.count["content-security-policy"], 1, name .. " carries one policy field")
     eq(res.headers["content-security-policy"], "sandbox", name .. " on the asset route is sandboxed")
+end
+-- The resolved name decides, as it does for the MIME type: a link named
+-- alias.txt serves pic.svg as an SVG, and alias2.svg serves a text file as
+-- text. A link that cannot be made or does not resolve is skipped, counted.
+for _, l in ipairs({
+    { name = "alias.txt", target = "pic.svg", count = 1, policy = "sandbox" },
+    { name = "alias.svg", target = "page.html", count = 1, policy = "sandbox" },
+    { name = "alias2.svg", target = "notes.txt" },
+}) do
+    local what = l.name .. " linking to " .. l.target
+    local rows = {
+        what .. " is 200",
+        what .. (l.count and " carries one policy field" or " carries no policy field"),
+        what .. (l.policy and " is sandboxed" or " is not sandboxed"),
+    }
+    local link_path = tmpdir .. "/src/" .. l.name
+    local made, made_err = uv.fs_symlink(l.target, link_path)
+    if made and uv.fs_stat(link_path) then
+        local res = raw_get("/__live/asset?p=" .. l.name .. "&t=" .. TOKEN)
+        eq(res.status, 200, rows[1])
+        eq(res.count["content-security-policy"], l.count, rows[2])
+        eq(res.headers["content-security-policy"], l.policy, rows[3])
+    else
+        local why = " (" .. tostring(made_err or "the link does not resolve") .. ")"
+        for _, row in ipairs(rows) do
+            H.skip(row .. why)
+        end
+    end
 end
 local img = raw_get("/__live/asset?p=pic.png&t=" .. TOKEN)
 eq(img.status, 200, "an image on the asset route is 200")
 eq(img.headers["content-security-policy"], nil, "an image is not sandboxed")
--- A sandboxed index would make its own event stream cross-origin.
+-- A sandboxed index would make its own event stream cross-origin. The
+-- preview opens /, which the directory's index branch answers; the file by
+-- name takes the file branch.
 local index = raw_get("/index.html")
 eq(index.status, 200, "the root route's index is 200")
 eq(index.headers["content-security-policy"], nil, "the root route's index is never sandboxed")
+local dir_index = raw_get("/?t=" .. TOKEN)
+eq(dir_index.status, 200, "the root route's / is 200")
+eq(dir_index.count["content-security-policy"], nil, "the root route's / carries no policy field")
 server.stop(inst)
--- A caller's policy under another spelling of the name would go out as a
--- second line beside the sandbox, and the key's spelling would decide what a
--- document carries. The image is read after the document, so a sandbox
--- written into the shared headers shows there.
+-- A caller's policy is kept and the sandbox joins it in one field, last:
+-- each policy in the field is enforced, and the HTML standard reads the last
+-- sandbox directive, so a caller's own sandbox cannot loosen the server's.
+-- The image is read after the document, so a policy written into the shared
+-- headers shows there.
 inst = sandbox_server({ ["content-security-policy"] = "default-src *" })
 local doc = raw_get("/__live/asset?p=pic.svg&t=" .. TOKEN)
-eq(doc.count["content-security-policy"], 1, "a caller's lowercase policy is no second line")
-eq(doc.headers["content-security-policy"], "sandbox", "the sandbox replaces a caller's lowercase policy")
+eq(doc.count["content-security-policy"], 1, "a caller's lowercase policy and the sandbox are one field")
+eq(doc.headers["content-security-policy"], "default-src *, sandbox", "the sandbox joins a caller's policy last")
 eq(
     raw_get("/__live/asset?p=pic.png&t=" .. TOKEN).headers["content-security-policy"],
     "default-src *",
     "an image keeps the caller's policy"
+)
+server.stop(inst)
+-- Two spellings of the name fold into the field too. A caller's sandbox
+-- allow-scripts sorts after the bare word, so a sandbox sorted in with the
+-- caller's policies would no longer be the last one read.
+inst = sandbox_server({
+    ["content-security-policy"] = "sandbox allow-scripts",
+    ["Content-Security-Policy"] = "default-src *",
+})
+local both = raw_get("/__live/asset?p=pic.svg&t=" .. TOKEN)
+eq(both.count["content-security-policy"], 1, "a caller's policy under two spellings is one field")
+eq(
+    both.headers["content-security-policy"],
+    "default-src *, sandbox allow-scripts, sandbox",
+    "both spellings fold, sorted, before the server's sandbox"
 )
 server.stop(inst)
 
