@@ -98,8 +98,8 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 {
   default_port     = 8000,           -- default suggestion in the port picker
   host             = "127.0.0.1",    -- bind address; "0.0.0.0" = all interfaces (network access)
-  token            = nil,            -- optional: require ?t=<token> on /__live/events, /__live/inject and protected_paths (and on /__live/asset, which only a caller of server.start() that passes asset_root enables)
-  protected_paths  = {},             -- Lua patterns of request paths that also require the token
+  token            = nil,            -- optional: require ?t=<token> on /__live/events, /__live/inject and protected_paths matches but /__live/script.js (and on /__live/asset, which only a caller of server.start() that passes asset_root enables)
+  protected_paths  = {},             -- Lua patterns of request paths that also require the token; /__live/script.js, the injected client, never does
   open_on_start    = true,           -- open browser after start/retarget
   notify           = true,           -- use vim.notify for events
   notify_on_reload = false,          -- notify on every live-reload event
@@ -159,7 +159,7 @@ A line starting with `/` is anchored at the served root: `/dist` skips `dist/` a
 
 ### CORS
 
-Enable cross-origin headers on the root route's responses; `/__live/*` never carries them:
+Enable cross-origin headers on the root route's successful answers; a 401, 404 or 400 carries none, so a listed origin reads an error as a CORS failure, and `/__live/*` never carries them:
 
 ```lua
 cors = true,                         -- Access-Control-Allow-Origin: *
@@ -270,7 +270,7 @@ local inst = server.start({
   port = 0,                                   -- port 0 = OS-assigned
   root = "/path",
   token = util.random_token(16),              -- optional, see "Token auth" below
-  protected_paths = { "^/content%.md$" },     -- Lua patterns; require ?t=<token>
+  protected_paths = { "^/content%.md$" },     -- Lua patterns; require ?t=<token>, never on /__live/script.js
 })
 server.send_event(inst, "scroll", '{"line":42}')               -- broadcast custom SSE event
 server.reload(inst, "file.html")                                -- broadcast reload event

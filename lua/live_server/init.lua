@@ -41,10 +41,11 @@ local defaults = {
 
     -- Optional auth: when token is set, /__live/events and /__live/inject
     -- require ?t=<token>, as does any request path matching protected_paths
-    -- (Lua patterns), and /__live/asset where a caller of server.start()
-    -- passes asset_root, which setup() never does. Every other file but a
-    -- dot path is still served openly: with a non-loopback host the whole
-    -- served root but its dot paths is reachable from the network.
+    -- (Lua patterns) but the injected client, /__live/script.js, and
+    -- /__live/asset where a caller of server.start() passes asset_root,
+    -- which setup() never does. Every other file but a dot path is still
+    -- served openly: with a non-loopback host the whole served root but
+    -- its dot paths is reachable from the network.
     token = nil,
     protected_paths = {},
     -- Extra Host names a loopback bind answers besides localhost and the

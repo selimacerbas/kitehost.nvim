@@ -112,8 +112,9 @@ Options:
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
-    `protected_paths` names require `?t=<token>`; other files stay open,
-    except a dot path unless `serve_dotfiles` is set.
+    `protected_paths` names, but the injected client `/__live/script.js`,
+    require `?t=<token>`; other files stay open, except a dot path unless
+    `serve_dotfiles` is set.
 
 `protected_paths` (string[], default `{}`)
     Lua patterns of request paths that also require the token; the
@@ -135,16 +136,21 @@ gates `/__live/asset` too.
 
 `headers` (table, default `{ ["Cache-Control"] = "no-cache" }`)
     Extra HTTP response headers, added to every file, listing, asset and
-    event stream served (never to an error answer); a `Referrer-Policy`
-    among them is replaced, and `Content-Type`, `Content-Length`,
-    `Transfer-Encoding` and `Connection`, the server's own, are refused at
-    start.
+    event stream served (never to an error answer); `Content-Type`,
+    `Content-Length`, `Transfer-Encoding` and `Connection`, the server's
+    own, are refused at start. The event stream sends its own
+    `Cache-Control` in place of a caller's, and every `/__live/*` response
+    drops a caller's `Access-Control-Allow-Origin`. A `Referrer-Policy` of
+    `no-referrer` or `strict-origin` is kept as given, and any other is
+    replaced by `strict-origin`.
 
 `cors` (boolean|string|string[], default false)
-    Add `Access-Control-Allow-Origin` to the root route's responses, never
-    to `/__live/*`. `true` or `"*"` allows all origins, a string like
-    `"http://localhost:3000"` allows that origin, and a list of origins
-    echoes a listed request Origin with `Vary: Origin`.
+    Add `Access-Control-Allow-Origin` to the root route's successful
+    answers, never to `/__live/*`; a 401, 404 or 400 carries none, so a
+    listed origin reads an error as a CORS failure. `true` or `"*"` allows
+    all origins, a string like `"http://localhost:3000"` allows that
+    origin, and a list of origins echoes a listed request Origin with
+    `Vary: Origin`.
 
 `index_names` (string[], default `{ "index.html", "index.htm" }`)
     Index file names to try when serving a directory, in order.

@@ -1278,11 +1278,12 @@ local function handle_request(conn, req)
     end
 
     -- Auth gate. When inst.token is set, the SSE stream, the event
-    -- injection endpoint, and any path in inst.protected_paths
-    -- require a matching ?t=<token>. Static assets (/index.html,
-    -- /style.css, /favicon.ico, etc.) are intentionally NOT gated
-    -- because the browser bootstraps from them before any JS runs
-    -- and cannot append query strings to <link>/<img> tags it
+    -- injection endpoint, the asset route and any path in
+    -- inst.protected_paths but the injected client, answered below
+    -- before the gate, require a matching ?t=<token>. Static assets
+    -- (/index.html, /style.css, /favicon.ico, etc.) are intentionally
+    -- NOT gated because the browser bootstraps from them before any JS
+    -- runs and cannot append query strings to <link>/<img> tags it
     -- discovers itself. Protect the user content (caller passes
     -- protected_paths) and the live-reload control plane.
     local function authorized(p)
