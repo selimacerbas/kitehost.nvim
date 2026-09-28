@@ -266,8 +266,9 @@ end
 -- end. luv reports a failed write without raising, by write's return on
 -- a closed or shut socket and by its callback after a reset (EPIPE on
 -- macOS, where Linux may say ECONNRESET), and the pcall around each
--- write read neither, so a stream whose write failed stayed listed,
--- connected_client_count over-counted and its socket held its place.
+-- write read neither: the read path, never stopped on a stream, dropped
+-- a reset or closed peer on its own (measured), so the write's error was
+-- unread rather than a held place, and a raise in a write was swallowed.
 H.case("Section 6: a stream whose write fails leaves the list", function()
     local inst = serve({ sse_heartbeat_ms = 0 })
     local c = open_stream(inst)
