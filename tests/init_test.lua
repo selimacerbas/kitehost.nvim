@@ -225,6 +225,31 @@ H.case("Section 3: the start notice is silenced, printed once, and is the opened
     end
 end)
 
+-- setup() deep-extended a caller's headers onto its default, so a
+-- ["cache-control"] sat beside the default's Cache-Control and both went
+-- out: a cache read "no-cache, max-age=60" and the caller's value did
+-- nothing. Start refuses two spellings of one name, so setup folds them.
+H.case("Section 4: a caller's header replaces a default under any spelling", function()
+    local cfg = start_with({ headers = { ["cache-control"] = "max-age=60" } })
+    local spelled = {}
+    for k, v in pairs(cfg and cfg.headers or {}) do
+        if k:lower() == "cache-control" then
+            table.insert(spelled, ("%s = %s"):format(k, v))
+        end
+    end
+    eq(
+        table.concat(spelled, ", "),
+        "cache-control = max-age=60",
+        "one Cache-Control key, the caller's spelling and value"
+    )
+    cfg = start_with({ headers = { ["X-Frame-Options"] = "DENY" } })
+    eq(
+        vim.inspect(cfg and cfg.headers, { newline = " ", indent = "" }),
+        vim.inspect({ ["Cache-Control"] = "no-cache", ["X-Frame-Options"] = "DENY" }, { newline = " ", indent = "" }),
+        "a caller's other header joins the default"
+    )
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

@@ -65,9 +65,12 @@ end
 -- policy sends no path or query in any Referer, same-origin included, and
 -- the origin alone to a destination as secure: no-referrer sent nothing,
 -- and every YouTube embed, which needs the origin, showed Error 153. A
--- caller's own policy, under any spelling of the name, is replaced, so the
--- header goes out once and is always this one.
-H.case("Section 1: every response carries Referrer-Policy: strict-origin", function()
+-- caller's no-referrer or strict-origin, under any spelling of the name,
+-- is sent as given, since neither sends a path or query: replaced, a
+-- caller's no-referrer was loosened, and a network bind's address reached
+-- third parties the caller kept it from. Any other policy is replaced, so
+-- the header goes out once and never sends the token.
+H.case("Section 1: every response carries Referrer-Policy: strict-origin or stricter", function()
     local inst = serve({ token = "tok", protected_paths = { "^/content%.md$" } })
     local port = inst.port
     local cases = {
@@ -97,6 +100,21 @@ H.case("Section 1: every response carries Referrer-Policy: strict-origin", funct
     -- A browser takes the last token across every Referrer-Policy line, so a
     -- second line with the caller's value would reopen what the first closes.
     eq(r.count["referrer-policy"], 1, "and sent once under that spelling too")
+    -- same-origin sends the full URL, the token with it, to this origin.
+    local same = serve({ headers = { ["Referrer-Policy"] = "same-origin" } })
+    r = raw(same.port, get("/style.css", same.port))
+    eq(r.headers["referrer-policy"], "strict-origin", "a caller's same-origin is replaced")
+    eq(r.count["referrer-policy"], 1, "and sent once")
+    for _, c in ipairs({
+        { "Referrer-Policy", "no-referrer" },
+        { "Referrer-Policy", "strict-origin" },
+        { "referrer-POLICY", "No-Referrer" },
+    }) do
+        local mine = serve({ headers = { [c[1]] = c[2] } })
+        r = raw(mine.port, get("/style.css", mine.port))
+        eq(r.headers["referrer-policy"], c[2], ("a caller's %s: %s is sent as given"):format(c[1], c[2]))
+        eq(r.count["referrer-policy"], 1, "once")
+    end
 end)
 
 -- With cors on, ACAO went out on the event stream and the asset route as

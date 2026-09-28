@@ -95,10 +95,12 @@ H.case("Section 2: every page the server renders carries Vary", function()
     local own = fetch(serve(root, { headers = { Vary = "Accept-Encoding" } }).port, "/page.html")
     eq(own.status, 200, "a configured Vary is served")
     eq(own.headers.vary, "Accept-Encoding, Sec-Fetch-Mode", "kept and joined")
-    local both = fetch(serve(root, { headers = { Vary = "Accept-Encoding", vary = "Accept" } }).port, "/page.html")
-    eq(both.status, 200, "two spellings of the name are served")
-    eq(both.headers.vary, "Accept, Accept-Encoding, Sec-Fetch-Mode", "as one field")
-    eq(both.count.vary, 1, "on one line")
+    -- Start refuses two spellings of one name; one spelled in lower case
+    -- still joins the page's own member on one line.
+    local lower = fetch(serve(root, { headers = { vary = "Accept" } }).port, "/page.html")
+    eq(lower.status, 200, "a configured vary in lower case is served")
+    eq(lower.headers.vary, "Accept, Sec-Fetch-Mode", "joined into one field")
+    eq(lower.count.vary, 1, "on one line")
     -- RFC 9110 5.6.1 forbids generating an empty list element; a repeated
     -- member adds nothing, so a member is named once.
     local empty = fetch(serve(root, { headers = { Vary = "" } }).port, "/page.html")

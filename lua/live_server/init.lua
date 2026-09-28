@@ -83,8 +83,36 @@ local function browser_url(host, port, token)
     return url
 end
 
+-- A caller's header replaces one of the current set under any spelling of
+-- its name: deep-extended, a ["cache-control"] sat beside the default's
+-- Cache-Control, and a cache read both as one list, "no-cache, max-age=60",
+-- so the caller's value did nothing. Start refuses two spellings of one
+-- name, which a caller's own table can still hold.
+local function fold_headers(current, given)
+    local named = {}
+    for k in pairs(given) do
+        if type(k) == "string" then
+            named[k:lower()] = true
+        end
+    end
+    local out = {}
+    for k, v in pairs(current) do
+        if not (type(k) == "string" and named[k:lower()]) then
+            out[k] = v
+        end
+    end
+    for k, v in pairs(given) do
+        out[k] = v
+    end
+    return out
+end
+
 function M.setup(opts)
+    local current = M.opts.headers
     M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
+    if type(current) == "table" and type(opts) == "table" and type(opts.headers) == "table" then
+        M.opts.headers = fold_headers(current, opts.headers)
+    end
 
     if M.opts.auto_start and M.opts.auto_start.filetypes then
         local fts = M.opts.auto_start.filetypes

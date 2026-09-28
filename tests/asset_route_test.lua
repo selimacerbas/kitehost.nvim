@@ -324,19 +324,16 @@ eq(
     "an image keeps the caller's policy"
 )
 server.stop(inst)
--- Two spellings of the name fold into the field too. A caller's sandbox
--- allow-scripts sorts after the bare word, so a sandbox sorted in with the
--- caller's policies would no longer be the last one read.
-inst = sandbox_server({
-    ["content-security-policy"] = "sandbox allow-scripts",
-    ["Content-Security-Policy"] = "default-src *",
-})
-local both = raw_get("/__live/asset?p=pic.svg&t=" .. TOKEN)
-eq(both.count["content-security-policy"], 1, "a caller's policy under two spellings is one field")
+-- A caller's own sandbox allow-scripts would loosen the server's were it
+-- read last, and it sorts after the bare word, so the server's sandbox is
+-- appended after the caller's policy, never sorted in with it.
+inst = sandbox_server({ ["Content-Security-Policy"] = "sandbox allow-scripts" })
+local loose = raw_get("/__live/asset?p=pic.svg&t=" .. TOKEN)
+eq(loose.count["content-security-policy"], 1, "a caller's sandbox allow-scripts and the server's are one field")
 eq(
-    both.headers["content-security-policy"],
-    "default-src *, sandbox allow-scripts, sandbox",
-    "both spellings fold, sorted, before the server's sandbox"
+    loose.headers["content-security-policy"],
+    "sandbox allow-scripts, sandbox",
+    "the server's sandbox comes after the caller's"
 )
 server.stop(inst)
 

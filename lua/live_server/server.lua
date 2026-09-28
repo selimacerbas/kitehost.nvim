@@ -75,23 +75,40 @@ local REASONS = {
     [500] = "Internal Server Error",
 }
 
+-- The policies that send no path or query in any Referer.
+local KEPT_POLICIES = { ["no-referrer"] = true, ["strict-origin"] = true }
+
+-- Whether a caller's Referrer-Policy value is one of them as Chromium
+-- reads it, its case ignored and its blanks trimmed (measured). Two
+-- one-pass trims, as parse_head's.
+local function kept_policy(v)
+    local bare = v:gsub("^[ \t]+", ""):match("^(.*[^ \t])") or ""
+    return KEPT_POLICIES[bare:lower()] == true
+end
+
 local function write_headers(sock, status, headers)
     local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
+    local policy = "strict-origin"
     for k, v in pairs(headers or {}) do
         if k:lower() ~= "referrer-policy" then
             table.insert(lines, ("%s: %s\r\n"):format(k, v))
+        elseif kept_policy(v) then
+            policy = v
         end
     end
     -- A page URL can carry ?t=<token>. The browser's default,
     -- strict-origin-when-cross-origin, sends the full URL same-origin, so
     -- the token would ride to the server's own log or a same-origin embed;
-    -- this policy sends no path or query in any Referer, whatever policy a
-    -- caller's headers name. The origin alone still reaches a destination
-    -- as secure, which an embed needs: under no-referrer every YouTube
-    -- iframe showed Error 153. A page's own meta or referrerpolicy
-    -- attribute can still widen or narrow it.
-    table.insert(lines, "Referrer-Policy: strict-origin\r\n")
+    -- this policy sends no path or query in any Referer. The origin alone
+    -- still reaches a destination as secure, which an embed needs: under
+    -- no-referrer every YouTube iframe showed Error 153. A caller's
+    -- no-referrer is kept, and strict-origin with it: neither sends a path
+    -- or query, and no-referrer keeps a network bind's address from third
+    -- parties, which the caller chose over embeds. Any other policy is
+    -- replaced; same-origin sends the full URL to this origin. A page's
+    -- own meta or referrerpolicy attribute can still widen or narrow it.
+    table.insert(lines, ("Referrer-Policy: %s\r\n"):format(policy))
     table.insert(lines, "\r\n")
     sock:write(table.concat(lines))
 end
@@ -746,7 +763,6 @@ local function join_vary(headers, member)
             headers[k] = nil
         end
     end
-    table.sort(configured)
     table.insert(configured, member)
     local members, seen = {}, {}
     for m in table.concat(configured, ","):gmatch("[^,]+") do
@@ -1139,8 +1155,8 @@ local ACTIVE_DOCUMENT = { html = true, htm = true, xhtml = true, svg = true, xml
 
 -- The headers of an asset-route response. The extension is read as
 -- guess_mime reads it, lowercased, so PAGE.HTML on disk, served as HTML,
--- is sandboxed too. A caller's policy is kept: every spelling of the name
--- folds, sorted, into one field with the sandbox last. CSP enforces each
+-- is sandboxed too. A caller's policy is kept, under any spelling of the
+-- name, in one field with the sandbox last. CSP enforces each
 -- comma-separated policy in a field, and the HTML standard reads the last
 -- sandbox directive, so a caller's sandbox allow-scripts cannot loosen it.
 local function asset_headers(inst, real)
@@ -1156,7 +1172,6 @@ local function asset_headers(inst, real)
             h[k] = v
         end
     end
-    table.sort(policies)
     table.insert(policies, "sandbox")
     h["Content-Security-Policy"] = table.concat(policies, ", ")
     return h
@@ -1675,23 +1690,40 @@ function S.start(cfg)
     -- A header is written as the table spells it. Chromium trims a name, so
     -- "Access-Control-Allow-Origin " let any site read the event stream
     -- (measured); a colon in a name or a CR or LF in a value sends a header
-    -- other than the one named. The fields the server computes are its own:
-    -- a caller's replaced them or went out beside them, a second framing
-    -- line, or a Content-Type that rendered an asset as HTML past the
-    -- sandbox its extension decides. The copy comes from the same pass, so
-    -- the table served is the one checked.
+    -- other than the one named, and a value holds no other control byte but
+    -- a tab (RFC 9110 5.5): a NUL made Chromium and curl refuse every
+    -- response. The fields the server computes are its own: a caller's
+    -- replaced them or went out beside them, a second framing line, or a
+    -- Content-Type that rendered an asset as HTML past the sandbox its
+    -- extension decides. Two spellings of one name went out as two lines,
+    -- which a cache reads as one list. The copy comes from the same pass,
+    -- so the table served is the one checked.
     local cfg_headers = cfg.headers or {}
     if type(cfg_headers) ~= "table" then
         error("headers must be a table of header names and values", 0)
     end
-    local headers = {}
+    local headers, spelled = {}, {}
     for k, v in pairs(cfg_headers) do
-        if type(k) ~= "string" or not k:find("^" .. TCHAR .. "+$") or type(v) ~= "string" or v:find("[\r\n]") then
+        if
+            type(k) ~= "string"
+            or not k:find("^" .. TCHAR .. "+$")
+            or type(v) ~= "string"
+            or v:find("[%z\1-\8\10-\31\127]")
+        then
             error("headers: a name must be a token and a value a line: " .. tostring(k), 0)
         end
-        if SERVER_FIELDS[k:lower()] then
+        local name = k:lower()
+        if SERVER_FIELDS[name] then
             error(("headers: %s is the server's own field"):format(k), 0)
         end
+        if spelled[name] then
+            local a, b = spelled[name], k
+            if b < a then
+                a, b = b, a
+            end
+            error(("headers: %s and %s name one field"):format(a, b), 0)
+        end
+        spelled[name] = k
         headers[k] = v
     end
     -- A cors value goes out as a header value, so a CR or LF in it wrote a

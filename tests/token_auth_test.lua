@@ -10,8 +10,9 @@
 -- directory about to be served (a case variant, a link); a NUL or a
 -- backslash in the path is 400 before it; a link out of the root is 404;
 -- and start refuses a bad token, protected_paths (patterns with no token
--- among them), serve_dotfiles, index_names, headers (the server's own
--- fields among them) or cors before any socket opens.
+-- among them), serve_dotfiles, index_names, headers (a control byte in a
+-- value, two spellings of one name and the server's own fields among
+-- them) or cors before any socket opens.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
@@ -865,6 +866,19 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names,
         { "headers", { ["X-Custom"] = 1 }, "headers: a name must be a token and a value a line: X-Custom" },
         { "headers", { [""] = "x" }, "headers: a name must be a token and a value a line: " },
         { "headers", { ["X\tA"] = "x" }, "headers: a name must be a token and a value a line: X\tA" },
+        -- RFC 9110 5.5: a value holds visible characters, spaces and tabs. A
+        -- NUL started the server, and then Chromium (ERR_INVALID_HTTP_RESPONSE)
+        -- and curl refused every response that carried it.
+        { "headers", { ["X-Custom"] = "a\0b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\1b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\127b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        -- Two spellings of one name went out as two lines, which a cache
+        -- reads as one list: "no-cache, max-age=60" left the second inert.
+        {
+            "headers",
+            { ["Cache-Control"] = "a", ["cache-control"] = "b" },
+            "headers: Cache-Control and cache-control name one field",
+        },
         { "headers", { ["Content-Type"] = "text/html" }, "headers: Content-Type is the server's own field" },
         { "headers", { ["content-type"] = "text/html" }, "headers: content-type is the server's own field" },
         { "headers", { ["Content-Length"] = "1" }, "headers: Content-Length is the server's own field" },
@@ -973,6 +987,11 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names,
     end
     started, res = pcall(server.start, { port = 0, root = tmpdir, headers = { ["X-Custom"] = "1" } })
     ok(started, 'headers = { ["X-Custom"] = "1" } starts: ' .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    started, res = pcall(server.start, { port = 0, root = tmpdir, headers = { ["X-Custom"] = "a\tb" } })
+    ok(started, "a tab inside a header value starts: " .. tostring(started and "" or res))
     if started then
         server.stop(res)
     end
