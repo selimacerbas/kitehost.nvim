@@ -232,6 +232,34 @@ H.case("Section 1c: /dev/urandom answers when vim.uv.random fails, as a device a
         "a regular file at the path is no source: " .. res
     )
     fds_kept(fds, "and the planted file's descriptor is closed")
+    -- An fstat that fails is no source either: the raise names its error,
+    -- where a cause dropped there read as a short read.
+    local real_fstat, urandom_fd = uv.fs_fstat, nil
+    H.defer(function()
+        uv.fs_fstat = real_fstat
+    end)
+    uv.fs_open = function(path, ...)
+        if path == "/dev/urandom" then
+            local fd, err, name = real_open(planted, ...)
+            urandom_fd = fd
+            return fd, err, name
+        end
+        return real_open(path, ...)
+    end
+    uv.fs_fstat = function(fd, ...)
+        if fd == urandom_fd then
+            return nil, "EIO: fstat stubbed", "EIO"
+        end
+        return real_fstat(fd, ...)
+    end
+    fds = H.fd_count()
+    good, res = pcall(util.random_token, 16)
+    res = tostring(res)
+    ok(
+        not good and res:find("/dev/urandom: EIO: fstat stubbed", 1, true) ~= nil,
+        "an fstat that fails on the device's descriptor raises naming its error: " .. res
+    )
+    fds_kept(fds, "and that descriptor is closed")
 end)
 
 -- ─── Section 2: server with token ───────────────────────────────────────────
@@ -1159,6 +1187,39 @@ H.case("the injected client is never gated", function()
         "and it is the client, never the root's file of that name"
     )
     eq(http_get(base .. "/app.js").status, 401, "while a .js file under the root still wants the token")
+    -- The route reads the canonical path, so each spelling of it is the
+    -- client: one matched on the request's own spelling wanted the token
+    -- for a query, an escape, a doubled or a trailing slash, and with no
+    -- pattern served the root's own file of that name.
+    local open = server.start({
+        port = 0,
+        root = site,
+        token = TOKEN,
+        live = { enabled = false, inject_script = true },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(open)
+    end)
+    for _, s in ipairs({ { gated, "%.js$" }, { open, "no pattern" } }) do
+        for _, spelling in ipairs({
+            "/__live/script.js?x=1",
+            "/%5F_live/script.js",
+            "//__live/script.js",
+            "/__live/script.js/",
+        }) do
+            local r = http_get(("http://127.0.0.1:%d%s"):format(s[1].port, spelling))
+            ok(
+                r.status == 200 and r.body == client.body,
+                ("under %s, %s answers the client's bytes, never the root's file (got %d: %s)"):format(
+                    s[2],
+                    spelling,
+                    r.status,
+                    r.body:sub(1, 40)
+                )
+            )
+        end
+    end
     -- Windows may refuse the link (no symlink privilege); the fixture is
     -- measured and its row skipped where it is not.
     if linked then

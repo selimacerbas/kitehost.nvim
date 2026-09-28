@@ -207,10 +207,21 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
     eq(r.headers["access-control-allow-headers"], nil, "and allowed no header")
     -- Each item of the list is a token, not the value as a whole: ", ," and
     -- "x a" held only token characters, commas and spaces, and were echoed.
+    -- An empty item is no token either (RFC 9110 5.6.1 forbids sending one).
     eq(
         asks("Access-Control-Request-Headers: , ,\r\n").headers["access-control-allow-headers"],
         nil,
         "a list of empty items is allowed no header"
+    )
+    eq(
+        asks("Access-Control-Request-Headers: x,\r\n").headers["access-control-allow-headers"],
+        nil,
+        "a list whose last item is empty is allowed no header"
+    )
+    eq(
+        asks("Access-Control-Request-Headers: ,x\r\n").headers["access-control-allow-headers"],
+        nil,
+        "a list whose first item is empty is allowed no header"
     )
     eq(
         asks("Access-Control-Request-Headers: x a\r\n").headers["access-control-allow-headers"],

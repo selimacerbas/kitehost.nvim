@@ -205,6 +205,24 @@ H.case("Section 3: the start notice is silenced, printed once, and is the opened
         ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
         "and its start notice prints that URL byte for byte"
     )
+
+    -- 0.0.0.0 reads as 127.0.0.1 from either table, so the row above also
+    -- passed a notice built from the configured host. Only a host the bind
+    -- spells otherwise tells the two apart: 0:0:0:0:0:0:0:1 is bound as ::1.
+    local probe = assert(vim.uv.new_tcp())
+    local v6, v6_err = probe:bind("::1", 0)
+    probe:close()
+    if v6 then
+        _, url, inst, notes = start_with({ notify = true, host = "0:0:0:0:0:0:0:1", token = "abc" })
+        port = inst and inst.port or -1
+        eq(
+            notes[1],
+            ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
+            "a host the bind spells otherwise prints the opened URL byte for byte"
+        )
+    else
+        H.skip("a host the bind spells otherwise (no IPv6 loopback here: " .. tostring(v6_err) .. ")")
+    end
 end)
 
 local errors = 0
