@@ -133,10 +133,11 @@ local SERVER_FIELDS = {
     ["connection"] = true,
 }
 
--- Every socket closes here. A peer that ended its side while a response
--- was still being written had its socket closed by the read path; libuv
--- then ran the pending shutdown's callback (ECANCELED), whose second close
--- raised "handle is already closing" inside a luv callback (measured).
+-- Every socket closes here. Two closers can reach one socket: a response's
+-- shutdown callback and the handler's close of a response that had
+-- started, and a second close raises "handle is already closing" inside a
+-- luv callback (measured, when the read path still closed a half-closed
+-- client under a pending shutdown).
 local function close_once(sock)
     if not sock:is_closing() then
         sock:close()

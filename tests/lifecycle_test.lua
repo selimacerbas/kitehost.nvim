@@ -106,7 +106,7 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
             steady(function()
                 return H.handle_count("tcp")
             end, 1000),
-            "the server read the half-close within 1 s"
+            "the tcp count held still within 1 s after the half-close"
         )
         c:close()
     end
@@ -559,7 +559,7 @@ H.case("Section 4: a client that half-closes after its request reads it all", fu
             steady(function()
                 return H.handle_count("tcp")
             end, 1000),
-            "the server read the half-close within 1 s"
+            "the tcp count held still within 1 s after the half-close"
         )
         release()
     end)
