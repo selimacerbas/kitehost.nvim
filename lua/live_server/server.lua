@@ -713,6 +713,19 @@ local function holds_own_index(inst, rel)
     return own and own:sub(1, #rel + 2) == "/" .. rel .. "/"
 end
 
+-- The user is told of a fault once per instance for each kind, scheduled,
+-- since a fault is found in a fast event (an accept, a watcher's
+-- callback).
+local function warn_once(inst, kind, text)
+    if inst.warned[kind] then
+        return
+    end
+    inst.warned[kind] = true
+    vim.schedule(function()
+        util.notify(("live-server: port %d %s"):format(inst.port, text), { notify = true }, "WARN")
+    end)
+end
+
 local function schedule_reload(inst, changed_path)
     if not inst.live_enabled then
         return
@@ -737,9 +750,14 @@ local function schedule_reload(inst, changed_path)
     -- name keeps its path, so a started-on stylesheet still swaps.
     inst._last_change = (own and has_dot_segment(rel)) and "/" or rel or inst._last_change
     inst.debounce_timer:stop()
-    inst.debounce_timer:start(inst.live_debounce, 0, function()
+    -- start refuses a closing timer, and the change was then dropped with
+    -- no word (measured through a stub).
+    local armed, arm_err = inst.debounce_timer:start(inst.live_debounce, 0, function()
         S.reload(inst, inst._last_change or "")
     end)
+    if not armed then
+        warn_once(inst, "reload", ("could not schedule a reload (%s); restart the server"):format(tostring(arm_err)))
+    end
 end
 
 -- A directory whose changes never reload (a dot path, without
@@ -2284,6 +2302,8 @@ function S.start(cfg)
         css_inject = checked.css_inject,
         sse_clients = {},
         heartbeat_ms = checked.heartbeat_ms,
+        -- The kinds of fault the user was told of (warn_once).
+        warned = {},
 
         -- features
         dir_enabled = checked.dir_enabled,
@@ -2305,8 +2325,7 @@ function S.start(cfg)
     }
 
     -- A connection the server cannot equip with a handle, or whose read
-    -- cannot start, is dropped, and the user is told once per instance for
-    -- each kind, scheduled, since the accept runs in a fast event. With no
+    -- cannot start, is dropped, and the user is told (warn_once). With no
     -- socket the connection is never accepted, and libuv then stops
     -- polling the listener, so the server takes no connection after it; a
     -- raise there did the same and told the user only of a callback error
@@ -2314,23 +2333,17 @@ function S.start(cfg)
     -- read, the connection is closed: unread and with no timer it held its
     -- place after its client left (measured), and a close alone would
     -- leave a page failing with no word of why.
-    local warned = {}
-    local function warn_once(kind, text)
-        if warned[kind] then
-            return
-        end
-        warned[kind] = true
-        vim.schedule(function()
-            util.notify(("live-server: port %d %s"):format(actual_port, text), { notify = true }, "WARN")
-        end)
-    end
     local listening, listen_err = tcp:listen(128, function(err_listen)
         if err_listen then
             return
         end
         local sock, sock_err = uv.new_tcp()
         if not sock then
-            warn_once("socket", ("stopped accepting connections (%s); restart the server"):format(tostring(sock_err)))
+            warn_once(
+                inst,
+                "socket",
+                ("stopped accepting connections (%s); restart the server"):format(tostring(sock_err))
+            )
             return
         end
         -- A failed accept leaves a handle made and never opened, which
@@ -2350,7 +2363,7 @@ function S.start(cfg)
         local conn, conn_err = new_conn(inst, sock)
         if not conn then
             close_once(sock)
-            warn_once("timer", ("closed a connection it could not serve (%s)"):format(tostring(conn_err)))
+            warn_once(inst, "timer", ("closed a connection it could not serve (%s)"):format(tostring(conn_err)))
             return
         end
         track_conn(conn)
@@ -2359,7 +2372,7 @@ function S.start(cfg)
         end)
         if not reading then
             close_once(sock)
-            warn_once("read", ("closed a connection it could not read (%s)"):format(tostring(read_err)))
+            warn_once(inst, "read", ("closed a connection it could not read (%s)"):format(tostring(read_err)))
         end
     end)
     if not listening then
@@ -2454,7 +2467,12 @@ function S.stop(inst)
     close_once(inst.handle)
 end
 
+-- A stopped server's reload timer is closed, so a watcher opened here
+-- would reload nothing and nothing would close it.
 function S.update_target(inst, new_root, new_index)
+    if inst.handle:is_closing() then
+        return
+    end
     inst.root = new_root
     inst.root_real = uv.fs_realpath(new_root) or inst.root_real
     inst.default_index = new_index
@@ -2494,6 +2512,9 @@ function S.send_event(inst, event_type, data)
 end
 
 function S.enable_live(inst, enable)
+    if inst.handle:is_closing() then
+        return false
+    end
     enable = not not enable
     if inst.live_enabled == enable then
         return enable

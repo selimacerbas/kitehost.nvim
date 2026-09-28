@@ -15,7 +15,9 @@
 -- code at 0, so the rows read the ledger's error capture (H.errors) and
 -- count the handles and the descriptors directly. hello.txt and big.bin
 -- (its bytes in big) are the small and the 2 MiB file the transfer rows
--- serve, and serve's cfg and get's extra are what those rows pass.
+-- serve, and serve's cfg and get's extra are what those rows pass. A
+-- stopped server opens no watcher when its target or live reload
+-- changes, and a reload timer that cannot start is reported once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -1635,6 +1637,89 @@ H.case("Section 7b: every accepted socket closes through close_once", function()
         ("every close of an accepted socket comes through close_once (%d closes, %d not)"):format(closes, raw)
     )
     eq(closes, accepted, "and each of the " .. accepted .. " sockets the server accepted is closed once")
+end)
+
+-- update_target and enable_live on a stopped server opened a watcher
+-- nothing closed (one fs_event more, measured), and the reload timer,
+-- closed by the stop, then refused every start, so each change it saw
+-- reloaded nothing and said nothing. A stopped server now opens nothing
+-- and raises nothing.
+H.case("Section 8: a stopped server's update_target and enable_live open nothing", function()
+    local errs = #H.errors()
+    local live = serve({ live = { enabled = true, debounce = 20, inject_script = false } })
+    local off = serve()
+    server.stop(live)
+    server.stop(off)
+    local watchers = H.handle_count("fs_event")
+    local updated, update_err = pcall(server.update_target, live, root, nil)
+    ok(updated, "update_target on a stopped server raises nothing: " .. tostring(update_err))
+    eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
+    local enabled, got = pcall(server.enable_live, off, true)
+    ok(enabled, "enable_live on a stopped server raises nothing: " .. tostring(got))
+    eq(got, false, "and reports live reload off")
+    eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
+    eq(#H.errors(), errs, "and nothing raises in a callback")
+end)
+
+-- The reload timer's start returns nil and an error on a closing timer,
+-- which no guard above can see from a watcher's callback, and the reload
+-- was then dropped unreported. The first failure tells the user, once.
+H.case("Section 8b: a reload timer that cannot start is reported once", function()
+    local site = H.tmpdir()
+    H.write_file(site .. "/index.html", "<html><body>live</body></html>")
+    local errs = #H.errors()
+    local inst = serve({ root = site, live = { enabled = true, debounce = 20, inject_script = false } })
+    local real_timer = inst.debounce_timer
+    local starts = 0
+    inst.debounce_timer = {
+        stop = function()
+            return 0
+        end,
+        start = function()
+            starts = starts + 1
+            return nil, "EINVAL: stubbed"
+        end,
+    }
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+        inst.debounce_timer = real_timer
+    end)
+    -- FSEvents delivered a fixture written just before the watcher started
+    -- after it (measured), so the watcher settles first.
+    vim.wait(300)
+    H.write_file(site .. "/a.html", "a")
+    ok(
+        H.wait_for(function()
+            return starts >= 1
+        end, 2000),
+        "a change reaches the reload timer"
+    )
+    vim.wait(300)
+    H.write_file(site .. "/b.html", "b")
+    ok(
+        H.wait_for(function()
+            return starts >= 2
+        end, 2000),
+        "and a second change reaches it again"
+    )
+    vim.wait(100)
+    local warned = {}
+    for _, n in ipairs(notes) do
+        if n.msg:find("reload", 1, true) then
+            table.insert(warned, n)
+        end
+    end
+    eq(#warned, 1, "the failed start is reported once, not per change: " .. vim.inspect(notes))
+    ok(
+        warned[1] and warned[1].level == vim.log.levels.WARN and warned[1].msg:find("EINVAL: stubbed", 1, true) ~= nil,
+        "as a warning naming the error"
+    )
+    eq(#H.errors(), errs, "and nothing raises")
 end)
 
 H.finish()
