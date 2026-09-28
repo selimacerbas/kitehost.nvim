@@ -600,22 +600,35 @@ local function sse_evict(inst, sock)
     close_once(sock)
 end
 
+-- A reader that stops reading without closing raises no error, so every
+-- frame after both ends' buffers filled waited in its write queue, which
+-- grew for as long as it stayed open (7.85 MB after 128 events of 64 KiB,
+-- measured). A stream more than this behind is dropped before its next
+-- write, so it holds at most this and one frame. It is read before the
+-- write, never after: macOS took 1.4 to 1.6 MB of one frame at once
+-- (measured), so a larger frame would drop a reader that keeps up.
+local SSE_MAX_QUEUE = 1024 * 1024
+
 -- Writes one frame to every stream, the only writer after a stream's
 -- preamble: an event and the heartbeat both. luv reports a dead stream
 -- without raising, by write's nil, err on a closed or shut socket and by
 -- its callback's error after a reset, or once TCP gives up on a peer that
--- vanished; either evicts the stream. write raises only on a bad
--- argument, a fault no pcall should hide. The list is copied, since an
--- eviction during the walk removes from it.
+-- vanished; either evicts the stream, as a queue past SSE_MAX_QUEUE does.
+-- write raises only on a bad argument, a fault no pcall should hide. The
+-- list is copied, since an eviction during the walk removes from it.
 local function sse_send(inst, text)
     for _, cl in ipairs(vim.list_slice(inst.sse_clients)) do
-        local sent = cl:write(text, function(err)
-            if err then
+        if cl:get_write_queue_size() > SSE_MAX_QUEUE then
+            sse_evict(inst, cl)
+        else
+            local sent = cl:write(text, function(err)
+                if err then
+                    sse_evict(inst, cl)
+                end
+            end)
+            if not sent then
                 sse_evict(inst, cl)
             end
-        end)
-        if not sent then
-            sse_evict(inst, cl)
         end
     end
 end

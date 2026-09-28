@@ -1,15 +1,20 @@
 -- tests/sse_test.lua
 -- The event stream's heartbeat, and the end of a stream whose write
--- fails. Nothing was written to an idle stream, so a proxy's idle cut
--- ended it and a peer that vanished without a FIN stayed listed, holding
--- its place, for good. A comment line (": ping" and a blank line, which
--- EventSource and both pages ignore) now goes to every stream at
--- sse_heartbeat_ms, and to nothing else; 0 turns it off, stop closes its
--- timer, and a start that cannot arm it raises and leaves nothing open.
+-- fails or that falls behind. Nothing was written to an idle stream, so
+-- a proxy's idle cut ended it and a peer that vanished without a FIN
+-- stayed listed, holding its place, for good. A comment line (": ping"
+-- and a blank line, which EventSource and both pages ignore) now goes to
+-- every stream at sse_heartbeat_ms, and to nothing else; 0 turns it off,
+-- stop closes its timer, and a start that cannot arm it raises and
+-- leaves nothing open.
 -- TCP gives up on a beat such a peer never acknowledges, and a stream
 -- whose write then fails, a beat's or an event's, by write's return or
 -- its callback, leaves the list and its socket closes, where the pcall
--- once around each write saw neither and left the stream listed.
+-- once around each write saw neither and left the stream listed. A
+-- reader that stops reading without closing raises no error at all, and
+-- its write queue grew with every frame; a stream more than 1 MiB behind
+-- when a frame is sent now leaves the same way, and one that keeps up
+-- stays.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
@@ -452,6 +457,91 @@ H.case("Section 6e: the writes stop cancels raise nothing", function()
         )
     )
     eq(#H.errors(), errs, "and their callbacks raise nothing")
+end)
+
+-- A reader that stops reading and never closes raises no error on either
+-- path: once both ends' buffers are full, every frame waited in the
+-- server's write queue, which grew for as long as the stream stayed open
+-- (7.85 MB after 128 events of 64 KiB, measured). A stream more than
+-- 1 MiB behind when a frame is sent is dropped as a dead one is, so it
+-- holds at most that and one frame, and a reader that keeps up is judged
+-- on what it left unread, never on the size of one frame.
+H.case("Section 7: a stalled reader is dropped, a reading one is not", function()
+    local cap = 1024 * 1024
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local stalled = open_stream(inst)
+    local reading = open_stream(inst)
+    ok(listed(inst, 2), "both streams are listed")
+    local stalled_sock, reading_sock = inst.sse_clients[1], inst.sse_clients[2]
+    -- The bytes still queued for the stalled stream when its socket closes.
+    local methods = getmetatable(stalled_sock).__index
+    local real_close = methods.close
+    H.defer(function()
+        methods.close = real_close
+    end)
+    local held
+    methods.close = function(h, ...)
+        if h == stalled_sock and held == nil then
+            held = h:get_write_queue_size()
+        end
+        return real_close(h, ...)
+    end
+    -- The bytes a raw client holds past its preamble, counted without
+    -- joining them.
+    local function received(c)
+        local n = 0
+        for _, s in ipairs(c.chunks) do
+            n = n + #s
+        end
+        return n - (c.from - 1)
+    end
+    local errs = #H.errors()
+    -- A reader that neither reads nor closes: no error ever surfaces.
+    assert(stalled.tcp:read_stop())
+    local chunk = string.rep("x", 65536)
+    local frame = ("event: big\ndata: %s\n\n"):format(chunk)
+    for _ = 1, 128 do
+        server.send_event(inst, "big", chunk)
+        vim.wait(5)
+    end
+    ok(listed(inst, 1), "the stalled reader is dropped")
+    methods.close = real_close
+    ok(inst.sse_clients[1] == reading_sock, "and the stream still listed is the reading one")
+    ok(
+        stalled_sock:is_closing() and inst.open_conns == 1,
+        ("and the stalled one's socket is closed, which frees its place (%d held, want 1)"):format(inst.open_conns)
+    )
+    ok(
+        held ~= nil and held > cap and held <= cap + #frame,
+        ("it was dropped more than 1 MiB behind, and at most one frame more (%s bytes queued)"):format(tostring(held))
+    )
+    local want = 128 * #frame
+    H.wait_for(function()
+        return received(reading) >= want
+    end, 3000)
+    ok(
+        reading:read(0):sub(reading.from) == frame:rep(128),
+        ("the reading stream hears all 128 events whole (%d of %d bytes)"):format(received(reading), want)
+    )
+    -- Judged after its write, a frame larger than the cap would drop a
+    -- reader that keeps up: macOS took 1.4 to 1.6 MB of one at once
+    -- (measured), and the rest waits in the queue.
+    local payload = string.rep("y", 8 * 1024 * 1024)
+    local huge = ("event: huge\ndata: %s\n\n"):format(payload)
+    local after = "event: after\ndata: {}\n\n"
+    server.send_event(inst, "huge", payload)
+    H.wait_for(function()
+        return received(reading) >= want + #huge
+    end, 3000)
+    server.send_event(inst, "after", "{}")
+    H.wait_for(function()
+        return received(reading) >= want + #huge + #after
+    end, 2000)
+    ok(
+        reading:read(0):sub(reading.from + want) == huge .. after and vim.tbl_contains(inst.sse_clients, reading_sock),
+        "a reading stream hears an event larger than the cap whole, and the next, and stays listed"
+    )
+    eq(#H.errors(), errs, "and nothing raises")
 end)
 
 H.finish()
