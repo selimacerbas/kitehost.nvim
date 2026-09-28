@@ -974,11 +974,35 @@ H.case("Section 10: one frame per event, whatever the payload holds", function()
     H.http_get(
         ("http://127.0.0.1:%d/__live/inject?event=x&data=a%%0A%%0Aevent:%%20evil%%0Adata:%%20pwn"):format(inst.port)
     )
-    data = c:read(2000, function(d)
-        return d:find("event: x", from, true) ~= nil and d:find("pwn", from, true) ~= nil
-    end):sub(from)
+    data = c
+        :read(2000, function(d)
+            local at = d:find("pwn", from, true)
+            return d:find("event: x", from, true) ~= nil and at ~= nil and d:find("\n\n", at, true) ~= nil
+        end)
+        :sub(from)
+    ok(
+        data:find("event: x\ndata: a\ndata: \ndata: event: evil\ndata: data: pwn\n\n", 1, true) == 1,
+        "the inject path writes each decoded line as its own data line: " .. vim.inspect(data)
+    )
     ok(not data:find("\nevent: evil\n", 1, true), "a line break in injected data forges no frame")
-    ok(not pcall(server.send_event, inst, "a\nretry: 1", "{}"), "an event name with a line break raises")
+    -- Called from a Lua function, so level 2 names this file's line; a
+    -- direct pcall would make pcall the caller, which has no position.
+    local function raise_of(event, payload)
+        local raised, err = pcall(function()
+            server.send_event(inst, event, payload)
+        end)
+        return raised, tostring(err)
+    end
+    local raised, err = raise_of("a\nretry: 1", "{}")
+    ok(
+        not raised and err:match("sse_test%.lua:%d+: send_event: the event name holds a line break$") ~= nil,
+        "an event name with a line break raises at the caller: " .. err
+    )
+    raised, err = raise_of("n", 42)
+    ok(
+        not raised and err:match("sse_test%.lua:%d+: send_event: the payload is a string, got number$") ~= nil,
+        "a number payload raises at the caller: " .. err
+    )
 end)
 
 H.finish()

@@ -2527,7 +2527,10 @@ end
 function S.send_event(inst, event_type, data)
     -- A line break in the name would start a field of its own (retry, id).
     if tostring(event_type):find("[\r\n]") then
-        error("send_event: an event name holds no line break", 2)
+        error("send_event: the event name holds a line break", 2)
+    end
+    if data ~= nil and type(data) ~= "string" then
+        error(("send_event: the payload is a string, got %s"):format(type(data)), 2)
     end
     sse_broadcast(inst, event_type, data or "{}")
 end
