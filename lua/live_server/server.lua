@@ -97,8 +97,7 @@ end
 local started = setmetatable({}, { __mode = "k" })
 
 -- Returns what the write returned, which every caller reads: a request,
--- or nil and the error on a closed or shut socket. on_written, when
--- given, is the write's callback.
+-- or nil and the error on a closed or shut socket.
 local function write_headers(sock, status, headers, on_written)
     local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
@@ -567,8 +566,8 @@ local CLIENT_JS_TOKEN = table.concat({
 })
 
 -- A stream leaves the client list here when its socket reports its end,
--- or through sse_evict when a write to it fails or it falls more than
--- SSE_MAX_QUEUE behind; stop empties the list itself.
+-- or through sse_evict when a write to it fails or it falls too far
+-- behind (SSE_MAX_QUEUE); stop empties the list itself.
 local function sse_drop(inst, sock)
     for i, cl in ipairs(inst.sse_clients) do
         if cl == sock then
@@ -619,22 +618,40 @@ end
 -- A reader that stops reading without closing raises no error, so every
 -- frame after both ends' buffers filled waited in its write queue, which
 -- grew for as long as it stayed open (7.85 MB after 128 events of 64 KiB,
--- measured). A stream more than this behind is dropped before its next
--- write, so it holds at most this and one frame. It is read before the
--- write, never after: macOS took 1.4 to 1.6 MB of one frame at once
--- (measured), so a larger frame would drop a reader that keeps up.
+-- measured). A stream is judged on its progress over loop time, in which
+-- alone a queue drains: one over SSE_MAX_QUEUE for longer than
+-- SSE_STALL_MS is dropped at its next send, and one over SSE_HARD_QUEUE
+-- at once, the bound on a burst within one turn. The queue a frame left
+-- is no measure: macOS takes 0.3 to 1.6 MB of one at once, so a reader
+-- that keeps up was dropped when a second frame came before a 3 MiB one
+-- drained; curl drains 8 MiB in 11 to 166 ms, well within the grace
+-- (measured).
 local SSE_MAX_QUEUE = 1024 * 1024
+local SSE_STALL_MS = 1000
+local SSE_HARD_QUEUE = 8 * 1024 * 1024
+
+-- The loop time of the first send that found a stream over SSE_MAX_QUEUE,
+-- cleared by a send that finds it at or under; weak, so an entry leaves
+-- with its socket, as started's does.
+local over_since = setmetatable({}, { __mode = "k" })
 
 -- Writes one frame to every stream, the only writer after a stream's
 -- preamble: an event and the heartbeat both. luv reports a dead stream
 -- without raising, by write's nil, err on a closed or shut socket and by
 -- its callback's error after a reset, or once TCP gives up on a peer that
--- vanished; either evicts the stream, as a queue past SSE_MAX_QUEUE does.
+-- vanished; either evicts the stream, as falling behind does.
 -- write raises only on a bad argument, a fault no pcall should hide. The
 -- list is copied, since an eviction during the walk removes from it.
 local function sse_send(inst, text)
+    local now = uv.now()
     for _, cl in ipairs(vim.list_slice(inst.sse_clients)) do
-        if cl:get_write_queue_size() > SSE_MAX_QUEUE then
+        local queued = cl:get_write_queue_size()
+        if queued <= SSE_MAX_QUEUE then
+            over_since[cl] = nil
+        elseif not over_since[cl] then
+            over_since[cl] = now
+        end
+        if queued > SSE_HARD_QUEUE or queued > SSE_MAX_QUEUE and now - over_since[cl] > SSE_STALL_MS then
             sse_evict(inst, cl)
         else
             local sent = cl:write(text, function(err)

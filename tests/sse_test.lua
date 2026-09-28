@@ -13,8 +13,10 @@
 -- once around each write saw neither and left the stream listed. A
 -- reader that stops reading without closing raises no error at all, and
 -- its write queue grew with every frame; a stream more than 1 MiB behind
--- when a frame is sent now leaves the same way, and one that keeps up
--- stays; a stream whose head or retry line fails is never kept.
+-- for longer than a second, or more than 8 MiB behind at all, now leaves
+-- the same way, the heartbeat's send judging it too, and one that keeps
+-- up stays through a large frame or a burst; a stream whose head or
+-- retry line fails is never kept.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
@@ -297,16 +299,25 @@ H.case("Section 6: a stream whose write fails leaves the list", function()
         gone:is_closing() and inst.open_conns == 0,
         ("and its socket is closed, which frees its place (%d held, want 0)"):format(inst.open_conns)
     )
-    local before = server.connected_client_count(inst)
+    local before, held_before = server.connected_client_count(inst), inst.open_conns
     open_stream(inst)
     ok(listed(inst, before + 1), "a new stream is listed")
     -- Shut, as 6c does, never closed raw: a raw close skips close_once,
-    -- whose hook frees the socket's place, so the place stayed held.
+    -- whose hook frees the socket's place, so the place would stay held.
     local last = inst.sse_clients[#inst.sse_clients]
     assert(last:read_stop())
     assert(last:shutdown())
     server.send_event(inst, "c", "{}")
-    eq(server.connected_client_count(inst), before, "a shut socket still listed is dropped by write's fail tuple")
+    ok(
+        server.connected_client_count(inst) == before
+            and H.wait_for(function()
+                return inst.open_conns == held_before
+            end, 1000),
+        ("a shut socket still listed is dropped by write's fail tuple, and its place frees (%d held, want %d)"):format(
+            inst.open_conns,
+            held_before
+        )
+    )
 end)
 
 -- With no event sent, the beat is the write that finds such a peer.
@@ -453,73 +464,154 @@ H.case("Section 6e: the writes stop cancels raise nothing", function()
     eq(#H.errors(), errs, "and their callbacks raise nothing")
 end)
 
+-- The server's bounds on a stream that falls behind, restated here since
+-- they are local to it.
+local CAP, STALL_MS, HARD = 1024 * 1024, 1000, 8 * 1024 * 1024
+local CHUNK = string.rep("x", 65536)
+local FRAME = ("event: big\ndata: %s\n\n"):format(CHUNK)
+
+-- The bytes a raw client holds past its preamble, counted without
+-- joining them.
+local function received(c)
+    local n = 0
+    for _, s in ipairs(c.chunks) do
+        n = n + #s
+    end
+    return n - (c.from - 1)
+end
+
+-- Runs fn in one timer callback, a turn of the loop in which no stream
+-- drains, as an editor's timer or autocmd sends; a raise in fn is raised
+-- again here, where the case hears it.
+local function in_one_turn(fn)
+    local t = assert(uv.new_timer())
+    local res
+    assert(t:start(0, 0, function()
+        t:close()
+        res = { pcall(fn) }
+    end))
+    assert(
+        H.wait_for(function()
+            return res ~= nil
+        end, 2000),
+        "the timer ran within 2 s"
+    )
+    if not res[1] then
+        error(res[2], 0)
+    end
+end
+
+-- Sends 64 KiB frames in one turn while sock is listed and its queue is
+-- at most upto, at most max of them: how many went, and the turn's loop
+-- time.
+local function fill(inst, sock, upto, max)
+    local sent, at = 0, nil
+    in_one_turn(function()
+        while sent < max and vim.tbl_contains(inst.sse_clients, sock) and sock:get_write_queue_size() <= upto do
+            server.send_event(inst, "big", CHUNK)
+            sent = sent + 1
+        end
+        at = uv.now()
+    end)
+    return sent, at
+end
+
+-- Spies on sock's close: how often it ran, and at the first the bytes
+-- still queued and the loop time.
+local function watch_close(sock)
+    local methods = getmetatable(sock).__index
+    local real_close = methods.close
+    H.defer(function()
+        methods.close = real_close
+    end)
+    local seen = { closes = 0 }
+    methods.close = function(h, ...)
+        if h == sock then
+            seen.closes = seen.closes + 1
+            if seen.closes == 1 then
+                seen.held, seen.at = h:get_write_queue_size(), uv.now()
+            end
+        end
+        return real_close(h, ...)
+    end
+    return seen
+end
+
+-- Starts a raw client reading again after read_stop, into its chunks as
+-- H.raw_connect's reader does.
+local function resume(c)
+    assert(c.tcp:read_start(function(e, chunk)
+        if chunk then
+            table.insert(c.chunks, chunk)
+        else
+            c.eof, c.err = true, e
+        end
+    end))
+end
+
 -- A reader that stops reading and never closes raises no error on either
 -- path: once both ends' buffers are full, every frame waited in the
 -- server's write queue, which grew for as long as the stream stayed open
--- (7.85 MB after 128 events of 64 KiB, measured). A stream more than
--- 1 MiB behind when a frame is sent is dropped as a dead one is, so it
--- holds at most that and one frame, and a reader that keeps up is judged
--- on what it left unread, never on the size of one frame.
-H.case("Section 7: a stalled reader is dropped, a reading one is not", function()
-    local cap = 1024 * 1024
+-- (7.85 MB after 128 events of 64 KiB, measured). A stream whose queue
+-- has stayed over 1 MiB for longer than a second is now dropped at its
+-- next send, as a dead one is, so what a stalled reader holds is bounded
+-- by the grace (and by 8 MiB, Section 7c). The sends go on until the
+-- drop, since a kernel that takes more of a stalled stream than macOS
+-- does crosses the cap later.
+H.case("Section 7: a reader behind for longer than the grace is dropped, a reading one is not", function()
     local inst = serve({ sse_heartbeat_ms = 0 })
     local stalled = open_stream(inst)
     local reading = open_stream(inst)
     ok(listed(inst, 2), "both streams are listed")
     local stalled_sock, reading_sock = inst.sse_clients[1], inst.sse_clients[2]
-    -- The bytes still queued for the stalled stream when its socket closes.
-    local methods = getmetatable(stalled_sock).__index
-    local real_close = methods.close
-    H.defer(function()
-        methods.close = real_close
-    end)
-    local held
-    methods.close = function(h, ...)
-        if h == stalled_sock and held == nil then
-            held = h:get_write_queue_size()
-        end
-        return real_close(h, ...)
-    end
-    -- The bytes a raw client holds past its preamble, counted without
-    -- joining them.
-    local function received(c)
-        local n = 0
-        for _, s in ipairs(c.chunks) do
-            n = n + #s
-        end
-        return n - (c.from - 1)
-    end
+    local closed = watch_close(stalled_sock)
     local errs = #H.errors()
     -- A reader that neither reads nor closes: no error ever surfaces.
     assert(stalled.tcp:read_stop())
-    local chunk = string.rep("x", 65536)
-    local frame = ("event: big\ndata: %s\n\n"):format(chunk)
-    for _ = 1, 128 do
-        server.send_event(inst, "big", chunk)
-        vim.wait(5)
+    -- The queue is read before each send, in the same turn and at the
+    -- same loop time as the server's own read.
+    local sent, over_at = 0, nil
+    while sent < 400 and vim.tbl_contains(inst.sse_clients, stalled_sock) do
+        if not over_at and stalled_sock:get_write_queue_size() > CAP then
+            over_at = uv.now()
+        end
+        server.send_event(inst, "big", CHUNK)
+        sent = sent + 1
+        vim.wait(20)
     end
-    ok(listed(inst, 1), "the stalled reader is dropped")
-    methods.close = real_close
+    ok(listed(inst, 1), ("the stalled reader is dropped (after %d sends)"):format(sent))
     ok(inst.sse_clients[1] == reading_sock, "and the stream still listed is the reading one")
     ok(
-        stalled_sock:is_closing() and inst.open_conns == 1,
-        ("and the stalled one's socket is closed, which frees its place (%d held, want 1)"):format(inst.open_conns)
+        closed.closes == 1 and inst.open_conns == 1,
+        ("and the stalled one's socket is closed once, which frees its place (%d closes, %d held, want 1 and 1)"):format(
+            closed.closes,
+            inst.open_conns
+        )
     )
     ok(
-        held ~= nil and held > cap and held <= cap + #frame,
-        ("it was dropped more than 1 MiB behind, and at most one frame more (%s bytes queued)"):format(tostring(held))
+        closed.held ~= nil and closed.held > CAP and closed.held <= HARD,
+        ("it was dropped more than 1 MiB behind and under the 8 MiB ceiling (%s bytes queued)"):format(
+            tostring(closed.held)
+        )
     )
-    local want = 128 * #frame
+    local waited = closed.at and over_at and closed.at - over_at
+    ok(
+        waited ~= nil and waited > STALL_MS and waited < STALL_MS + 500,
+        ("once its queue had stayed over 1 MiB for the grace, 1 s, and within half a second more (%s ms)"):format(
+            tostring(waited)
+        )
+    )
+    local want = sent * #FRAME
     H.wait_for(function()
         return received(reading) >= want
     end, 3000)
     ok(
-        reading:read(0):sub(reading.from) == frame:rep(128),
-        ("the reading stream hears all 128 events whole (%d of %d bytes)"):format(received(reading), want)
+        reading:read(0):sub(reading.from) == FRAME:rep(sent),
+        ("the reading stream hears all %d events whole (%d of %d bytes)"):format(sent, received(reading), want)
     )
-    -- Judged after its write, a frame larger than the cap would drop a
-    -- reader that keeps up: macOS took 1.4 to 1.6 MB of one at once
-    -- (measured), and the rest waits in the queue.
+    -- A frame larger than the cap drops no reader that keeps up: macOS
+    -- takes 0.3 to 1.6 MB of one at once (measured, with curl too), and
+    -- the rest drains from the queue well within the grace.
     local payload = string.rep("y", 8 * 1024 * 1024)
     local huge = ("event: huge\ndata: %s\n\n"):format(payload)
     local after = "event: after\ndata: {}\n\n"
@@ -534,6 +626,165 @@ H.case("Section 7: a stalled reader is dropped, a reading one is not", function(
     ok(
         reading:read(0):sub(reading.from + want) == huge .. after and vim.tbl_contains(inst.sse_clients, reading_sock),
         "a reading stream hears an event larger than the cap whole, and the next, and stays listed"
+    )
+    eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- A queue read at each send judged what the last frame left behind, so a
+-- reader that keeps up was dropped, with a cut frame and an end, when a
+-- second frame came before a 3 MiB one drained or within a burst of
+-- 64 KiB frames (measured with curl too). No stream drains within one
+-- turn of the loop, and a turn takes no loop time, so the grace holds
+-- through one.
+H.case("Section 7b: a reader that keeps up is never dropped for one large frame or one burst", function()
+    local function keeps_up(sends)
+        local inst = serve({ sse_heartbeat_ms = 0 })
+        local c = open_stream(inst)
+        assert(listed(inst, 1), "the stream was listed within 2 s")
+        local sock = inst.sse_clients[1]
+        local want = {}
+        for i, s in ipairs(sends) do
+            want[i] = ("event: %s\ndata: %s\n\n"):format(s[1], s[2])
+        end
+        want = table.concat(want)
+        in_one_turn(function()
+            for _, s in ipairs(sends) do
+                server.send_event(inst, s[1], s[2])
+            end
+        end)
+        H.wait_for(function()
+            return c.eof or received(c) >= #want
+        end, 5000)
+        return vim.tbl_contains(inst.sse_clients, sock) and c:read(0):sub(c.from) == want, received(c), #want
+    end
+    local errs = #H.errors()
+    local kept, got, want = keeps_up({ { "big", string.rep("z", 3 * 1024 * 1024) }, { "after", "{}" } })
+    ok(
+        kept,
+        ("a reading stream sent a 3 MiB frame and a small one in one turn stays listed and hears both whole (%d of %d bytes)"):format(
+            got,
+            want
+        )
+    )
+    local burst = {}
+    for i = 1, 40 do
+        burst[i] = { "big", CHUNK }
+    end
+    kept, got, want = keeps_up(burst)
+    ok(
+        kept,
+        ("a reading stream sent 40 frames of 64 KiB in one turn stays listed and hears all whole (%d of %d bytes)"):format(
+            got,
+            want
+        )
+    )
+    eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- No loop time passes within one turn, so the grace never ends there:
+-- the ceiling alone bounds a stalled reader under a burst.
+H.case("Section 7c: a stream more than 8 MiB behind is dropped at once", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local stalled = open_stream(inst)
+    assert(listed(inst, 1), "the stream was listed within 2 s")
+    local sock = inst.sse_clients[1]
+    local closed = watch_close(sock)
+    local errs = #H.errors()
+    assert(stalled.tcp:read_stop())
+    local sent = fill(inst, sock, math.huge, 400)
+    ok(
+        not vim.tbl_contains(inst.sse_clients, sock),
+        ("a stalled reader under a burst in one turn is dropped within it (after %d sends)"):format(sent)
+    )
+    ok(
+        closed.closes == 1 and inst.open_conns == 0,
+        ("and its socket is closed once, which frees its place (%d closes, %d held, want 1 and 0)"):format(
+            closed.closes,
+            inst.open_conns
+        )
+    )
+    ok(
+        closed.held ~= nil and closed.held > HARD and closed.held <= HARD + #FRAME,
+        ("it was dropped more than 8 MiB behind, and at most one frame more (%s bytes queued)"):format(
+            tostring(closed.held)
+        )
+    )
+    eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- With nothing else sent the beat is the send that judges a stream, so a
+-- stalled reader is found within the grace and one interval.
+H.case("Section 7d: the heartbeat alone drops a stalled reader after the grace", function()
+    local inst = serve({ sse_heartbeat_ms = 100 })
+    local stalled = open_stream(inst)
+    assert(listed(inst, 1), "the stream was listed within 2 s")
+    local sock = inst.sse_clients[1]
+    local closed = watch_close(sock)
+    local errs = #H.errors()
+    assert(stalled.tcp:read_stop())
+    local _, fell_at = fill(inst, sock, 2 * CAP, 256)
+    ok(
+        vim.tbl_contains(inst.sse_clients, sock) and sock:get_write_queue_size() > CAP,
+        "a turn of events leaves a stalled reader more than 1 MiB behind and still listed"
+    )
+    H.wait_for(function()
+        return closed.closes > 0
+    end, 3000)
+    local waited = closed.at and closed.at - fell_at
+    ok(
+        waited ~= nil and waited > STALL_MS and waited < STALL_MS + 100 + 400,
+        ("the beats alone drop it once it has stayed behind for the grace, within an interval more (%s ms)"):format(
+            tostring(waited)
+        )
+    )
+    ok(
+        closed.closes == 1 and inst.open_conns == 0 and server.connected_client_count(inst) == 0,
+        ("and its socket is closed once, which frees its place (%d closes, %d held, want 1 and 0)"):format(
+            closed.closes,
+            inst.open_conns
+        )
+    )
+    eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- A stream judged over the cap that then drains is judged afresh: its
+-- time over the cap starts again at the next send that finds it behind,
+-- so a large frame and a small one after the grace drop no reader that
+-- stalled once.
+H.case("Section 7e: a reader that resumes within the grace stays", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local c = open_stream(inst)
+    assert(listed(inst, 1), "the stream was listed within 2 s")
+    local sock = inst.sse_clients[1]
+    local errs = #H.errors()
+    assert(c.tcp:read_stop())
+    local sent, fell_at = fill(inst, sock, 2 * CAP, 256)
+    vim.wait(300)
+    resume(c)
+    local early = FRAME:rep(sent)
+    H.wait_for(function()
+        return received(c) >= #early
+    end, 3000)
+    vim.wait(math.max(0, fell_at + STALL_MS + 200 - uv.now()))
+    local big = string.rep("z", 3 * 1024 * 1024)
+    local pair = ("event: big\ndata: %s\n\nevent: after\ndata: {}\n\n"):format(big)
+    in_one_turn(function()
+        server.send_event(inst, "big", big)
+        server.send_event(inst, "after", "{}")
+    end)
+    H.wait_for(function()
+        return c.eof or received(c) >= #early + #pair
+    end, 5000)
+    ok(
+        vim.tbl_contains(inst.sse_clients, sock),
+        "a reader that fell more than 1 MiB behind and resumed within the grace stays listed, through a 3 MiB frame and a small one in one turn after it"
+    )
+    ok(
+        c:read(0):sub(c.from) == early .. pair,
+        ("and hears every frame whole, those sent while it stalled and after (%d of %d bytes)"):format(
+            received(c),
+            #early + #pair
+        )
     )
     eq(#H.errors(), errs, "and nothing raises")
 end)
