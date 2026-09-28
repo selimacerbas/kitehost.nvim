@@ -961,10 +961,10 @@ local function stream_file(sock, abs_path, extra_headers, shown)
     end
     -- From here the transfer owns the descriptor and closes it on every
     -- exit, once. A peer that resets or goes away shows as write's fail
-    -- tuple (EBADF on a closed socket) or its callback's error, never as a
-    -- raise; a loop that read neither stopped there with the file open,
-    -- one descriptor per abandoned download until the editor quit
-    -- (measured).
+    -- tuple or its callback's error (EPIPE after a reset, EBADF on a
+    -- socket closed under it), never as a raise; a loop that read neither
+    -- stopped there with the file open, one descriptor per abandoned
+    -- download until the editor quit (measured).
     local fd_open = true
     local function close_fd()
         if fd_open then
@@ -1683,6 +1683,14 @@ local function on_read(conn, err, chunk)
         if conn.sse then
             sse_drop(conn.inst, sock)
             close_once(sock)
+            return
+        end
+        -- A handled connection's socket is its response's, which closes it
+        -- once written. Closed here, it cut a half-closed client's file to
+        -- its head and a large page where its write stood (measured); a
+        -- reset reaches the response as its write's error.
+        if conn.handled then
+            sock:read_stop()
             return
         end
         -- A head cut off by the client's FIN still gets an answer; a connect

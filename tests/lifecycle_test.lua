@@ -1,8 +1,10 @@
 -- tests/lifecycle_test.lua
 -- What the server holds while it runs and how it lets go of it: a socket
 -- is closed once, whoever ends the connection first, a response whose
--- shutdown cannot start closes its socket at once, and a file transfer
--- closes its file once, however it ends. A raise inside a luv callback,
+-- shutdown cannot start closes its socket at once, a file transfer
+-- closes its file once, however it ends, and a client that half-closes
+-- after its request still reads its whole response, where an event
+-- stream's half-close ends the stream. A raise inside a luv callback,
 -- where every handler runs, leaves the exit code at 0, so the rows read
 -- the ledger's error capture (H.errors) and count the handles and the
 -- descriptors directly. hello.txt and big.bin (its bytes in big) are the
@@ -51,6 +53,21 @@ local function errors_since(seen)
     return lines
 end
 
+-- Samples sample() until it gives one value ten times in a row, within
+-- ms: whether it did, and the value. A peer's end reaches the server a
+-- loop turn after the client's close, and a transfer's next read a turn
+-- after its write, so a count is read once it holds still.
+local function steady(sample, ms)
+    local n, same = sample(), 0
+    local held = H.wait_for(function()
+        local now = sample()
+        same = now == n and same + 1 or 0
+        n = now
+        return same >= 10
+    end, ms)
+    return held, n
+end
+
 -- A client that stopped reading and then ended its side while a page was
 -- still being written had its socket closed by the read path; libuv then
 -- ran the pending shutdown's callback, whose second close raised "handle
@@ -58,6 +75,8 @@ end
 -- any client that asks (30 of 30 connections on 0.12.5 and 0.10.0). The
 -- page is 16 MiB, past what the socket buffers of both ends take (1.6 MiB
 -- at most on macOS, measured), so the write is still pending at the end.
+-- The read path leaves a response's socket to the response, so the end
+-- and the reset after it reach one close.
 H.case("Section 1: a peer that ends its side during a response is closed once", function()
     H.write_file(root .. "/large.html", "<html><body>" .. string.rep("p", 16 * 1024 * 1024) .. "</body></html>")
     local inst = serve()
@@ -80,11 +99,12 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
         assert(c.tcp:read_stop())
         assert(c:send(get("/large.html", port)))
         assert(c:half_close())
-        -- The server reads the end before this client closes: a close with
-        -- the page unread sends a reset, which ends the write instead.
+        -- The server reads the end before this client closes, and the page
+        -- keeps the socket while it is written: the close, with the page
+        -- unread, then sends a reset, which ends the write.
         assert(
-            H.wait_for(function()
-                return H.handle_count("tcp") <= sockets + 1
+            steady(function()
+                return H.handle_count("tcp")
             end, 1000),
             "the server read the half-close within 1 s"
         )
@@ -128,8 +148,8 @@ H.case("Section 2: a response whose shutdown cannot start closes its socket at o
     local res = H.responses(data)[1]
     eq(res and res.status, 200, "a page whose shutdown returns nil is answered")
     ok(eof, "and its socket closes at once, with no callback to wait for")
-    -- Counted while the client stays open: the client's own end would have
-    -- the read path close the server's socket anyway.
+    -- Counted while the client stays open, whose socket is the one above
+    -- the baseline.
     ok(
         H.wait_for(function()
             return H.handle_count("tcp") == sockets + 1
@@ -138,21 +158,6 @@ H.case("Section 2: a response whose shutdown cannot start closes its socket at o
     )
     c:close()
 end)
-
--- Samples sample() until it gives one value ten times in a row, within
--- ms: whether it did, and the value. A peer's end reaches the server a
--- loop turn after the client's close, and a transfer's next read a turn
--- after its write, so a count is read once it holds still.
-local function steady(sample, ms)
-    local n, same = sample(), 0
-    local held = H.wait_for(function()
-        local now = sample()
-        same = now == n and same + 1 or 0
-        n = now
-        return same >= 10
-    end, ms)
-    return held, n
-end
 
 -- A download its client abandoned left the file open: the write into the
 -- gone socket failed, by its return (EBADF) or its callback (EPIPE, or
@@ -489,6 +494,122 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     eq(#H.errors(), errs, "and reaches the editor as no callback error")
     ok(eof and res ~= nil and res.body == "hello", "and ends the connection")
     eq(select(2, files()), 0, "no transfer closed its file twice")
+end)
+
+-- A client that sent its request and then ended its side (a FIN, as a
+-- script's shutdown or a proxy's half-close sends) had the socket closed
+-- under its response: a file came back as its head alone, and a page
+-- larger than the socket buffers was cut where its write stood
+-- (measured). An event stream is the one response that never ends by
+-- itself, so its client's end still closes it and takes it off the
+-- client list.
+H.case("Section 4: a client that half-closes after its request reads it all", function()
+    H.write_file(root .. "/page.html", "<html><body>" .. string.rep("q", 4 * 1024 * 1024) .. "</body></html>")
+    local inst = serve()
+    local port = inst.port
+    local held, fds = steady(function()
+        return H.fd_count() or 0
+    end, 1000)
+    assert(held, "the descriptor count settled before the requests")
+    -- One request, then the half-close, read to the server's end or ms:
+    -- the responses and whether the half-close went out. A server that
+    -- answered and closed with a request body's tail unread resets the
+    -- connection, and the half-close then finds it gone (ENOTCONN,
+    -- measured), so the rows with a body rule on the response alone.
+    -- after_shut runs once the half-close has gone out.
+    local function half_closed(bytes, ms, after_shut)
+        local c = assert(H.raw_connect(port))
+        assert(c:send(bytes))
+        local shut = c:half_close()
+        if after_shut then
+            after_shut()
+        end
+        local data = c:read(ms)
+        c:close()
+        return H.responses(data), shut
+    end
+    local res, shut = half_closed(get("/big.bin", port), 10000)
+    ok(shut and res[1] ~= nil and res[1].body == big, "a 2 MiB body arrives whole after the half-close")
+    -- Five bytes could go out whole before the FIN landed (2 of 9 runs,
+    -- measured), so the file's read is held until the server has read it.
+    local real_read, release = uv.fs_read, nil
+    H.defer(function()
+        uv.fs_read = real_read
+    end)
+    uv.fs_read = function(fd, size, offset, cb)
+        if type(cb) ~= "function" then
+            return real_read(fd, size, offset)
+        end
+        uv.fs_read = real_read
+        release = function()
+            assert(real_read(fd, size, offset, cb))
+        end
+        return true
+    end
+    res, shut = half_closed(get("/hello.txt", port), 3000, function()
+        assert(
+            H.wait_for(function()
+                return release ~= nil
+            end, 1000),
+            "the transfer asked for its first read within 1 s"
+        )
+        uv.fs_read = real_read
+        assert(
+            steady(function()
+                return H.handle_count("tcp")
+            end, 1000),
+            "the server read the half-close within 1 s"
+        )
+        release()
+    end)
+    ok(shut and res[1] ~= nil and res[1].body == "hello", "a small body arrives whole after the half-close")
+    res, shut = half_closed(get("/page.html", port), 10000)
+    ok(
+        shut and res[1] ~= nil and res[1].complete and #res[1].body > 4 * 1024 * 1024,
+        "a 4 MiB page arrives whole after the half-close"
+    )
+    local answered = 0
+    local body = string.rep("b", 65536)
+    for _ = 1, 20 do
+        res = half_closed(
+            ("GET /index.html HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: %d\r\n\r\n%s"):format(port, #body, body),
+            3000
+        )
+        answered = answered + (#res == 1 and 1 or 0)
+    end
+    eq(answered, 20, "each of 20 half-closed requests with a 64 KiB body gets its response")
+    if H.fd_count() then
+        ok(
+            H.wait_for(function()
+                return H.fd_count() == fds
+            end, 3000),
+            "and no descriptor is left open"
+        )
+    else
+        H.skip("and no descriptor is left open (no descriptor listing on this platform)")
+    end
+
+    local c = assert(H.raw_connect(port))
+    assert(c:send(get("/__live/events", port)))
+    c:read(2000, function(d)
+        return d:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    assert(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 1
+        end, 2000),
+        "the event stream opened within 2 s"
+    )
+    assert(c:half_close())
+    ok(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 0
+        end, 2000),
+        "an event stream whose client half-closes leaves the client list"
+    )
+    local _, eof = c:read(2000)
+    ok(eof, "and its connection ends")
+    c:close()
 end)
 
 H.finish()
