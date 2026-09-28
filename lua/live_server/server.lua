@@ -668,8 +668,22 @@ local function sse_send(inst, text)
     end
 end
 
+-- One event frame: every payload line its own data: line, so a line break
+-- in a payload (a path, an injected value) cannot end the frame early or
+-- start a field of its own. SSE ends a line at CR, LF or CRLF. A one-line
+-- payload keeps the bytes it always had, which every reader relies on.
+local function sse_frame(event, payload)
+    local text = payload:gsub("\r\n", "\n"):gsub("\r", "\n")
+    local out = { "event: " .. event .. "\n" }
+    for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
+        table.insert(out, "data: " .. line .. "\n")
+    end
+    table.insert(out, "\n")
+    return table.concat(out)
+end
+
 local function sse_broadcast(inst, event, payload)
-    sse_send(inst, ("event: %s\ndata: %s\n\n"):format(event, payload or "{}"))
+    sse_send(inst, sse_frame(event, payload or "{}"))
 end
 
 -- A changed path relative to the root, slash-separated, which the dot
@@ -2511,6 +2525,10 @@ function S.reload(inst, reason_path)
 end
 
 function S.send_event(inst, event_type, data)
+    -- A line break in the name would start a field of its own (retry, id).
+    if tostring(event_type):find("[\r\n]") then
+        error("send_event: an event name holds no line break", 2)
+    end
     sse_broadcast(inst, event_type, data or "{}")
 end
 

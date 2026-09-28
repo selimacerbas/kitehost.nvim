@@ -947,4 +947,38 @@ H.case("Section 9b: the payload's bytes are the same on every process", function
     end
 end)
 
+H.case("Section 10: one frame per event, whatever the payload holds", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local c = open_stream(inst)
+    -- The bytes after byte from, once a whole frame of this event arrived.
+    local function frame_of(from, event)
+        return c:read(2000, function(d)
+            local at = d:find("event: " .. event .. "\n", from, true)
+            return at ~= nil and d:find("\n\n", at, true) ~= nil
+        end):sub(from)
+    end
+    server.send_event(inst, "multi", "l1\nl2\r\nl3\rl4")
+    local data = frame_of(c.from, "multi")
+    ok(
+        data:find("event: multi\ndata: l1\ndata: l2\ndata: l3\ndata: l4\n\n", 1, true) ~= nil,
+        "each payload line is its own data line"
+    )
+    local from = c.from + #data
+    server.send_event(inst, "empty", "")
+    data = frame_of(from, "empty")
+    ok(
+        data:find("event: empty\ndata: \n\n", 1, true) == 1,
+        "an empty payload is one empty data line: " .. vim.inspect(data)
+    )
+    from = from + #data
+    H.http_get(
+        ("http://127.0.0.1:%d/__live/inject?event=x&data=a%%0A%%0Aevent:%%20evil%%0Adata:%%20pwn"):format(inst.port)
+    )
+    data = c:read(2000, function(d)
+        return d:find("event: x", from, true) ~= nil and d:find("pwn", from, true) ~= nil
+    end):sub(from)
+    ok(not data:find("\nevent: evil\n", 1, true), "a line break in injected data forges no frame")
+    ok(not pcall(server.send_event, inst, "a\nretry: 1", "{}"), "an event name with a line break raises")
+end)
+
 H.finish()
