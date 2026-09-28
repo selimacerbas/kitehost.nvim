@@ -126,6 +126,16 @@ local SERVER_FIELDS = {
     ["connection"] = true,
 }
 
+-- Every socket closes here. A peer that ended its side while a response
+-- was still being written had its socket closed by the read path; libuv
+-- then ran the pending shutdown's callback (ECANCELED), whose second close
+-- raised "handle is already closing" inside a luv callback (measured).
+local function close_once(sock)
+    if not sock:is_closing() then
+        sock:close()
+    end
+end
+
 -- headers is a table the caller built for this one response, which the
 -- length and Connection are written into.
 local function send_response(sock, status, headers, body)
@@ -138,9 +148,14 @@ local function send_response(sock, status, headers, body)
     if body then
         sock:write(body)
     end
-    sock:shutdown(function()
-        sock:close()
+    local shut = sock:shutdown(function()
+        close_once(sock)
     end)
+    -- shutdown returns nil, err (ENOTCONN) on a socket that cannot shut and
+    -- then never calls back.
+    if not shut then
+        close_once(sock)
+    end
 end
 
 local function error_page(status, title, detail)
@@ -549,9 +564,7 @@ local function sse_broadcast(inst, event, payload)
             cl:write(line)
         end)
         if not ok then
-            pcall(function()
-                cl:close()
-            end)
+            close_once(cl)
             table.remove(inst.sse_clients, i)
         else
             i = i + 1
@@ -939,7 +952,7 @@ local function stream_file(sock, abs_path, extra_headers, shown)
             if err_read or not data then
                 uv.fs_close(fd)
                 sock:shutdown(function()
-                    sock:close()
+                    close_once(sock)
                 end)
                 return
             end
@@ -948,7 +961,7 @@ local function stream_file(sock, abs_path, extra_headers, shown)
                 if #data < 64 * 1024 then
                     uv.fs_close(fd)
                     sock:shutdown(function()
-                        sock:close()
+                        close_once(sock)
                     end)
                 else
                     read_chunk()
@@ -1008,7 +1021,7 @@ local function address_free(ip, port)
     else
         free, err, name = probe:getsockname()
     end
-    probe:close()
+    close_once(probe)
     if free then
         return true
     end
@@ -1590,9 +1603,7 @@ local function on_read(conn, err, chunk)
     if err or not chunk then
         if conn.sse then
             sse_drop(conn.inst, sock)
-            if not sock:is_closing() then
-                sock:close()
-            end
+            close_once(sock)
             return
         end
         -- A head cut off by the client's FIN still gets an answer; a connect
@@ -1602,7 +1613,7 @@ local function on_read(conn, err, chunk)
             conn.buf = ""
             return http_400(sock, "Incomplete request head")
         end
-        sock:close()
+        close_once(sock)
         return
     end
     -- One request per connection: bytes after the head (a pipelined request,
@@ -1891,7 +1902,7 @@ function S.start(cfg)
     -- shows the message to the user, so the raise is at level 0.
     local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, checked.port)
     if not called or not bound_ok then
-        tcp:close()
+        close_once(tcp)
         local reason = called and bind_err or bound_ok
         error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(reason), 0)
     end
@@ -1902,7 +1913,7 @@ function S.start(cfg)
     -- a bind's EADDRINUSE until here, so a failure reads as the bind's.
     local bound, sockname_err = tcp:getsockname()
     if not bound then
-        tcp:close()
+        close_once(tcp)
         error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(sockname_err), 0)
     end
 
@@ -1917,13 +1928,13 @@ function S.start(cfg)
     local here = host .. ":" .. tostring(bound.port)
     local ruled, loopback = pcall(S.wildcard_loopback, bound.ip)
     if not ruled then
-        tcp:close()
+        close_once(tcp)
         error(("Failed to bind %s: the loopback rule raised: %s"):format(here, tostring(loopback)), 0)
     end
     if loopback then
         local free, why, why_name = address_free(loopback, bound.port)
         if not free then
-            tcp:close()
+            close_once(tcp)
             local there = tostring(loopback) .. ":" .. tostring(bound.port)
             if why_name == "EADDRINUSE" then
                 error(
@@ -2003,7 +2014,7 @@ function S.start(cfg)
         end)
     end)
     if not listening then
-        tcp:close()
+        close_once(tcp)
         error("Failed to listen on " .. host .. ":" .. tostring(actual_port) .. ": " .. tostring(listen_err), 0)
     end
     -- Opened once the server listens: a failed listen closed the socket and
@@ -2040,15 +2051,11 @@ function S.stop(inst)
         end)
     end
     for _, cl in ipairs(inst.sse_clients) do
-        pcall(function()
-            cl:close()
-        end)
+        close_once(cl)
     end
     inst.sse_clients = {}
     stop_fs_watch(inst)
-    pcall(function()
-        inst.handle:close()
-    end)
+    close_once(inst.handle)
 end
 
 function S.update_target(inst, new_root, new_index)
