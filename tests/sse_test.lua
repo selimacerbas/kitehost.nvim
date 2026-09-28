@@ -422,7 +422,11 @@ H.case("Section 6e: the writes stop cancels raise nothing", function()
         end)
     end
     -- The client stops reading, so the frames fill both ends' buffers and
-    -- the rest wait in the server's write queue.
+    -- the rest wait in the server's write queue. macOS grows both buffers
+    -- to 4 MiB, so the queue is read with no loop turn before stop: with
+    -- one between them, a floor run found every write done and none to
+    -- cancel.
+    local errs = #H.errors()
     assert(c.tcp:read_stop())
     local big = string.rep("x", 1024 * 1024)
     local sends = 0
@@ -430,9 +434,9 @@ H.case("Section 6e: the writes stop cancels raise nothing", function()
         server.send_event(inst, "big", big)
         sends = sends + 1
     end
-    assert(sock:get_write_queue_size() > 0, "a write was left queued within 64 MiB")
     server.send_event(inst, "big", big)
-    local errs = #H.errors()
+    local queued = sock:get_write_queue_size()
+    assert(queued > 0, "a write was left queued within 64 MiB")
     server.stop(inst)
     H.wait_for(function()
         return cancelled > 0
@@ -440,7 +444,11 @@ H.case("Section 6e: the writes stop cancels raise nothing", function()
     methods.write = real_write
     ok(
         cancelled > 0 and #other == 0,
-        ("stop cancels the writes still queued (%d ECANCELED, others: %s)"):format(cancelled, table.concat(other, ", "))
+        ("stop cancels the writes still queued (%d bytes; %d ECANCELED, others: %s)"):format(
+            queued,
+            cancelled,
+            table.concat(other, ", ")
+        )
     )
     eq(#H.errors(), errs, "and their callbacks raise nothing")
 end)
