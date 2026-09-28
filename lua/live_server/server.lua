@@ -2017,8 +2017,13 @@ end
 -- caller reads S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
-    local tcp = uv.new_tcp()
     local host = checked.host
+    -- Unread, a nil here was indexed by the bind and raised at this file's
+    -- line, naming nothing a user could act on.
+    local tcp, tcp_err = uv.new_tcp()
+    if not tcp then
+        error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": no socket: " .. tostring(tcp_err), 0)
+    end
     -- luv returns a failed bind as nil, err, which a pcall alone never sees,
     -- and listen binds an unbound socket to every interface. bind raises
     -- only on an address it cannot parse, which the pcall catches. The caller
@@ -2127,11 +2132,33 @@ function S.start(cfg)
         asset_root = checked.asset_root,
     }
 
+    -- A connection the server can make no handle for is never accepted,
+    -- and libuv then stops polling the listener, so the server takes no
+    -- connection after it; a raise there did the same and told the user
+    -- only of a callback error (measured, the handle stubbed to nil). The
+    -- user is told once.
+    local warned = false
     local listening, listen_err = tcp:listen(128, function(err_listen)
         if err_listen then
             return
         end
-        local sock = uv.new_tcp()
+        local sock, sock_err = uv.new_tcp()
+        if not sock then
+            if not warned then
+                warned = true
+                vim.schedule(function()
+                    util.notify(
+                        ("live-server: port %d stopped accepting connections (%s); restart the server"):format(
+                            actual_port,
+                            tostring(sock_err)
+                        ),
+                        { notify = true },
+                        "WARN"
+                    )
+                end)
+            end
+            return
+        end
         -- A failed accept leaves a handle made and never opened, which
         -- nothing else would close.
         if not tcp:accept(sock) then
@@ -2186,11 +2213,12 @@ function S.stop(inst)
         close_once(cl)
     end
     inst.sse_clients = {}
-    -- stop reached the listener and the event streams alone, so an idle
-    -- client, a head half sent, a stalled download with its file open and
-    -- a page mid-write outlived it (measured). A transfer closes its file
-    -- when its socket closes under it; the emptied set leaves a second
-    -- stop nothing to close.
+    -- Of its sockets, stop reached the listener and the event streams
+    -- alone, so an idle client, a head half sent, a stalled download with
+    -- its file open and a page mid-write outlived it (measured). A
+    -- transfer closes its file when its socket closes under it. close_once
+    -- makes a second stop close nothing; the emptied set drops a stopped
+    -- server's references to its sockets.
     for conn in pairs(inst.conns) do
         close_once(conn.sock)
     end

@@ -5,12 +5,13 @@
 -- closes its file once, however it ends, and a client that half-closes
 -- after its request still reads its whole response, where an event
 -- stream's half-close ends the stream; stop closes every connection the
--- server accepted, whose set holds the open ones alone. A raise inside a
--- luv callback, where every handler runs, leaves the exit code at 0, so
--- the rows read the ledger's error capture (H.errors) and count the
--- handles and the descriptors directly. hello.txt and big.bin (its bytes
--- in big) are the small and the 2 MiB file the transfer rows serve, and
--- serve's cfg and get's extra are what those rows pass.
+-- server accepted, whose set holds the open ones and those closed since
+-- the last accept. A raise inside a luv callback, where every handler
+-- runs, leaves the exit code at 0, so the rows read the ledger's error
+-- capture (H.errors) and count the handles and the descriptors directly.
+-- hello.txt and big.bin (its bytes in big) are the small and the 2 MiB
+-- file the transfer rows serve, and serve's cfg and get's extra are what
+-- those rows pass.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -614,13 +615,13 @@ H.case("Section 4: a client that half-closes after its request reads it all", fu
     c:close()
 end)
 
--- stop closed the listener and the event streams and nothing else, so a
--- stopped server kept every other connection it had accepted: an idle
--- client, one mid-head, a download stalled on its client with its file
--- open, and a page whose shutdown waited on its write (the download held
--- its file one second after stop, measured). Each shape is counted back
--- after stop and before its client closes, since a client's close ends
--- the server's side by itself.
+-- Of its sockets, stop closed the listener and the event streams alone,
+-- so a stopped server kept every other connection it had accepted: an
+-- idle client, one mid-head, a download stalled on its client with its
+-- file open, and a page whose shutdown waited on its write (the download
+-- held its file one second after stop, measured). Each shape is counted
+-- back after stop and before its client closes, since a client's close
+-- ends the server's side by itself.
 H.case("Section 5: stop closes every connection it accepted", function()
     H.write_file(root .. "/large.bin", string.rep("b", 16 * 1024 * 1024))
     H.write_file(root .. "/large.html", "<html><body>" .. string.rep("p", 16 * 1024 * 1024) .. "</body></html>")
@@ -799,27 +800,43 @@ H.case("Section 5: stop closes every connection it accepted", function()
 end)
 
 -- The set stop reads: a connection enters it at its accept and leaves it
--- at a later accept once closed, so a server that answered many requests
--- holds none of them. An accept that fails leaves the handle the server
--- made for it unopened, and nothing closed it.
-H.case("Section 5b: the server holds its open connections alone", function()
+-- at a later accept once closed, so it holds the open connections and
+-- those closed since the last accept, however many came before. An
+-- accept that fails leaves the handle the server made for it unopened,
+-- and nothing closed it. A handle the server cannot make for a connection
+-- raised in the listen callback, where the user saw a callback error and
+-- no word that the server had stopped taking connections.
+H.case("Section 5b: the set holds the open connections and those closed since the last accept", function()
     local inst = serve()
     local port = inst.port
+    local function tcp_count()
+        return H.handle_count("tcp")
+    end
     local answered = 0
     for _ = 1, 100 do
         local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
         answered = answered + (res and res.status == 200 and 1 or 0)
     end
     assert(answered == 100, "the server answered 100 requests")
-    local n = type(inst.conns) == "table" and vim.tbl_count(inst.conns) or nil
-    ok(
-        n ~= nil and n <= 1,
-        ("100 connections one after another leave at most the last in the set (got %s)"):format(tostring(n))
+    -- Once every socket of the 100 is closing, the next accept leaves its
+    -- own connection alone in the set.
+    local held, tcps = steady(tcp_count, 1000)
+    assert(held, "the tcp count settled after the requests")
+    local idle = assert(H.raw_connect(port))
+    assert(
+        H.wait_for(function()
+            return tcp_count() == tcps + 2
+        end, 1000),
+        "the server accepted one more connection within 1 s"
     )
+    eq(
+        type(inst.conns) == "table" and vim.tbl_count(inst.conns) or nil,
+        1,
+        "after 100 connections one after another, the next accept leaves its own alone in the set"
+    )
+    idle:close()
 
-    local held, tcps = steady(function()
-        return H.handle_count("tcp")
-    end, 1000)
+    held, tcps = steady(tcp_count, 1000)
     assert(held, "the tcp count settled before the failed accept")
     -- No real accept fails on demand. The stub takes the connection into a
     -- handle of its own and closes it, as libuv closes the descriptor of an
@@ -858,6 +875,52 @@ H.case("Section 5b: the server holds its open connections alone", function()
     c:close()
     local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
     eq(res and res.status, 200, "and the server answers the next connection")
+
+    -- A fresh server, since the listener takes no connection after a
+    -- handle it could not make. The client's handle is made on the suite's
+    -- own stack and the server's in the listen callback, a fast event, so
+    -- only the server's call gets nil.
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    local stuck = serve()
+    held, tcps = steady(tcp_count, 1000)
+    assert(held, "the tcp count settled before the handle that cannot be made")
+    local errs = #H.errors()
+    local real_new_tcp = uv.new_tcp
+    H.defer(function()
+        uv.new_tcp = real_new_tcp
+    end)
+    uv.new_tcp = function(...)
+        if not vim.in_fast_event() then
+            return real_new_tcp(...)
+        end
+        uv.new_tcp = real_new_tcp
+        return nil, "ENOMEM: stubbed", "ENOMEM"
+    end
+    local lost = assert(H.raw_connect(stuck.port))
+    H.wait_for(function()
+        return #notes > 0
+    end, 1000)
+    uv.new_tcp = real_new_tcp
+    steady(function()
+        return #notes
+    end, 1000)
+    local note = notes[1]
+    ok(
+        #notes == 1
+            and note.level == vim.log.levels.WARN
+            and note.msg:find("stopped accepting connections", 1, true) ~= nil,
+        ("a connection the server can make no socket for is warned of once, at WARN (%d notices)"):format(#notes)
+    )
+    eq(#H.errors(), errs, "and raises nothing")
+    eq(tcp_count(), tcps + 1, "and the server makes no socket for it")
+    lost:close()
 end)
 
 H.finish()

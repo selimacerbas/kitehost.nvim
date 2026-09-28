@@ -7,12 +7,12 @@
 -- entry no Host can match), live, features, host, a port it cannot hold
 -- or a root that is no string or does not resolve; a bind to an address
 -- this machine lacks or to a port in use raises naming it and leaves no
--- socket, and a failed listen leaves no socket, timer or watcher. A
--- wildcard bind raises unless the loopback address its URL names is free,
--- and its probe of that address is never left open. A
--- pattern the check cannot read past its literal starts and gates every
--- path it is asked about, and each option is read from the caller's table
--- once.
+-- socket, a socket that cannot be made raises naming it, and a failed
+-- listen leaves no socket, timer or watcher. A wildcard bind raises
+-- unless the loopback address its URL names is free, and its probe of
+-- that address is never left open. A pattern the check cannot read past
+-- its literal starts and gates every path it is asked about, and each
+-- option is read from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -722,6 +722,32 @@ H.case("a root that does not resolve is refused before any socket opens", functi
         )
         eq(bad_after, before, ("root = %s opens no socket"):format(case[1]))
     end
+end)
+
+-- new_tcp's nil went unread, so the bind indexed it and raised at the
+-- server's own line, naming nothing a user could act on.
+H.case("a start that cannot make its socket raises, naming it, and opens nothing", function()
+    local real_new_tcp = vim.uv.new_tcp
+    H.defer(function()
+        vim.uv.new_tcp = real_new_tcp
+    end)
+    local tcps, timers = H.handle_count("tcp"), H.handle_count("timer")
+    vim.uv.new_tcp = function()
+        return nil, "ENOMEM: stubbed", "ENOMEM"
+    end
+    local started, res = pcall(server.start, { port = 0, root = root })
+    vim.uv.new_tcp = real_new_tcp
+    if started then
+        server.stop(res)
+    end
+    ok(
+        not started
+            and tostring(res):find("Failed to bind 127.0.0.1:0: no socket", 1, true) ~= nil
+            and tostring(res):find("ENOMEM: stubbed", 1, true) ~= nil,
+        "a start whose socket cannot be made raises, naming it: " .. tostring(res)
+    )
+    eq(H.handle_count("tcp"), tcps, "and opens no socket")
+    eq(H.handle_count("timer"), timers, "and no timer")
 end)
 
 -- A port taken between the bind and the listen fails the listen, after
