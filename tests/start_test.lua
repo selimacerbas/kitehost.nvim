@@ -1,19 +1,19 @@
 -- tests/start_test.lua
--- What start refuses, each before any socket opens, naming what it
--- refused, at level 0: a bad token, protected_paths (patterns with no
--- token among them), serve_dotfiles, index_names, headers (a control byte
--- in a value, two spellings of one name and the server's own fields among
--- them), cors, allowed_hosts (a string, a map, a hole, a wildcard, an
--- entry no Host can match), live and its debounce, features, host,
--- header_timeout_ms, sse_heartbeat_ms, max_connections, a port it cannot
--- hold or a root that is no string or does not resolve; a bind to an address this
--- machine lacks or to a port in use raises naming it and leaves no
--- socket, a socket that cannot be made raises naming it, and a failed
--- listen leaves no socket, timer or watcher. A wildcard bind raises
--- unless the loopback address its URL names is free, and its probe of
--- that address is never left open. A pattern the check cannot read past
--- its literal starts and gates every path it is asked about, and each
--- option is read from the caller's table once.
+-- What start refuses, each before any socket opens,
+-- naming what it refused, at level 0: a bad token, protected_paths
+-- (patterns with no token among them), serve_dotfiles, index_names, headers
+-- (a control byte in a value, two spellings of one name and the server's
+-- own fields among them), cors, allowed_hosts (a string, a map, a hole, a
+-- wildcard, an entry no Host can match), live and its debounce, features,
+-- host, header_timeout_ms, sse_heartbeat_ms, max_connections, a port it
+-- cannot hold or a root that is no string or does not resolve; a bind to an
+-- address this machine lacks or to a port in use raises naming it and
+-- leaves no socket, a socket that cannot be made raises naming it, and a
+-- failed listen leaves no socket, timer or watcher. A wildcard bind raises
+-- unless the loopback address its URL names is free, and its probe of that
+-- address is never left open. A pattern the check cannot read past its
+-- literal starts and gates every path it is asked about, and each option is
+-- read from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 

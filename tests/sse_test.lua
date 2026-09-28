@@ -232,8 +232,9 @@ H.case("Section 5: a start that cannot arm its beat raises, naming it, and leave
         ok(
             not started
                 and tostring(res):find("sse_heartbeat_ms", 1, true) ~= nil
-                and tostring(res):find(says, 1, true) ~= nil,
-            ("a start whose beat cannot be %s raises, naming sse_heartbeat_ms and %s: %s"):format(
+                and tostring(res):find(says, 1, true) ~= nil
+                and not tostring(res):find("%.lua:%d+: "),
+            ("a start whose beat cannot be %s raises at level 0, naming sse_heartbeat_ms and %s: %s"):format(
                 what,
                 says,
                 tostring(res)
