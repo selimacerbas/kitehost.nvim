@@ -420,22 +420,34 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     ok(closed(), "and closes its file")
 
     -- The first read runs on the handler's own stack, so its raise goes
-    -- back to the handler, which owns the socket; the file is the
-    -- transfer's to close.
+    -- back to the handler, which owns the socket and reports the raise as
+    -- a notification; the file is the transfer's to close.
     closed = since()
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg)
+        table.insert(notes, msg)
+    end
     on_file_read(function()
         error("deliberate read failure")
     end)
-    reported = H.expect_error("deliberate read failure", function()
-        local c = assert(H.raw_connect(port))
-        assert(c:send(get("/hello.txt", port)))
-        c:read(3000, function(d)
-            return d:find("\r\n\r\n", 1, true) ~= nil
-        end)
-        c:close()
+    local c = assert(H.raw_connect(port))
+    assert(c:send(get("/hello.txt", port)))
+    c:read(3000, function(d)
+        return d:find("\r\n\r\n", 1, true) ~= nil
     end)
+    c:close()
     restore()
-    ok(reported, "a raise before the first read is reported")
+    ok(
+        H.wait_for(function()
+            return notes[1] ~= nil
+        end, 1000) and notes[1]:find("deliberate read failure", 1, true) ~= nil,
+        "a raise before the first read is reported"
+    )
+    vim.notify = real_notify
     ok(closed(), "and the transfer closes its file before the raise goes on")
 
     closed = since()

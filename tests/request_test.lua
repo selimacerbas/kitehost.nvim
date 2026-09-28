@@ -3,9 +3,9 @@
 -- doubled Host, a NUL byte, a half-close and a truncated head, which curl
 -- cannot send.
 -- Section 1 pins the behaviour the buffered pipeline keeps from the server
--- before it; each later section holds one change made on top of it. The
--- last two read the index and listing routes: Section 6 through curl,
--- Section 7 over raw TCP.
+-- before it; each later section holds one change made on top of it.
+-- Sections 6 and 7 read the index and listing routes, 6 through curl and
+-- 7 over raw TCP; Section 8 forces a raise inside the handler.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/request_test.lua"
 
@@ -525,6 +525,121 @@ H.case("Section 7: a listing's links come from the path, encoded", function()
         res[1] ~= nil and res[1].status == 200 and not res[1].body:find("<b>X</b>", 1, true),
         ("a raw target's markup never reaches the listing (got %s)"):format(tostring(res[1] and res[1].status))
     )
+end)
+
+-- A raise inside the handler, where every request runs in a luv callback,
+-- left the connection open with no answer until the client gave up, and
+-- reached the editor as a callback error (measured). No real request
+-- raises on demand, so the raises are forced through vim.uv, the table the
+-- server reads, each for one request: fs_stat for the file asked for,
+-- before any status line, and the transfer's first read, after its head.
+H.case("Section 8: a raise inside the handler answers 500 and is reported", function()
+    local uv = vim.uv
+    local notes = {}
+    local real_notify, real_stat, real_read = vim.notify, uv.fs_stat, uv.fs_read
+    H.defer(function()
+        vim.notify, uv.fs_stat, uv.fs_read = real_notify, real_stat, real_read
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    local seen = #H.errors()
+    local inst = serve()
+    local port = inst.port
+
+    local target = assert(uv.fs_realpath(root .. "/style.css"))
+    uv.fs_stat = function(path, ...)
+        if path == target then
+            error("deliberate stat failure")
+        end
+        return real_stat(path, ...)
+    end
+    local res, _, _, closed = ask(port, get("/style.css", port))
+    uv.fs_stat = real_stat
+    eq(res[1] and res[1].status, 500, "a raise before any status line went out is answered 500")
+    ok(closed, "and the connection ends")
+    local body = res[1] and res[1].body or ""
+    ok(
+        body:find("Internal Server Error", 1, true) ~= nil
+            and not body:find("deliberate", 1, true)
+            and not body:find("style.css", 1, true),
+        "its page names neither the cause nor the path"
+    )
+    ok(
+        H.wait_for(function()
+            return #notes >= 1
+        end, 1000),
+        "the raise is reported"
+    )
+    ok(
+        notes[1] ~= nil
+            and notes[1].level == vim.log.levels.ERROR
+            and notes[1].msg:find("deliberate stat failure", 1, true) ~= nil,
+        "as an error naming its cause"
+    )
+
+    -- stream_file's first read raises on the handler's stack, after its
+    -- head went out: a 500 then would land inside the 200's body, so the
+    -- connection is closed instead. The transfer closes the file it opened
+    -- and the handler's boundary the socket. The descriptor baseline is read
+    -- once it holds still for ten samples: the first request's socket
+    -- closes a loop turn after its client's.
+    local fds, same = H.fd_count(), 0
+    local held = fds ~= nil
+        and H.wait_for(function()
+            local now = H.fd_count()
+            same = now == fds and same + 1 or 0
+            fds = now
+            return same >= 10
+        end, 2000)
+    uv.fs_read = function(fd, size, offset, cb)
+        if type(cb) == "function" then
+            error("deliberate read failure")
+        end
+        return real_read(fd, size, offset, cb)
+    end
+    local c = assert(H.raw_connect(port))
+    assert(c:send(get("/hello.txt", port)))
+    local data, eof = c:read(3000)
+    uv.fs_read = real_read
+    c:close()
+    ok(eof, "a raise after the status line went out ends the connection")
+    local _, lines = data:gsub("HTTP/1%.1 %d%d%d ", "")
+    ok(
+        data:find("^HTTP/1%.1 200 ") ~= nil and lines == 1,
+        ("with the one status line that went out, no 500 after it (%d status lines)"):format(lines)
+    )
+    ok(
+        H.wait_for(function()
+            return #notes >= 2
+        end, 1000),
+        "the late raise is reported"
+    )
+    ok(
+        notes[2] ~= nil
+            and notes[2].level == vim.log.levels.ERROR
+            and notes[2].msg:find("deliberate read failure", 1, true) ~= nil,
+        "as an error naming its cause"
+    )
+    vim.wait(100)
+    eq(#notes, 2, "each raise is reported once")
+    eq(#H.errors(), seen, "and neither reaches the editor as an error of its own")
+    if fds then
+        ok(
+            held and H.wait_for(function()
+                return H.fd_count() == fds
+            end, 2000),
+            ("the file and the socket are given back: %d descriptors, %s (now %s)"):format(
+                fds,
+                held and "a baseline that held" or "a baseline that never held",
+                tostring(H.fd_count())
+            )
+        )
+    else
+        H.skip("the file and the socket are given back (no descriptor listing on this platform)")
+    end
+    res = ask(port, get("/style.css", port))
+    eq(res[1] and res[1].status, 200, "and the server answers the next request")
 end)
 
 H.finish()

@@ -90,6 +90,12 @@ local function kept_policy(v)
     return KEPT_POLICIES[bare] and bare or nil
 end
 
+-- The sockets a status line has gone out on. A raise after that point
+-- cannot be answered with a 500, which would land inside the first
+-- response's body, so the connection is closed instead. Weak, so a socket
+-- leaves it with its handle.
+local started = setmetatable({}, { __mode = "k" })
+
 local function write_headers(sock, status, headers)
     local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
@@ -114,6 +120,7 @@ local function write_headers(sock, status, headers)
     -- own meta or referrerpolicy attribute can still widen or narrow it.
     table.insert(lines, ("Referrer-Policy: %s\r\n"):format(policy))
     table.insert(lines, "\r\n")
+    started[sock] = true
     sock:write(table.concat(lines))
 end
 
@@ -1701,7 +1708,32 @@ local function on_read(conn, err, chunk)
     if not req then
         return http_400(sock, why)
     end
-    return handle_request(conn, req)
+    local ran, raised = xpcall(function()
+        return handle_request(conn, req)
+    end, debug.traceback)
+    if ran then
+        return
+    end
+    -- A raise in the handler left the connection open with no answer until
+    -- the client gave up, and reached the editor as a callback error
+    -- (measured). The client gets a 500 while no status line has gone out
+    -- and a closed connection once one has; the cause goes to the user
+    -- alone, never into the page. A file the raise cut short was closed by
+    -- its transfer on the way out.
+    if started[sock] then
+        close_once(sock)
+    elseif not sock:is_closing() then
+        send_response(
+            sock,
+            500,
+            { ["Content-Type"] = "text/html; charset=utf-8" },
+            error_page(500, "Internal Server Error", "Details are in the editor's messages")
+        )
+    end
+    -- Scheduled: a request runs in a fast event, where vim.notify raises.
+    vim.schedule(function()
+        util.notify("live-server: request failed: " .. tostring(raised), { notify = true }, "ERROR")
+    end)
 end
 
 -- Start's options, each read from the caller's table once and checked
