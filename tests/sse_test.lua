@@ -865,7 +865,15 @@ end)
 H.case("Section 9: a reload payload is JSON whatever the path holds", function()
     local inst = serve({ sse_heartbeat_ms = 0 })
     local c = open_stream(inst)
-    local paths = { "a\nb.html", "tab\tx.css", 'q"uote.html', "sub/dir/page.html", "back\\slash.css" }
+    local paths = {
+        "a\nb.html",
+        "tab\tx.css",
+        'q"uote.html',
+        "sub/dir/page.html",
+        "back\\slash.css",
+        "ctl\1x.html",
+        "caf\195\169.html",
+    }
     for _, p in ipairs(paths) do
         server.reload(inst, p)
     end
@@ -887,6 +895,8 @@ H.case("Section 9: a reload payload is JSON whatever the path holds", function()
     eq(got[3].css, false, "and a page's css is false, a boolean")
     eq(got[4].path, "sub/dir/page.html", "a slash survives, escaped or not")
     eq(got[5].path, "back\\slash.css", "a backslash survives")
+    eq(got[6].path, "ctl\1x.html", "a control byte survives, escaped")
+    eq(got[7].path, "caf\195\169.html", "a non-ASCII letter survives")
     ok(
         type(got[1].ts) == "number" and math.abs(got[1].ts - os.time()) <= 5,
         "ts is the time in seconds: " .. tostring(got[1].ts)

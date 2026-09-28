@@ -2440,6 +2440,9 @@ function S.start(cfg)
 end
 
 function S.stop(inst)
+    -- A stopped server has no watcher and a closed timer, so it reports
+    -- live reload off, as enable_live answers a stopped server.
+    inst.live_enabled = false
     if inst.debounce_timer then
         pcall(function()
             inst.debounce_timer:stop()

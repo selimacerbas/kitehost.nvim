@@ -1658,6 +1658,7 @@ H.case("Section 8: a stopped server's update_target and enable_live open nothing
     ok(enabled, "enable_live on a stopped server raises nothing: " .. tostring(got))
     eq(got, false, "and reports live reload off")
     eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
+    eq(server.is_live_enabled(live), false, "and a stopped server reports live reload off")
     eq(#H.errors(), errs, "and nothing raises in a callback")
 end)
 
