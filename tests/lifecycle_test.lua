@@ -1117,6 +1117,34 @@ H.case("Section 6b: a connection's timer lives while its head is unread", functi
     eq(#H.errors(), errs, "and raises nothing")
     res = H.responses(H.raw_request(inst.port, get("/hello.txt", inst.port)) or "")[1]
     eq(res and res.status, 200, "and the server answers the next connection")
+    -- The two kinds warn on their own: one flag for both would let the
+    -- timer's notice swallow the socket's, the one that says the server
+    -- stopped accepting and must be restarted.
+    local real_new_tcp = uv.new_tcp
+    H.defer(function()
+        uv.new_tcp = real_new_tcp
+    end)
+    local once = true
+    uv.new_tcp = function(...)
+        if not vim.in_fast_event() or not once then
+            return real_new_tcp(...)
+        end
+        once = false
+        return nil, "EMFILE: stubbed", "EMFILE"
+    end
+    local unmet = assert(H.raw_connect(inst.port))
+    unmet:read(500)
+    uv.new_tcp = real_new_tcp
+    steady(function()
+        return #notes
+    end, 1000)
+    local second = notes[2] or {}
+    ok(
+        #notes == 2
+            and second.level == vim.log.levels.WARN
+            and tostring(second.msg):find("stopped accepting connections", 1, true) ~= nil,
+        ("and a socket it cannot make is still warned of after the timer's notice (%d notices)"):format(#notes)
+    )
 end)
 
 H.finish()

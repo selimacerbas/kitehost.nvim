@@ -2211,11 +2211,11 @@ function S.start(cfg)
     -- to nil). With no head timer the connection is closed, and a close
     -- alone would leave a page failing with no word of why.
     local warned = {}
-    local function warn_once(handle, text)
-        if warned[handle] then
+    local function warn_once(kind, text)
+        if warned[kind] then
             return
         end
-        warned[handle] = true
+        warned[kind] = true
         vim.schedule(function()
             util.notify(("live-server: port %d %s"):format(actual_port, text), { notify = true }, "WARN")
         end)
