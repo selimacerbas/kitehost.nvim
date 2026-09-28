@@ -594,6 +594,17 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
             and not notes[1].msg:find("secret", 1, true),
         "on one line naming the path, never its query"
     )
+    -- A peer on a network bind writes the path: an escape in it reaches
+    -- whatever vim.notify was replaced with, so a control byte is a mark.
+    stat_raises()
+    local esc = ask(port, get("/\27]0;x\1/../style.css?t=secret", port))
+    uv.fs_stat = real_stat
+    eq(esc[1] and esc[1].status, 500, "a raise on a path holding control bytes is answered 500")
+    ok(reported(2, "deliberate stat failure"), "and reported as an error naming its cause, outside the fast event")
+    ok(
+        notes[2] ~= nil and not notes[2].msg:find("[%c]") and notes[2].msg:find("failed: ", 1, true) ~= nil,
+        "on a line with no control byte in it"
+    )
 
     -- stream_file's first read raises on the handler's stack, after its
     -- head went out: a 500 then would land inside the 200's body, so the
@@ -627,17 +638,17 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
         ("with the one status line that went out, no 500 after it (%d status lines)"):format(lines)
     )
     ok(
-        reported(2, "deliberate read failure"),
+        reported(3, "deliberate read failure"),
         "the late raise is reported as an error naming its cause, outside the fast event"
     )
     ok(
-        notes[2] ~= nil
-            and not notes[2].msg:find("\n", 1, true)
-            and notes[2].msg:find("/hello.txt failed: ", 1, true) ~= nil,
+        notes[3] ~= nil
+            and not notes[3].msg:find("\n", 1, true)
+            and notes[3].msg:find("/hello.txt failed: ", 1, true) ~= nil,
         "on one line naming the path"
     )
     vim.wait(100)
-    eq(#notes, 2, "each raise is reported once")
+    eq(#notes, 3, "each raise is reported once")
     eq(#H.errors(), seen, "and neither reaches the editor as an error of its own")
     -- A control: the client's close reaches the server's read path, which
     -- closes the socket too, so the count comes back with the boundary or
@@ -662,7 +673,7 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
     stat_raises()
     ask(port, get("/" .. ("./"):rep(200) .. "style.css", port))
     uv.fs_stat = real_stat
-    local shown = reported(3, "deliberate stat failure") and notes[3].msg:match("^live%-server: (.-) failed: ")
+    local shown = reported(4, "deliberate stat failure") and notes[4].msg:match("^live%-server: (.-) failed: ")
     eq(shown and #shown, 200, "a 410-byte path is cut to 200 bytes in the notice")
 
     -- The notice goes out before the connection is answered or closed, so
@@ -688,7 +699,7 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
     end)
     uv.fs_read, methods.close = real_read, real_close
     ok(escaped, "a raise while the boundary closes the connection reaches the editor")
-    ok(reported(4, "deliberate read failure"), "and the handler's raise before it is still reported")
+    ok(reported(5, "deliberate read failure"), "and the handler's raise before it is still reported")
 
     res = ask(port, get("/style.css", port))
     eq(res[1] and res[1].status, 200, "and the server answers the next request")

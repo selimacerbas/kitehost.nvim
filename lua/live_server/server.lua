@@ -199,13 +199,17 @@ end
 -- 0.10's v:errmsg kept its last line alone; the raise's first line
 -- already names its file and line. The query is cut, since ?t=<token>
 -- rides there and :messages keeps it, and so is the length, since a peer
--- controls the path up to the head's cap. Scheduled: a request runs in a
--- fast event, where vim.notify raises.
+-- controls the path up to the head's cap, as it would a cause that quoted
+-- the path. A control byte in the line is a mark: Neovim shows one as a
+-- caret pair, but a notifier that forwards to a terminal or a desktop
+-- would pass an escape a peer wrote. Scheduled: a request runs in a fast
+-- event, where vim.notify raises.
 local function report_raise(path, raised)
-    local cause = tostring(raised):match("^[^\n]*")
+    local cause = tostring(raised):match("^[^\n]*"):sub(1, 300)
     local shown = path:match("^[^?#]*"):sub(1, 200)
+    local line = ("live-server: %s failed: %s"):format(shown, cause):gsub("%c", "?")
     vim.schedule(function()
-        util.notify(("live-server: %s failed: %s"):format(shown, cause), { notify = true }, "ERROR")
+        util.notify(line, { notify = true }, "ERROR")
     end)
 end
 
