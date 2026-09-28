@@ -1601,14 +1601,13 @@ local function on_read(conn, err, chunk)
     return handle_request(conn, req)
 end
 
--- -------- Public server API -----------------------------------------------
-
--- cfg: { port, root, default_index|nil, headers, live={enabled,inject_script,debounce}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, asset_root, allowed_hosts }
-function S.start(cfg)
-    -- Checked before any handle opens, so a bad value leaks nothing.
+-- Start's options, each read from the caller's table once and checked
+-- before any handle opens, so a refusal leaks nothing; start reads only the
+-- copy returned. A table that computes a field could otherwise pass a check
+-- with one value and hand the server another. The caller shows a refusal
+-- to the user, so each raises at level 0.
+local function check_start(cfg)
     -- An empty token is truthy and would pass the gate with no t= at all.
-    -- Read once: a caller's table may compute the field, and the value the
-    -- gate keeps must be the one that passed the check.
     local token = cfg.token
     if token ~= nil and (type(token) ~= "string" or token == "") then
         error("token must be a non-empty string", 0)
@@ -1691,7 +1690,8 @@ function S.start(cfg)
     end
     -- Any value but true read as false, so serve_dotfiles = 1 served no
     -- dotfile without a word.
-    if cfg.serve_dotfiles ~= nil and type(cfg.serve_dotfiles) ~= "boolean" then
+    local dotfiles = cfg.serve_dotfiles
+    if dotfiles ~= nil and type(dotfiles) ~= "boolean" then
         error("serve_dotfiles must be true or false", 0)
     end
     -- A header is written as the table spells it. Chromium trims a name, so
@@ -1756,36 +1756,6 @@ function S.start(cfg)
             end
         end
     end
-
-    local tcp = uv.new_tcp()
-    local host = cfg.host or "127.0.0.1"
-    -- luv returns a failed bind as nil, err, which a pcall alone never sees,
-    -- and listen binds an unbound socket to every interface. bind raises
-    -- only on an address it cannot parse, which the pcall catches. The caller
-    -- shows the message to the user, so the raise is at level 0.
-    local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, cfg.port)
-    if not called or not bound_ok then
-        tcp:close()
-        local reason = called and bind_err or bound_ok
-        error("Failed to bind " .. host .. ":" .. tostring(cfg.port) .. ": " .. tostring(reason), 0)
-    end
-
-    -- The bound address, not the configured spelling, decides the Host
-    -- check: 0:0:0:0:0:0:0:1 and ::ffff:127.0.0.1 are loopback binds too.
-    -- It also carries the OS-assigned port when cfg.port is 0. libuv holds
-    -- a bind's EADDRINUSE until here, so a failure reads as the bind's.
-    local bound, sockname_err = tcp:getsockname()
-    if not bound then
-        tcp:close()
-        error("Failed to bind " .. host .. ":" .. tostring(cfg.port) .. ": " .. tostring(sockname_err), 0)
-    end
-    local actual_port = bound.port
-
-    local root_real = uv.fs_realpath(cfg.root)
-    if not root_real then
-        error("Invalid root: " .. tostring(cfg.root), 0)
-    end
-
     -- /__live/* answers no cross-origin read: the stream and the asset route
     -- get the caller's headers minus any ACAO, under any spelling, and cors
     -- applies to the root route only. With cors set its line is the one
@@ -1802,6 +1772,74 @@ function S.start(cfg)
     if cors and type(cors) ~= "table" then
         headers["Access-Control-Allow-Origin"] = type(cors) == "string" and cors or "*"
     end
+    local root = cfg.root
+    local root_real = uv.fs_realpath(root)
+    if not root_real then
+        error("Invalid root: " .. tostring(root), 0)
+    end
+
+    local live, features = cfg.live, cfg.features
+    local dirlist = features and features.dirlist
+    return {
+        token = token,
+        port = p,
+        host = cfg.host or "127.0.0.1",
+        -- true turns the Host check off; the set holds the listed names as
+        -- host_name reads a Host.
+        any_host = allowed == true,
+        allowed_hosts = allowed_set,
+        -- Copies of the checked lists: the caller's table (init.lua hands the
+        -- user's own) holed or emptied after start dropped the gate, and
+        -- index_names changed after start named an index never checked.
+        protected_paths = vim.list_extend({}, protected or {}),
+        index_names = index_names and vim.list_extend({}, index_names) or { "index.html", "index.htm" },
+        serve_dotfiles = dotfiles == true,
+        headers = headers,
+        live_headers = live_headers,
+        cors = cors and true or false,
+        cors_list = type(cors) == "table" and vim.list_extend({}, cors) or nil,
+        root = root,
+        root_real = root_real,
+        default_index = cfg.default_index,
+        live_enabled = live and live.enabled ~= false,
+        inject_script = live and live.inject_script ~= false,
+        live_debounce = (live and live.debounce) or 120,
+        css_inject = live and live.css_inject ~= false,
+        dir_enabled = not (dirlist and dirlist.enabled == false),
+        dir_show_hidden = dirlist and dirlist.show_hidden or false,
+        notify_on_reload = cfg.notify_on_reload or false,
+        asset_root = cfg.asset_root,
+    }
+end
+
+-- -------- Public server API -----------------------------------------------
+
+-- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts }
+function S.start(cfg)
+    local checked = check_start(cfg)
+    local tcp = uv.new_tcp()
+    local host = checked.host
+    -- luv returns a failed bind as nil, err, which a pcall alone never sees,
+    -- and listen binds an unbound socket to every interface. bind raises
+    -- only on an address it cannot parse, which the pcall catches. The caller
+    -- shows the message to the user, so the raise is at level 0.
+    local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, checked.port)
+    if not called or not bound_ok then
+        tcp:close()
+        local reason = called and bind_err or bound_ok
+        error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(reason), 0)
+    end
+
+    -- The bound address, not the configured spelling, decides the Host
+    -- check: 0:0:0:0:0:0:0:1 and ::ffff:127.0.0.1 are loopback binds too.
+    -- It also carries the OS-assigned port when cfg.port is 0. libuv holds
+    -- a bind's EADDRINUSE until here, so a failure reads as the bind's.
+    local bound, sockname_err = tcp:getsockname()
+    if not bound then
+        tcp:close()
+        error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(sockname_err), 0)
+    end
+    local actual_port = bound.port
 
     local inst = {
         handle = tcp,
@@ -1811,48 +1849,44 @@ function S.start(cfg)
         host = bound.ip,
         -- Network binds are reached by names no default list knows; the
         -- token gates them.
-        host_check = is_loopback_ip(bound.ip) and allowed ~= true,
+        host_check = is_loopback_ip(bound.ip) and not checked.any_host,
         -- Names the user controls; one whose DNS an attacker controls
         -- reopens rebinding (the Vite docs' warning).
-        allowed_hosts = allowed_set,
-        root = cfg.root,
-        root_real = root_real,
-        default_index = cfg.default_index,
-        headers = headers,
-        live_headers = live_headers,
-        cors = cors and true or false,
-        cors_list = type(cors) == "table" and vim.list_extend({}, cors) or nil,
+        allowed_hosts = checked.allowed_hosts,
+        root = checked.root,
+        root_real = checked.root_real,
+        default_index = checked.default_index,
+        headers = checked.headers,
+        live_headers = checked.live_headers,
+        cors = checked.cors,
+        cors_list = checked.cors_list,
         started_at = os.time(),
 
         -- live
-        live_enabled = cfg.live and cfg.live.enabled ~= false,
-        inject_script = cfg.live and cfg.live.inject_script ~= false,
-        live_debounce = (cfg.live and cfg.live.debounce) or 120,
-        css_inject = cfg.live and cfg.live.css_inject ~= false,
+        live_enabled = checked.live_enabled,
+        inject_script = checked.inject_script,
+        live_debounce = checked.live_debounce,
+        css_inject = checked.css_inject,
         sse_clients = {},
         debounce_timer = uv.new_timer(),
 
         -- features
-        dir_enabled = not (cfg.features and cfg.features.dirlist and cfg.features.dirlist.enabled == false),
-        dir_show_hidden = cfg.features and cfg.features.dirlist and cfg.features.dirlist.show_hidden or false,
-        -- A copy of the checked list, as protected_paths below is: the
-        -- caller's table may change after start.
-        index_names = index_names and vim.list_extend({}, index_names) or { "index.html", "index.htm" },
-        ignore_patterns = util.parse_liveignore(root_real),
-        notify_on_reload = cfg.notify_on_reload or false,
+        dir_enabled = checked.dir_enabled,
+        dir_show_hidden = checked.dir_show_hidden,
+        index_names = checked.index_names,
+        ignore_patterns = util.parse_liveignore(checked.root_real),
+        notify_on_reload = checked.notify_on_reload,
 
         -- auth
-        token = token, -- nil = no auth; string = required on protected paths
-        -- A copy of the checked list: the caller's table (init.lua hands the
-        -- user's own) holed or emptied after start dropped the gate.
-        protected_paths = vim.list_extend({}, protected or {}),
-        serve_dotfiles = cfg.serve_dotfiles == true,
+        token = checked.token, -- nil = no auth; string = required on protected paths
+        protected_paths = checked.protected_paths,
+        serve_dotfiles = checked.serve_dotfiles,
 
         -- /__live/asset root: a directory, or a function returning one.
         -- Lets a caller expose files that live next to its source document
         -- (e.g. images referenced from markdown) without serving that
         -- directory as the root. Token-gated whenever token is set.
-        asset_root = cfg.asset_root,
+        asset_root = checked.asset_root,
     }
 
     if inst.live_enabled then
@@ -1879,7 +1913,7 @@ function S.start(cfg)
     -- after the socket is serving; a network bind has no check to turn off.
     -- S.stop closes the handle, and a server stopped before the loop ran
     -- turned nothing off that is still reachable.
-    if allowed == true and is_loopback_ip(bound.ip) then
+    if checked.any_host and is_loopback_ip(bound.ip) then
         vim.schedule(function()
             if inst.handle:is_closing() then
                 return

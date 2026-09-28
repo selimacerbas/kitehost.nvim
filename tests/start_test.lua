@@ -4,10 +4,11 @@
 -- them), serve_dotfiles, index_names, headers (a control byte in a value,
 -- two spellings of one name and the server's own fields among them), cors,
 -- allowed_hosts (a string, a map, a hole, a wildcard, an entry no Host can
--- match) or a port it cannot hold; a bind to an address this machine lacks
--- or to a port in use raises naming it and leaves no socket. A pattern the
--- check cannot read past its literal starts and gates every path it is
--- asked about, and the token is read from the caller's table once.
+-- match), a port it cannot hold or a root that does not resolve; a bind to
+-- an address this machine lacks or to a port in use raises naming it and
+-- leaves no socket. A pattern the check cannot read past its literal
+-- starts and gates every path it is asked about, and each option is read
+-- from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -461,6 +462,67 @@ H.case("a bind that fails and a port start cannot hold raise, leaving no socket"
         not text_started and tostring(text_err):find("(string)", 1, true) ~= nil,
         "a port given as text is refused, naming its type: " .. tostring(text_err)
     )
+end)
+
+-- The root was resolved after the server's socket was bound, and its raise
+-- left that socket open for the rest of the session.
+H.case("a root that does not resolve is refused before any socket opens", function()
+    local missing = vim.fs.joinpath(root, "missing")
+    local tcps = H.handle_count("tcp")
+    local started, res = pcall(server.start, { port = 0, root = missing })
+    local after = H.handle_count("tcp")
+    if started then
+        server.stop(res)
+    end
+    ok(
+        not started and tostring(res) == "Invalid root: " .. missing,
+        "a missing root is refused, naming it: " .. tostring(res)
+    )
+    eq(after, tcps, "and opens no socket")
+end)
+
+-- A table that computes a field could pass a check with one value and
+-- hand the server another, so every option is read once, by the check,
+-- and the server keeps what the check read. A read of the caller's table
+-- after the check reads an option twice.
+H.case("start reads each option from the caller's table once", function()
+    local given = {
+        port = 0,
+        host = "127.0.0.1",
+        root = root,
+        default_index = vim.fs.joinpath(root, "index.html"),
+        token = TOKEN,
+        protected_paths = { "^/content%.md$" },
+        allowed_hosts = { "dev.test" },
+        index_names = { "index.html" },
+        serve_dotfiles = false,
+        headers = { ["X-Custom"] = "1" },
+        cors = { "http://a.example" },
+        live = { enabled = false, inject_script = false, debounce = 50, css_inject = false },
+        features = { dirlist = { enabled = false, show_hidden = false } },
+        notify_on_reload = false,
+        asset_root = root,
+    }
+    local reads = {}
+    local computed = setmetatable({}, {
+        __index = function(_, key)
+            reads[key] = (reads[key] or 0) + 1
+            return given[key]
+        end,
+    })
+    local inst = server.start(computed)
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local keys = vim.tbl_keys(vim.tbl_extend("force", {}, given, reads))
+    table.sort(keys)
+    local not_once = {}
+    for _, key in ipairs(keys) do
+        if reads[key] ~= 1 then
+            table.insert(not_once, ("%s read %d times"):format(key, reads[key] or 0))
+        end
+    end
+    eq(table.concat(not_once, ", "), "", "start reads each option it is given, and any other, once")
 end)
 
 H.finish()

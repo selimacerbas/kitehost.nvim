@@ -197,7 +197,9 @@ function start_for_path(path, port)
             },
         })
         if not ok then
-            return util.notify(("Failed to bind port %s: %s"):format(tostring(port), inst_or_err), M.opts, "ERROR")
+            -- The server's message names its cause; a bind prefix here read a
+            -- refused option as a busy port.
+            return util.notify(tostring(inst_or_err), M.opts, "ERROR")
         end
         active_port = inst_or_err.port
         M.state.servers[active_port] = inst_or_err
