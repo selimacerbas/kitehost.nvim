@@ -1000,7 +1000,7 @@ H.case("Section 10: one frame per event, whatever the payload holds", function()
     )
     raised, err = raise_of("n", 42)
     ok(
-        not raised and err:match("sse_test%.lua:%d+: send_event: the payload is a string, got number$") ~= nil,
+        not raised and err:match("sse_test%.lua:%d+: send_event: the payload is not a string %(number%)$") ~= nil,
         "a number payload raises at the caller: " .. err
     )
 end)

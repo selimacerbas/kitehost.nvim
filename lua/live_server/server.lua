@@ -2530,7 +2530,7 @@ function S.send_event(inst, event_type, data)
         error("send_event: the event name holds a line break", 2)
     end
     if data ~= nil and type(data) ~= "string" then
-        error(("send_event: the payload is a string, got %s"):format(type(data)), 2)
+        error(("send_event: the payload is not a string (%s)"):format(type(data)), 2)
     end
     sse_broadcast(inst, event_type, data or "{}")
 end
