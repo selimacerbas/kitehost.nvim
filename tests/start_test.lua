@@ -1,0 +1,466 @@
+-- tests/start_test.lua
+-- What start refuses, each before any socket opens and naming what it
+-- refused: a bad token, protected_paths (patterns with no token among
+-- them), serve_dotfiles, index_names, headers (a control byte in a value,
+-- two spellings of one name and the server's own fields among them), cors,
+-- allowed_hosts (a string, a map, a hole, a wildcard, an entry no Host can
+-- match) or a port it cannot hold; a bind to an address this machine lacks
+-- or to a port in use raises naming it and leaves no socket. A pattern the
+-- check cannot read past its literal starts and gates every path it is
+-- asked about, and the token is read from the caller's table once.
+--
+-- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
+
+local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "helpers.lua"))
+H.isolate()
+H.rtp()
+
+local server = require("live_server.server")
+local util = require("live_server.util")
+local ok, eq, http_get = H.ok, H.eq, H.http_get
+
+local root = H.tmpdir()
+H.write_file(vim.fs.joinpath(root, "index.html"), "<html><body>hi</body></html>")
+H.write_file(vim.fs.joinpath(root, "content.md"), "# secret content")
+local TOKEN = util.random_token(16)
+
+local function serve(cfg)
+    local inst = server.start(vim.tbl_extend("keep", cfg or {}, {
+        port = 0,
+        root = root,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    }))
+    H.defer(function()
+        server.stop(inst)
+    end)
+    return inst
+end
+
+-- Each refused before any socket opens. An empty token is truthy, so it
+-- would mark every request as the token's holder and pass the gate with
+-- no t= at all. A false token, read as none, would pass the check that
+-- patterns need a token and leave the files they name open to any
+-- request (measured). protected_paths is walked with ipairs, which skips
+-- a map's keys and stops at a hole, so a map protected nothing and the
+-- entries after a hole were never read, without a word; a malformed
+-- pattern started and then raised in the read callback of every request,
+-- which was never answered; serve_dotfiles = 1 read as false. Patterns
+-- with no token started and gated nothing, and an index_names string
+-- raised in the read callback of every directory request; a name with a
+-- path in it (../x) read a directory's index from another directory. A
+-- header is written as the table spells it: Chromium trims a name, so
+-- "Access-Control-Allow-Origin " let any site read the event stream
+-- (measured); a colon in a name or a CR or LF in a value sends a header
+-- other than the one named, a key that is not a string went out as a
+-- number, and a headers string opened the socket before it raised. A
+-- caller's Content-Type, Content-Length, Transfer-Encoding or Connection
+-- replaced the server's own or went out beside it: a second framing line
+-- that left Chrome rendering nothing, and on the asset route a type that
+-- rendered a text file as HTML in the server's origin, past the sandbox
+-- its extension decides. A cors
+-- value goes out as a header value too, so a CR or LF in it wrote a line
+-- of its own; one that is no origin as a browser sends it could never
+-- match, and a list is walked with ipairs, which skips a map's keys.
+H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names, headers or cors", function()
+    -- { option, value, the text the refusal must carry (the option's name
+    -- unless given) }
+    local bad = {
+        { "token", "" },
+        { "token", 42 },
+        { "token", false },
+        { "protected_paths", { content = "^/content%.md$" } },
+        { "protected_paths", { [1] = "^/a$", [3] = "^/b$" } },
+        { "protected_paths", { 42 } },
+        { "protected_paths", { "(" }, "protected_paths pattern is malformed: (" },
+        { "protected_paths", { "^/a$", "%" }, "protected_paths pattern is malformed: %" },
+        { "serve_dotfiles", 1 },
+        { "protected_paths", { "^/secret" }, "protected_paths needs a token" },
+        { "index_names", "index.html" },
+        { "index_names", { 42 } },
+        { "index_names", { "" } },
+        { "index_names", { "../x" }, "index_names entry is not a file name: ../x" },
+        { "index_names", { "sub/index.html" }, "index_names entry is not a file name: sub/index.html" },
+        { "index_names", { "sub\\index.html" }, "index_names entry is not a file name: sub\\index.html" },
+        { "index_names", { "." }, "index_names entry is not a file name: ." },
+        { "index_names", { ".." }, "index_names entry is not a file name: .." },
+        {
+            "headers",
+            { ["Access-Control-Allow-Origin "] = "*" },
+            "headers: a name must be a token and a value a line: Access-Control-Allow-Origin ",
+        },
+        { "headers", { ["X-A:b"] = "1" }, "headers: a name must be a token and a value a line: X-A:b" },
+        { "headers", { [1] = "x" }, "headers: a name must be a token and a value a line: 1" },
+        {
+            "headers",
+            { ["X-Custom"] = "a\r\nSet-Cookie: x=1" },
+            "headers: a name must be a token and a value a line: X-Custom",
+        },
+        -- Chromium splits a header at a bare LF, so either character alone
+        -- is refused, not only the pair.
+        { "headers", { ["X-Custom"] = "a\rb" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\nb" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = 1 }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { [""] = "x" }, "headers: a name must be a token and a value a line: " },
+        { "headers", { ["X\tA"] = "x" }, "headers: a name must be a token and a value a line: X\tA" },
+        -- RFC 9110 5.5: a value holds visible characters, spaces and tabs. A
+        -- NUL started the server, and then Chromium (ERR_INVALID_HTTP_RESPONSE)
+        -- and curl refused every response that carried it.
+        { "headers", { ["X-Custom"] = "a\0b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\1b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\127b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        -- Two spellings of one name went out as two lines, which a cache
+        -- reads as one list: "no-cache, max-age=60" left the second inert.
+        {
+            "headers",
+            { ["Cache-Control"] = "a", ["cache-control"] = "b" },
+            "headers: Cache-Control and cache-control name one field",
+        },
+        { "headers", { ["Content-Type"] = "text/html" }, "headers: Content-Type is the server's own field" },
+        { "headers", { ["content-type"] = "text/html" }, "headers: content-type is the server's own field" },
+        { "headers", { ["Content-Length"] = "1" }, "headers: Content-Length is the server's own field" },
+        { "headers", { ["content-length"] = "1" }, "headers: content-length is the server's own field" },
+        {
+            "headers",
+            { ["Transfer-Encoding"] = "chunked" },
+            "headers: Transfer-Encoding is the server's own field",
+        },
+        {
+            "headers",
+            { ["transfer-encoding"] = "chunked" },
+            "headers: transfer-encoding is the server's own field",
+        },
+        { "headers", { ["Connection"] = "keep-alive" }, "headers: Connection is the server's own field" },
+        { "headers", { ["connection"] = "keep-alive" }, "headers: connection is the server's own field" },
+        { "headers", { ["CONTENT-type"] = "text/html" }, "headers: CONTENT-type is the server's own field" },
+        { "headers", "x", "headers must be a table" },
+        { "cors", "http://a.example\r\nSet-Cookie: x=1", "cors entry is not an origin" },
+        { "cors", "http://a.example\n", "cors entry is not an origin" },
+        { "cors", "http://a .example", "cors entry is not an origin" },
+        { "cors", "http://a.example\1", "cors entry is not an origin" },
+        { "cors", "http://a.example/", "cors entry is not an origin" },
+        { "cors", "http://a.example/app", "cors entry is not an origin" },
+        { "cors", "http://a.example:", "cors entry is not an origin" },
+        { "cors", "http://user@a.example", "cors entry is not an origin" },
+        { "cors", "a.example", "cors entry is not an origin" },
+        { "cors", "null", "cors entry is not an origin" },
+        { "cors", "", "cors entry is not an origin" },
+        {
+            "cors",
+            "HTTP://A.EXAMPLE",
+            "not an origin as a browser sends it (lower case, no default port): HTTP://A.EXAMPLE",
+        },
+        {
+            "cors",
+            "http://a.example:80",
+            "not an origin as a browser sends it (lower case, no default port): http://a.example:80",
+        },
+        {
+            "cors",
+            "https://a.example:443",
+            "not an origin as a browser sends it (lower case, no default port): https://a.example:443",
+        },
+        {
+            "cors",
+            "http://a.example:05173",
+            "not an origin as a browser sends it (lower case, no default port): http://a.example:05173",
+        },
+        {
+            "cors",
+            "http://a.example:99999",
+            "not an origin as a browser sends it (lower case, no default port): http://a.example:99999",
+        },
+        {
+            "cors",
+            "http://a%41.example",
+            "not an origin as a browser sends it (lower case, no default port): http://a%41.example",
+        },
+        {
+            "cors",
+            "ws://a.example:80",
+            "not an origin as a browser sends it (lower case, no default port): ws://a.example:80",
+        },
+        { "cors", 1, "cors must be true, an origin or a list of origins" },
+        { "cors", { "http://a.example", 42 }, "cors must be true, an origin or a list of origins" },
+        { "cors", { "http://a.example", "*" }, "cors entry is not an origin" },
+        { "cors", { "http://a.example", "http://b.example\r\nX: y" }, "cors entry is not an origin" },
+        { "cors", { origin = "http://a.example" }, "cors must be true, an origin or a list of origins" },
+        {
+            "cors",
+            { [1] = "http://a.example", [3] = "http://b.example" },
+            "cors must be true, an origin or a list of origins",
+        },
+    }
+    for _, c in ipairs(bad) do
+        local name, value, says = c[1], c[2], c[3] or c[1]
+        local shown = ("%s = %s"):format(name, vim.inspect(value, { newline = " ", indent = "" }))
+        local tcps = H.handle_count("tcp")
+        local started, res = pcall(server.start, { port = 0, root = root, [name] = value })
+        local after = H.handle_count("tcp")
+        if started then
+            server.stop(res)
+        end
+        ok(
+            not started and tostring(res):find(says, 1, true) ~= nil,
+            ("%s is refused, naming %s: %s"):format(shown, says, tostring(res))
+        )
+        eq(after, tcps, ("%s opens no socket"):format(shown))
+    end
+    local started, res = pcall(server.start, {
+        port = 0,
+        root = root,
+        token = TOKEN,
+        protected_paths = { "^/content%.md$", "[%w_]+%.key$", "^/a/(b)$" },
+    })
+    ok(started, "a list of well-formed patterns starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    -- init.lua's default: no patterns ask for no token.
+    started, res = pcall(server.start, { port = 0, root = root, protected_paths = {} })
+    ok(started, "protected_paths = {} starts without a token: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    started, res = pcall(server.start, { port = 0, root = root, headers = { ["X-Custom"] = "1" } })
+    ok(started, 'headers = { ["X-Custom"] = "1" } starts: ' .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    started, res = pcall(server.start, { port = 0, root = root, headers = { ["X-Custom"] = "a\tb" } })
+    ok(started, "a tab inside a header value starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    -- "*" is the documented spelling of true.
+    for _, cors in ipairs({
+        true,
+        false,
+        "*",
+        "http://a.example",
+        "https://127.0.0.1:5173",
+        "http://[::1]:8080",
+        "http://a.example:5173",
+        "http://a.example:65535",
+        "chrome-extension://abcdef",
+        { "http://a.example", "https://b.example:8443" },
+        {},
+    }) do
+        started, res = pcall(server.start, { port = 0, root = root, cors = cors })
+        ok(
+            started,
+            ("cors = %s starts: %s"):format(
+                vim.inspect(cors, { newline = " ", indent = "" }),
+                tostring(started and "" or res)
+            )
+        )
+        if started then
+            server.stop(res)
+        end
+    end
+    -- The start check reads a pattern against the empty subject, so a
+    -- malformed part after a literal ("/[") is never parsed there. The
+    -- request the pattern was asked about raised in the read callback and
+    -- went unanswered; no token satisfies a pattern nobody can read.
+    local function unreadable_server(patterns)
+        local up, inst_or_err = pcall(server.start, {
+            port = 0,
+            root = root,
+            token = TOKEN,
+            protected_paths = patterns,
+            live = { enabled = false, inject_script = false },
+            features = { dirlist = { enabled = false } },
+        })
+        ok(
+            up,
+            ("protected_paths = %s starts: the start check cannot read past the literal%s"):format(
+                vim.inspect(patterns, { newline = " ", indent = "" }),
+                up and "" or ": " .. tostring(inst_or_err)
+            )
+        )
+        if up then
+            H.defer(function()
+                server.stop(inst_or_err)
+            end)
+            return ("http://127.0.0.1:%d/content.md"):format(inst_or_err.port)
+        end
+    end
+    local function answers_401(url, label)
+        local got = http_get(url)
+        ok(got.status == 401, ("%s (got %d, curl %d)"):format(label, got.status, got.curl_exit))
+    end
+    -- A 401 alone reads like a bad token, so the first pattern that cannot
+    -- be read is named once per instance. Captured here, where the real
+    -- notify would print to the run.
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    local warning = "live-server: protected_paths pattern cannot be read, refusing what it gates: /["
+    local function settled(count)
+        H.wait_for(function()
+            return #notes >= count
+        end, 1000)
+        -- A second warning scheduled by a later request would land here.
+        vim.wait(100)
+        return #notes
+    end
+    local alone = unreadable_server({ "/[" })
+    if alone then
+        answers_401(alone, "/content.md under an unreadable pattern is 401 without the token, never unanswered")
+        answers_401(
+            alone .. "?t=" .. TOKEN,
+            "and 401 with it: a pattern nobody can read gates every path it is asked about"
+        )
+        local count = settled(1)
+        ok(
+            count == 1 and notes[1].level == vim.log.levels.WARN and notes[1].msg == warning,
+            ("two requests warn once, naming the pattern: %s"):format(
+                vim.inspect(notes, { newline = " ", indent = "" })
+            )
+        )
+    end
+    -- Every pattern is read, so a path an earlier pattern matches is asked
+    -- about the unreadable one too.
+    local after = unreadable_server({ "^/content%.md$", "/[" })
+    if after then
+        answers_401(after .. "?t=" .. TOKEN, "an unreadable pattern after a matching one refuses the token too")
+        local count = settled(2)
+        ok(
+            count == 2 and notes[2].msg == warning,
+            ("another instance warns once of its own: %s"):format(vim.inspect(notes, { newline = " ", indent = "" }))
+        )
+    end
+    local before = #notes
+    local readable = server.start({
+        port = 0,
+        root = root,
+        token = TOKEN,
+        protected_paths = { "^/content%.md$" },
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(readable)
+    end)
+    answers_401(("http://127.0.0.1:%d/content.md"):format(readable.port), "a readable pattern gates as before")
+    vim.wait(100)
+    eq(#notes, before, "and a list of readable patterns warns nothing")
+    -- The token is read from the caller's table once: a table that computes
+    -- the field could pass the check with one value and hand the gate another.
+    local reads = 0
+    local computed = setmetatable({ port = 0, root = root, protected_paths = { "^/content%.md$" } }, {
+        __index = function(_, key)
+            if key == "token" then
+                reads = reads + 1
+                return "secret-token"
+            end
+        end,
+    })
+    local once = server.start(computed)
+    H.defer(function()
+        server.stop(once)
+    end)
+    eq(reads, 1, "start reads cfg.token once")
+end)
+
+H.case("start refuses allowed_hosts but true or a list of hostnames", function()
+    local tcps = H.handle_count("tcp")
+    local started, err = pcall(server.start, { port = 0, root = root, allowed_hosts = "my.name" })
+    ok(not started and tostring(err):find("allowed_hosts", 1, true) ~= nil, "a string is refused: " .. tostring(err))
+    eq(H.handle_count("tcp"), tcps, "before any socket opens")
+    local typo_started, typo_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "a b" } })
+    ok(
+        not typo_started and tostring(typo_err):find("a b", 1, true) ~= nil,
+        "an entry no Host can match is refused, naming it: " .. tostring(typo_err)
+    )
+    eq(H.handle_count("tcp"), tcps, "and opens no socket either")
+    -- host_name drops a port and brackets from a Host, so an entry carrying
+    -- either could never equal what the check compares against.
+    local port_started, port_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "dev.test:80" } })
+    ok(
+        not port_started and tostring(port_err):find("dev.test:80", 1, true) ~= nil,
+        "an entry with a port is refused, naming it: " .. tostring(port_err)
+    )
+    local six_started, six_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "[::1]" } })
+    ok(
+        not six_started and tostring(six_err):find("[::1]", 1, true) ~= nil,
+        "a bracketed entry is refused, naming it: " .. tostring(six_err)
+    )
+    -- The list is walked in order, so a map or a list with a hole would
+    -- start with names silently dropped, and a wildcard matches no
+    -- subdomain, only that literal name.
+    for _, case in ipairs({
+        { { ["dev.test"] = true }, "a map is refused, naming allowed_hosts", { "allowed_hosts" } },
+        { { "a.test", nil, "b.test" }, "a list with a hole is refused", { "allowed_hosts" } },
+        { { "*.dev.test" }, "a wildcard entry is refused, naming it", { "wildcard", "*.dev.test" } },
+    }) do
+        local before = H.handle_count("tcp")
+        local started, res = pcall(server.start, { port = 0, root = root, allowed_hosts = case[1] })
+        local after = H.handle_count("tcp")
+        if started then
+            server.stop(res)
+        end
+        local named = not started
+        for _, needle in ipairs(case[3]) do
+            named = named and tostring(res):find(needle, 1, true) ~= nil
+        end
+        ok(named, case[2] .. ": " .. tostring(res))
+        eq(after, before, case[2] .. ", before any socket opens")
+    end
+end)
+
+H.case("a bind that fails and a port start cannot hold raise, leaving no socket", function()
+    -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
+    local tcps = H.handle_count("tcp")
+    local started, err = pcall(server.start, { port = 0, root = root, host = "192.0.2.1" })
+    ok(
+        not started and tostring(err):find("192.0.2.1", 1, true) ~= nil,
+        "a bind to an address this machine lacks raises: " .. tostring(err)
+    )
+    eq(H.handle_count("tcp"), tcps, "and leaves no handle open")
+    -- Distinct specific addresses share a port on every OS, and macOS lets a
+    -- specific address share one a wildcard listener holds, so both binds
+    -- name the same address, 127.0.0.1.
+    local a = serve()
+    local busy_before = H.handle_count("tcp")
+    local busy_started, busy_err = pcall(server.start, { port = a.port, root = root })
+    local busy_after = H.handle_count("tcp")
+    if busy_started then
+        server.stop(busy_err)
+    end
+    ok(
+        not busy_started and tostring(busy_err):find(tostring(a.port), 1, true) ~= nil,
+        "a start on a port in use raises, naming the port: " .. tostring(busy_err)
+    )
+    eq(busy_after, busy_before, "and leaves no handle open")
+    -- luv truncates a port it cannot hold, so 70000 or 8123.5 would listen
+    -- on another port while the start reports success.
+    for _, bad in ipairs({ 70000, 8123.5, 65536, -1 }) do
+        local before = H.handle_count("tcp")
+        local port_started, res = pcall(server.start, { port = bad, root = root })
+        local after = H.handle_count("tcp")
+        if port_started then
+            server.stop(res)
+        end
+        ok(
+            not port_started and tostring(res):find("port", 1, true) ~= nil,
+            ("port = %s is refused, naming port: %s"):format(tostring(bad), tostring(res))
+        )
+        eq(after, before, ("port = %s opens no socket"):format(tostring(bad)))
+    end
+    local text_started, text_err = pcall(server.start, { port = "8765", root = root })
+    if text_started then
+        server.stop(text_err)
+    end
+    ok(
+        not text_started and tostring(text_err):find("(string)", 1, true) ~= nil,
+        "a port given as text is refused, naming its type: " .. tostring(text_err)
+    )
+end)
+
+H.finish()

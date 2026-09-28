@@ -158,49 +158,6 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
     server.stop(quick)
     vim.wait(100)
     eq(#notes, 1, "a server stopped before the warning ran warns nothing")
-    local tcps = H.handle_count("tcp")
-    local started, err = pcall(server.start, { port = 0, root = root, allowed_hosts = "my.name" })
-    ok(not started and tostring(err):find("allowed_hosts", 1, true) ~= nil, "a string is refused: " .. tostring(err))
-    eq(H.handle_count("tcp"), tcps, "before any socket opens")
-    local typo_started, typo_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "a b" } })
-    ok(
-        not typo_started and tostring(typo_err):find("a b", 1, true) ~= nil,
-        "an entry no Host can match is refused, naming it: " .. tostring(typo_err)
-    )
-    eq(H.handle_count("tcp"), tcps, "and opens no socket either")
-    -- host_name drops a port and brackets from a Host, so an entry carrying
-    -- either could never equal what the check compares against.
-    local port_started, port_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "dev.test:80" } })
-    ok(
-        not port_started and tostring(port_err):find("dev.test:80", 1, true) ~= nil,
-        "an entry with a port is refused, naming it: " .. tostring(port_err)
-    )
-    local six_started, six_err = pcall(server.start, { port = 0, root = root, allowed_hosts = { "[::1]" } })
-    ok(
-        not six_started and tostring(six_err):find("[::1]", 1, true) ~= nil,
-        "a bracketed entry is refused, naming it: " .. tostring(six_err)
-    )
-    -- The list is walked in order, so a map or a list with a hole would
-    -- start with names silently dropped, and a wildcard matches no
-    -- subdomain, only that literal name.
-    for _, case in ipairs({
-        { { ["dev.test"] = true }, "a map is refused, naming allowed_hosts", { "allowed_hosts" } },
-        { { "a.test", nil, "b.test" }, "a list with a hole is refused", { "allowed_hosts" } },
-        { { "*.dev.test" }, "a wildcard entry is refused, naming it", { "wildcard", "*.dev.test" } },
-    }) do
-        local before = H.handle_count("tcp")
-        local started, res = pcall(server.start, { port = 0, root = root, allowed_hosts = case[1] })
-        local after = H.handle_count("tcp")
-        if started then
-            server.stop(res)
-        end
-        local named = not started
-        for _, needle in ipairs(case[3]) do
-            named = named and tostring(res):find(needle, 1, true) ~= nil
-        end
-        ok(named, case[2] .. ": " .. tostring(res))
-        eq(after, before, case[2] .. ", before any socket opens")
-    end
     local bare = serve({ allowed_hosts = { "fe80::1" } })
     eq(
         status(bare.port, "/", "[fe80::1]:" .. bare.port),
@@ -279,52 +236,6 @@ H.case("Section 4: the check follows the bound address, not its spelling", funct
     else
         H.skip("an IPv4-mapped loopback bind keeps the check on (bind refused: " .. tostring(mapped) .. ")")
     end
-    -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
-    local tcps = H.handle_count("tcp")
-    local started, err = pcall(server.start, { port = 0, root = root, host = "192.0.2.1" })
-    ok(
-        not started and tostring(err):find("192.0.2.1", 1, true) ~= nil,
-        "a bind to an address this machine lacks raises: " .. tostring(err)
-    )
-    eq(H.handle_count("tcp"), tcps, "and leaves no handle open")
-    -- Distinct specific addresses share a port on every OS, and macOS lets a
-    -- specific address share one a wildcard listener holds, so both binds
-    -- name the same address, 127.0.0.1.
-    local a = serve()
-    local busy_before = H.handle_count("tcp")
-    local busy_started, busy_err = pcall(server.start, { port = a.port, root = root })
-    local busy_after = H.handle_count("tcp")
-    if busy_started then
-        server.stop(busy_err)
-    end
-    ok(
-        not busy_started and tostring(busy_err):find(tostring(a.port), 1, true) ~= nil,
-        "a start on a port in use raises, naming the port: " .. tostring(busy_err)
-    )
-    eq(busy_after, busy_before, "and leaves no handle open")
-    -- luv truncates a port it cannot hold, so 70000 or 8123.5 would listen
-    -- on another port while the start reports success.
-    for _, bad in ipairs({ 70000, 8123.5, 65536, -1 }) do
-        local before = H.handle_count("tcp")
-        local port_started, res = pcall(server.start, { port = bad, root = root })
-        local after = H.handle_count("tcp")
-        if port_started then
-            server.stop(res)
-        end
-        ok(
-            not port_started and tostring(res):find("port", 1, true) ~= nil,
-            ("port = %s is refused, naming port: %s"):format(tostring(bad), tostring(res))
-        )
-        eq(after, before, ("port = %s opens no socket"):format(tostring(bad)))
-    end
-    local text_started, text_err = pcall(server.start, { port = "8765", root = root })
-    if text_started then
-        server.stop(text_err)
-    end
-    ok(
-        not text_started and tostring(text_err):find("(string)", 1, true) ~= nil,
-        "a port given as text is refused, naming its type: " .. tostring(text_err)
-    )
     -- The warning reads the bound address, so a spelled-out IPv6 loopback
     -- bind with the check off says so.
     local notes = {}
