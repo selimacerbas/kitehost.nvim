@@ -82,8 +82,9 @@ end
 -- a CR or LF in it wrote a line of its own; one that is no origin as a
 -- browser sends it could never match, and a list is walked with ipairs,
 -- which skips a map's keys. live, features and its dirlist are indexed as
--- given and host is bound as given, so a number there raised as a fault
--- in the server's own code, naming no option.
+-- given and host is bound as given, where a number read as a failed bind
+-- and a table raised as a fault in the server's own code, naming no
+-- option.
 H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
@@ -91,6 +92,8 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "token", "" },
         { "token", 42 },
         { "token", false },
+        { "allowed_hosts", { 42 } },
+        { "allowed_hosts", { "" } },
         { "protected_paths", { content = "^/content%.md$" } },
         { "protected_paths", { [1] = "^/a$", [3] = "^/b$" } },
         { "protected_paths", { 42 } },
