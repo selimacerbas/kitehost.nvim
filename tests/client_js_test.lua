@@ -52,8 +52,8 @@ H.case("Section 2: a token server's client carries the page's token to the strea
     -- Substrings alone passed a client with a syntax error, which dies on
     -- every token server, so its bytes are pinned as the tokenless one's
     -- are; the rows after the pin say what those bytes must hold.
-    eq(#r.body, 1532, "1532 bytes, pinned as the tokenless client is")
-    eq(vim.fn.sha256(r.body), "51e8b4ba0f6de02fff40a4d4c7d1d63739cd1f2371902e0492c717cae2be496d", "and by its sha256")
+    eq(#r.body, 1540, "1540 bytes, pinned as the tokenless client is")
+    eq(vim.fn.sha256(r.body), "e69bdfc7a8ccbe9a631529265dc0e2305c2597c887eeaf0858d8aa2183c06c4e", "and by its sha256")
     ok(r.body:find("location.search", 1, true) ~= nil, "it reads t from the page's query")
     ok(r.body:find("sessionStorage", 1, true) ~= nil, "and keeps it for reloads that drop the query")
     ok(r.body:find("'/__live/events?t='+encodeURIComponent(t)", 1, true) ~= nil, "and puts it on the event stream")
@@ -210,6 +210,14 @@ const pages = {
   },
   dropped() {
     const p = page('', { [K]: 'REAL' });
+    p.fire(0, 'open', 1);
+    p.fire(0, 'error', 0);
+    p.fire(0, 'error', 2);
+    p.tick(0);
+    return { urls: p.urls(), warns: p.warns, kept: p.kept() };
+  },
+  replaced() {
+    const p = page('?t=NEW', { [K]: 'OLD' });
     p.fire(0, 'open', 1);
     p.fire(0, 'error', 0);
     p.fire(0, 'error', 2);
@@ -461,6 +469,13 @@ H.case("Section 6: a stream the page closed is no refusal", function()
 
     p = seen("dropped")
     eq(warned(p), REFUSED, "a stream that opened, lost the server and was then refused names the refusal")
+    eq(p.kept, vim.NIL, "and the refused token is no longer kept")
+
+    -- The page's token replaced the kept one when its stream opened; a
+    -- restart that then refuses it leaves nothing older to fall back to.
+    p = seen("replaced")
+    eq(urls(p), EVENTS .. "?t=NEW", "a stream that opened over a kept token opens no fallback when refused")
+    eq(warned(p), REFUSED, "and names the refusal")
     eq(p.kept, vim.NIL, "and the refused token is no longer kept")
 end)
 

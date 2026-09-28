@@ -483,18 +483,20 @@ local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" ..
 -- read it first. Chromium closes a stream the same way on a navigation
 -- away and on window.stop(), so a stream that opened counts as refused
 -- only after a reconnect error, and the refusal waits one turn, which a
--- leaving document never reaches. The token is never written into the
--- script, which any page may load.
+-- leaving document never reaches. A stream that ever opened has replaced
+-- the kept token with its own, so its refusal never falls back to the
+-- token it replaced. The token is never written into the script, which
+-- any page may load.
 local CLIENT_JS_TOKEN = table.concat({
     "!function(){try{",
     "var k='live-server.nvim:t',q=new URLSearchParams(location.search).get('t'),s=null,x,o;",
     "try{s=sessionStorage.getItem(k)}catch(e){x=e}",
     "var w=function(m){console.warn('[live-server.nvim] '+m)},",
     "p=function(t){try{sessionStorage.setItem(k,t)}catch(e){w('the token could not be kept: '+e)}},",
-    "c=function(t){o=1;var u,es=new EventSource('/__live/events?t='+encodeURIComponent(t));",
-    "es.addEventListener('open',function(){u=1;if(t===q&&s&&s!==q)p(t)});",
+    "c=function(t){o=1;var u,v,es=new EventSource('/__live/events?t='+encodeURIComponent(t));",
+    "es.addEventListener('open',function(){u=v=1;if(t===q&&s&&s!==q)p(t)});",
     "es.addEventListener('error',function(){if(es.readyState===0)u=0;",
-    "else if(es.readyState===2&&!u)setTimeout(function(){if(t===q&&s&&s!==q)c(s);",
+    "else if(es.readyState===2&&!u)setTimeout(function(){if(!v&&t===q&&s&&s!==q)c(s);",
     "else{try{sessionStorage.getItem(k)===t&&sessionStorage.removeItem(k)}catch(e){}",
     "w('the token was refused: open the page with the server\\'s ?t=<token>')}},0)});",
     CLIENT_ON,
