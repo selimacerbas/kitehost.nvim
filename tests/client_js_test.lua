@@ -70,8 +70,9 @@ end)
 -- stubs, and each page drives its streams' open and error events and its
 -- clock by hand. The pages of one tab share one store, and a write there
 -- queues a storage event for every other document of the tab, delivered
--- when the tab is flushed, as a browser delivers it in a later task. Every
--- page prints what it saw, and the rows below rule on it.
+-- when the tab is flushed, as a browser delivers it once the writing
+-- script has run. Every page prints what it saw, and the rows below rule
+-- on it.
 local RUNNER = [==[
 'use strict';
 const src = require('fs').readFileSync(process.argv[2], 'utf8');
