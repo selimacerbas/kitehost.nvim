@@ -928,8 +928,9 @@ end)
 -- client left: 50 clients, idle or with half a head sent, held 50 sockets
 -- 12 s on (measured). A timer per connection closes one whose head is not
 -- read in time, with no response, since a browser opens spare connections
--- it may never use. A head read in time stops the timer, so an event
--- stream, whose head is read at once, is never timed out.
+-- it may never use; a head sent a byte at a time is held to the same
+-- deadline. A head read in time stops the timer, so an event stream,
+-- whose head is read at once, is never timed out.
 H.case("Section 6: a connection that never finishes its head is closed", function()
     local inst = serve({ header_timeout_ms = 200 })
     local port = inst.port
@@ -944,6 +945,23 @@ H.case("Section 6: a connection that never finishes its head is closed", functio
     ok(
         part_eof and answer == "",
         ("a head sent in part is closed too, with no response (%d bytes read)"):format(#answer)
+    )
+    -- A head trickled a byte every 50 ms never idles for the timeout, so
+    -- a timer that counted from the last byte would hold it for the whole
+    -- trickle, over 2 s; the deadline counts from the accept.
+    local slow = assert(H.raw_connect(port))
+    local t1 = uv.hrtime()
+    for ch in ("GET /hello.txt HTTP/1.1\r\nHost: 127.0.0.1\r\nX: y\r\n"):gmatch(".") do
+        if slow.eof or not slow:send(ch) then
+            break
+        end
+        vim.wait(50)
+    end
+    local _, slow_eof = slow:read(3000)
+    local slow_ms = (uv.hrtime() - t1) / 1e6
+    ok(
+        slow_eof and slow_ms < 1000,
+        ("a head trickled a byte at a time is closed at the timeout too (%d ms)"):format(math.floor(slow_ms))
     )
     local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")
     eq(res[1] and res[1].status, 200, "a head sent in time is served")
