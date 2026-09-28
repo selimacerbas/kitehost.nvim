@@ -984,7 +984,8 @@ end)
 -- none, a connection that ends first takes its timer with it, and stop
 -- closes the timers of the connections still waiting. It is on by
 -- default and 0 turns it off. A connection no timer can be made for
--- could be held for good, so it is closed.
+-- could be held for good, so it is closed, and the user is told once,
+-- where a silent close left pages failing with no word of why.
 H.case("Section 6b: a connection's timer lives while its head is unread", function()
     local function timer_count()
         return H.handle_count("timer")
@@ -1071,24 +1072,48 @@ H.case("Section 6b: a connection's timer lives while its head is unread", functi
 
     -- No real timer fails to be made. The server makes it in the listen
     -- callback, a fast event, and the client's handles are made on the
-    -- suite's own stack, so only the server's call gets nil.
+    -- suite's own stack, so only the server's calls get nil: two of them,
+    -- so the notice is seen to come once.
     inst = serve({ header_timeout_ms = 5000 })
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
     local errs = #H.errors()
     local real_new_timer = uv.new_timer
     H.defer(function()
         uv.new_timer = real_new_timer
     end)
+    local failing = 2
     uv.new_timer = function(...)
-        if not vim.in_fast_event() then
+        if not vim.in_fast_event() or failing == 0 then
             return real_new_timer(...)
         end
-        uv.new_timer = real_new_timer
+        failing = failing - 1
         return nil, "ENOMEM: stubbed", "ENOMEM"
     end
-    local lost = assert(H.raw_connect(inst.port))
-    local _, lost_eof = lost:read(2000)
+    local ended = 0
+    for _ = 1, 2 do
+        local lost = assert(H.raw_connect(inst.port))
+        local _, lost_eof = lost:read(2000)
+        ended = ended + (lost_eof and 1 or 0)
+    end
     uv.new_timer = real_new_timer
-    ok(lost_eof, "a connection the server can make no timer for is closed")
+    eq(ended, 2, "a connection the server can make no timer for is closed")
+    steady(function()
+        return #notes
+    end, 1000)
+    local note = notes[1] or {}
+    ok(
+        #notes == 1
+            and note.level == vim.log.levels.WARN
+            and tostring(note.msg):find("closed a connection it could not serve", 1, true) ~= nil,
+        ("and the user is warned once, at WARN, for two such (%d notices: %s)"):format(#notes, tostring(note.msg))
+    )
     eq(#H.errors(), errs, "and raises nothing")
     res = H.responses(H.raw_request(inst.port, get("/hello.txt", inst.port)) or "")[1]
     eq(res and res.status, 200, "and the server answers the next connection")

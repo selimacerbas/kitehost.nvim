@@ -348,6 +348,41 @@ H.case("Section 6: a section given as false or true turns it off or on", functio
     eq(live.debounce, 120, "and live_reload = false keeps the section's other fields")
 end)
 
+-- A section that is neither a table nor a boolean took the table's place
+-- too: a number raised indexing it at every start, outside the start's
+-- pcall, and a string read as the section with every field unset, so
+-- live_reload = "off" served with live reload on, without a word. setup
+-- reads the section, so setup refuses it, before any option of the call
+-- is kept.
+H.case("Section 7: setup refuses a section that is neither a table nor a boolean", function()
+    for _, c in ipairs({
+        { "live_reload", 1 },
+        { "live_reload", "off" },
+        { "directory_listing", 0 },
+        { "directory_listing", "off" },
+    }) do
+        local section, value = c[1], c[2]
+        package.loaded["live_server"] = nil
+        local ls = require("live_server")
+        local set, err = pcall(ls.setup, { notify = false, [section] = value })
+        eq(
+            not set and tostring(err) or "setup took it",
+            section .. " must be a table or a boolean",
+            ("setup refuses %s = %s, naming it"):format(section, vim.inspect(value))
+        )
+    end
+    package.loaded["live_server"] = nil
+    local ls = require("live_server")
+    pcall(ls.setup, { default_port = 9000, live_reload = 1 })
+    ok(
+        ls.opts.default_port == 8000 and type(ls.opts.live_reload) == "table",
+        ("and a refused setup keeps every option it had (default_port %s, live_reload %s)"):format(
+            tostring(ls.opts.default_port),
+            vim.inspect(ls.opts.live_reload, { newline = " ", indent = "" })
+        )
+    )
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

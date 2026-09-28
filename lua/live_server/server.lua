@@ -1684,26 +1684,38 @@ local function conn_stop_timer(conn)
     end
 end
 
--- One accepted socket's state, or nil when its head timer cannot be made
--- or armed: the timer is the connection's bound, and one taken without it
--- could be held for good. A connection that never finished its head held
--- its socket until its client left (50 clients, idle or with half a head
--- sent, held 50 sockets 12 s on, measured). Browsers open spare
--- connections they may never use, so the close is silent, no 408.
+-- The head is read or refused: the connection is handled and its head
+-- timer goes in one call, so no site can mark the one and forget the
+-- other.
+local function head_done(conn)
+    conn.handled = true
+    conn_stop_timer(conn)
+end
+
+-- One accepted socket's state, or nil and the error when its head timer
+-- cannot be made or armed: the timer is the connection's bound, and one
+-- taken without it could be held for good. A connection that never
+-- finished its head held its socket until its client left (50 clients,
+-- idle or with half a head sent, held 50 sockets 12 s on, measured).
+-- Browsers open spare connections they may never use, so the close is
+-- silent, no 408.
 local function new_conn(inst, sock)
     local conn = { inst = inst, sock = sock, buf = "", handled = false }
     if inst.header_timeout > 0 then
-        conn.timer = uv.new_timer()
-        local armed = conn.timer
-            and conn.timer:start(inst.header_timeout, 0, function()
+        local timer, err = uv.new_timer()
+        conn.timer = timer
+        local armed
+        if timer then
+            armed, err = timer:start(inst.header_timeout, 0, function()
                 conn_stop_timer(conn)
                 if not conn.handled then
                     close_once(sock)
                 end
             end)
+        end
         if not armed then
             conn_stop_timer(conn)
-            return nil
+            return nil, err
         end
     end
     return conn
@@ -1765,8 +1777,7 @@ local function on_read(conn, err, chunk)
     -- never left waiting for a blank line that will not come.
     local first = conn.buf:match("^[\r\n]*([^\r\n])")
     if first and not first:find("^[A-Z]") then
-        conn.handled = true
-        conn_stop_timer(conn)
+        head_done(conn)
         conn.buf = ""
         return http_400(sock, "Cannot parse request line")
     end
@@ -1775,16 +1786,14 @@ local function on_read(conn, err, chunk)
     -- The cap judges the head's bytes: while no blank line is found, a
     -- buffer within three bytes of the cap may hold a terminator's start.
     if head_end and head_end > MAX_HEAD or not head_end and #conn.buf > MAX_HEAD + 3 then
-        conn.handled = true
-        conn_stop_timer(conn)
+        head_done(conn)
         conn.buf = ""
         return send_response(sock, 431, { ["Content-Type"] = "text/plain" }, "Request Header Fields Too Large")
     end
     if not head_end then
         return
     end
-    conn.handled = true
-    conn_stop_timer(conn)
+    head_done(conn)
     local req, why = parse_head(conn.buf:sub(1, head_end))
     conn.buf = ""
     if not req then
@@ -1812,6 +1821,19 @@ local function on_read(conn, err, chunk)
             error_page(500, "Internal Server Error", "Details are in the editor's messages")
         )
     end
+end
+
+-- A millisecond option arms a luv timer, which reads NaN as 0, a negative
+-- value or math.huge as never and cuts a fraction down (measured), so each
+-- takes an integer; past 2^31 - 1 ms, over 24 days, a wait is a spelling
+-- of never. It raises naming the option, at level 0, as check_start's
+-- refusals do.
+local MAX_MS = 2147483647
+local function check_ms(name, v)
+    if v ~= nil and (type(v) ~= "number" or v ~= math.floor(v) or v < 0 or v > MAX_MS) then
+        error(("%s must be an integer from 0 to %d"):format(name, MAX_MS), 0)
+    end
+    return v
 end
 
 -- Start's options, each read from the caller's table once and checked
@@ -2004,27 +2026,11 @@ local function check_start(cfg)
     if dirlist ~= nil and type(dirlist) ~= "table" then
         error("features.dirlist must be a table", 0)
     end
-    -- The debounce arms a timer at every file change: one that is no number
-    -- raised there, in the watcher's callback, and a negative one armed a
-    -- reload that never went out (measured).
-    local debounce = live and live.debounce
-    if debounce ~= nil and (type(debounce) ~= "number" or not (debounce >= 0)) then
-        error("live.debounce must be a number at or above 0", 0)
-    end
-    -- Every connection arms a timer with it: luv reads NaN as 0, which would
-    -- close each connection at once, and a negative value as a timer that
-    -- never fires (measured). 0 turns the timeout off.
-    local header_timeout = cfg.header_timeout_ms
-    if
-        header_timeout ~= nil
-        and (
-            type(header_timeout) ~= "number"
-            or not (header_timeout >= 0)
-            or header_timeout ~= math.floor(header_timeout)
-        )
-    then
-        error("header_timeout_ms must be an integer at or above 0", 0)
-    end
+    -- A debounce that is no number raised in the watcher's callback at
+    -- every file change (measured).
+    local debounce = check_ms("live.debounce", live and live.debounce)
+    -- Every connection arms a timer with it; 0 turns the timeout off.
+    local header_timeout = check_ms("header_timeout_ms", cfg.header_timeout_ms)
     -- fs_realpath raised its own argument error for a nil root and read a
     -- number as a path under the working directory.
     local root = cfg.root
@@ -2196,31 +2202,31 @@ function S.start(cfg)
         asset_root = checked.asset_root,
     }
 
-    -- A connection the server can make no handle for is never accepted,
-    -- and libuv then stops polling the listener, so the server takes no
-    -- connection after it; a raise there did the same and told the user
-    -- only of a callback error (measured, the handle stubbed to nil). The
-    -- user is told once.
-    local warned = false
+    -- A connection the server cannot equip with a handle is dropped, and
+    -- the user is told once per instance for each kind, scheduled, since
+    -- the accept runs in a fast event. With no socket the connection is
+    -- never accepted, and libuv then stops polling the listener, so the
+    -- server takes no connection after it; a raise there did the same and
+    -- told the user only of a callback error (measured, the handle stubbed
+    -- to nil). With no head timer the connection is closed, and a close
+    -- alone would leave a page failing with no word of why.
+    local warned = {}
+    local function warn_once(handle, text)
+        if warned[handle] then
+            return
+        end
+        warned[handle] = true
+        vim.schedule(function()
+            util.notify(("live-server: port %d %s"):format(actual_port, text), { notify = true }, "WARN")
+        end)
+    end
     local listening, listen_err = tcp:listen(128, function(err_listen)
         if err_listen then
             return
         end
         local sock, sock_err = uv.new_tcp()
         if not sock then
-            if not warned then
-                warned = true
-                vim.schedule(function()
-                    util.notify(
-                        ("live-server: port %d stopped accepting connections (%s); restart the server"):format(
-                            actual_port,
-                            tostring(sock_err)
-                        ),
-                        { notify = true },
-                        "WARN"
-                    )
-                end)
-            end
+            warn_once("socket", ("stopped accepting connections (%s); restart the server"):format(tostring(sock_err)))
             return
         end
         -- A failed accept leaves a handle made and never opened, which
@@ -2230,9 +2236,10 @@ function S.start(cfg)
             return
         end
         open_conns(inst)
-        local conn = new_conn(inst, sock)
+        local conn, conn_err = new_conn(inst, sock)
         if not conn then
             close_once(sock)
+            warn_once("timer", ("closed a connection it could not serve (%s)"):format(tostring(conn_err)))
             return
         end
         inst.conns[conn] = true

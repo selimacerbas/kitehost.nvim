@@ -111,20 +111,25 @@ end
 
 function M.setup(opts)
     local before = M.opts
-    local current = M.opts.headers
-    M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
-    if type(current) == "table" and type(opts) == "table" and type(opts.headers) == "table" then
-        M.opts.headers = fold_headers(current, opts.headers)
+    local merged = vim.tbl_deep_extend("force", before, opts or {})
+    if type(before.headers) == "table" and type(opts) == "table" and type(opts.headers) == "table" then
+        merged.headers = fold_headers(before.headers, opts.headers)
     end
-    -- A section given as a boolean replaced its table, and every start then
-    -- raised indexing it, outside the start's pcall: false turns the section
-    -- off and true on, its other fields kept.
+    -- A section given as anything but a table replaced it, and every start
+    -- read its fields: a boolean or a number raised there, outside the
+    -- start's pcall, and "off" read as a section with nothing set, live
+    -- reload on. false is the section off and true on, its other fields
+    -- kept; any other value is refused, at level 0, before the merge is
+    -- kept, so the options stay as they were.
     for _, section in ipairs({ "live_reload", "directory_listing" }) do
-        local given = M.opts[section]
+        local given = merged[section]
         if type(given) == "boolean" then
-            M.opts[section] = vim.tbl_extend("force", before[section], { enabled = given })
+            merged[section] = vim.tbl_extend("force", before[section], { enabled = given })
+        elseif type(given) ~= "table" then
+            error(section .. " must be a table or a boolean", 0)
         end
     end
+    M.opts = merged
 
     if M.opts.auto_start and M.opts.auto_start.filetypes then
         local fts = M.opts.auto_start.filetypes

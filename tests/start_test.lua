@@ -87,11 +87,11 @@ end
 -- which skips a map's keys. live, features and its dirlist are indexed as
 -- given and host is bound as given, where a number read as a failed bind
 -- and a table raised as a fault in the server's own code, naming no
--- option. A live.debounce that is no number started and then raised in
--- the watcher's callback at every file change, and a negative one armed
--- a reload that never went out (measured). header_timeout_ms arms a timer
--- per connection, which luv reads as 0 for NaN and as never for a
--- negative value (measured).
+-- option. live.debounce and header_timeout_ms each arm a timer: a
+-- debounce that is no number started and then raised in the watcher's
+-- callback at every file change, and luv reads NaN as 0, a negative value
+-- or math.huge as never and a fraction cut down (measured), so each takes
+-- an integer from 0 to 2^31 - 1 and refuses the rest alike.
 H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
@@ -224,18 +224,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         },
         { "live", 1, "live must be a table" },
         { "live", true, "live must be a table" },
-        { "live", { debounce = "soon" }, "live.debounce must be a number at or above 0" },
-        { "live", { debounce = -1 }, "live.debounce must be a number at or above 0" },
-        { "live", { debounce = 0 / 0 }, "live.debounce must be a number at or above 0" },
-        { "header_timeout_ms", "10000", "header_timeout_ms must be an integer at or above 0" },
-        { "header_timeout_ms", -1, "header_timeout_ms must be an integer at or above 0" },
-        { "header_timeout_ms", 1.5, "header_timeout_ms must be an integer at or above 0" },
-        { "header_timeout_ms", 0 / 0, "header_timeout_ms must be an integer at or above 0" },
         { "features", 1, "features must be a table" },
         { "features", { dirlist = 1 }, "features.dirlist must be a table" },
         { "host", 1, "host must be a string" },
         { "host", { "127.0.0.1" }, "host must be a string" },
     }
+    -- Each millisecond option is refused the same values the same way.
+    for _, v in ipairs({ "soon", true, -1, 1.5, 0 / 0, math.huge, 2 ^ 31 }) do
+        local range = " must be an integer from 0 to 2147483647"
+        table.insert(bad, { "live", { debounce = v }, "live.debounce" .. range })
+        table.insert(bad, { "header_timeout_ms", v, "header_timeout_ms" .. range })
+    end
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
         local shown = ("%s = %s"):format(name, vim.inspect(value, { newline = " ", indent = "" }))
@@ -267,15 +266,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     if started then
         server.stop(res)
     end
-    started, res = pcall(server.start, { port = 0, root = root, live = { enabled = false, debounce = 0 } })
-    ok(started, "live.debounce = 0 starts: " .. tostring(started and "" or res))
-    if started then
-        server.stop(res)
-    end
-    started, res = pcall(server.start, { port = 0, root = root, header_timeout_ms = 0 })
-    ok(started, "header_timeout_ms = 0 starts: " .. tostring(started and "" or res))
-    if started then
-        server.stop(res)
+    for _, ms in ipairs({ 0, 2 ^ 31 - 1 }) do
+        started, res = pcall(server.start, { port = 0, root = root, live = { enabled = false, debounce = ms } })
+        ok(started, ("live.debounce = %d starts: %s"):format(ms, tostring(started and "" or res)))
+        if started then
+            server.stop(res)
+        end
+        started, res = pcall(server.start, { port = 0, root = root, header_timeout_ms = ms })
+        ok(started, ("header_timeout_ms = %d starts: %s"):format(ms, tostring(started and "" or res)))
+        if started then
+            server.stop(res)
+        end
     end
     started, res = pcall(server.start, { port = 0, root = root, headers = { ["X-Custom"] = "1" } })
     ok(started, 'headers = { ["X-Custom"] = "1" } starts: ' .. tostring(started and "" or res))
