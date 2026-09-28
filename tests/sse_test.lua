@@ -16,7 +16,9 @@
 -- for longer than a second, or more than 8 MiB behind at all, now leaves
 -- the same way, the heartbeat's send judging it too, and one that keeps
 -- up stays through a large frame or a burst that stays within 8 MiB; a
--- stream whose head or retry line fails is never kept.
+-- stream whose head or retry line fails is never kept. A reload's data
+-- is JSON a decoder reads whatever the path holds, its keys in one order
+-- on every process.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
@@ -851,6 +853,88 @@ H.case("Section 8: a stream whose first writes fail is not kept", function()
         c:close()
     end
     eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- The reload event's data was Lua's %q quoting, which wrote a tab as \9
+-- and split a newline over two data lines, neither of which JSON.parse
+-- reads, so a page fell back to a full reload for a stylesheet (measured).
+-- It is JSON a decoder reads, whatever the path holds, and its keys come
+-- in one order on every process: an encoded table's order is the hash's,
+-- which differs between processes (measured), so a reader comparing
+-- bytes saw a payload change with nothing changed.
+H.case("Section 9: a reload payload is JSON whatever the path holds", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local c = open_stream(inst)
+    local paths = { "a\nb.html", "tab\tx.css", 'q"uote.html', "sub/dir/page.html", "back\\slash.css" }
+    for _, p in ipairs(paths) do
+        server.reload(inst, p)
+    end
+    local data = c:read(2000, function(d)
+        return select(2, d:sub(c.from):gsub("event: reload\n", "")) >= #paths
+    end)
+    local got, frames = {}, 0
+    for frame in data:sub(c.from):gmatch("(.-)\n\n") do
+        local payload = frame:match("^event: reload\ndata: ([^\n]*)$")
+        frames = frames + (payload and 1 or 0)
+        local decoded, obj = pcall(vim.json.decode, payload or "")
+        table.insert(got, decoded and type(obj) == "table" and obj or {})
+    end
+    eq(frames, #paths, "each reload is a frame of one data line")
+    eq(got[1].path, "a\nb.html", "a newline in the path survives")
+    eq(got[2].path, "tab\tx.css", "a tab survives")
+    eq(got[2].css, true, "a .css path still marks css")
+    eq(got[3].path, 'q"uote.html', "a quote survives")
+    eq(got[3].css, false, "and a page's css is false, a boolean")
+    eq(got[4].path, "sub/dir/page.html", "a slash survives, escaped or not")
+    eq(got[5].path, "back\\slash.css", "a backslash survives")
+    ok(
+        type(got[1].ts) == "number" and math.abs(got[1].ts - os.time()) <= 5,
+        "ts is the time in seconds: " .. tostring(got[1].ts)
+    )
+end)
+
+-- Each child process starts the module and reloads through a stand-in
+-- stream, so the frame is the one a socket would carry, and prints it.
+H.case("Section 9b: the payload's bytes are the same on every process", function()
+    local script = H.tmpdir() .. "/reload_frame.lua"
+    H.write_file(
+        script,
+        table.concat({
+            "vim.opt.runtimepath:prepend(_G.arg[1])",
+            "local server = require('live_server.server')",
+            "os.time = function() return 1700000000 end",
+            "local frame",
+            "local stream = {",
+            "    get_write_queue_size = function() return 0 end,",
+            "    write = function(_, text) frame = text return true end,",
+            "}",
+            "server.reload({ sse_clients = { stream }, css_inject = true }, 'sub/style.css')",
+            "io.stdout:write(frame or 'no frame')",
+        }, "\n")
+    )
+    local frames = {}
+    for i = 1, 4 do
+        local res = vim.system(
+            { vim.v.progpath, "--headless", "-u", "NONE", "-l", script, H.root },
+            { text = true, timeout = 8000 }
+        ):wait()
+        frames[i] = H.exit_code(res) == 0 and res.stdout or ("exit " .. H.exit_code(res) .. ": " .. (res.stderr or ""))
+    end
+    local payload = frames[1]:match("^event: reload\ndata: ([^\n]*)\n\n$") or ""
+    local decoded, obj = pcall(vim.json.decode, payload)
+    ok(
+        decoded and type(obj) == "table" and obj.ts == 1700000000 and obj.path == "sub/style.css" and obj.css == true,
+        "a child's frame decodes to its fields: " .. vim.inspect(frames[1])
+    )
+    local ts_at, path_at, css_at =
+        payload:find('"ts":', 1, true), payload:find('"path":', 1, true), payload:find('"css":', 1, true)
+    ok(
+        ts_at == 2 and path_at and css_at and ts_at < path_at and path_at < css_at,
+        "its keys come as ts, path, css: " .. payload
+    )
+    for i = 2, #frames do
+        eq(vim.inspect(frames[i]), vim.inspect(frames[1]), ("child %d's frame is child 1's, byte for byte"):format(i))
+    end
 end)
 
 H.finish()

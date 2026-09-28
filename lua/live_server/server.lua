@@ -2467,8 +2467,17 @@ end
 -- Live-reload controls
 function S.reload(inst, reason_path)
     local rp = tostring(reason_path or "")
-    local is_css = inst.css_inject and rp:match("%.css$")
-    local payload = ('{"ts":%d,"path":%q,"css":%s}'):format(os.time(), rp, is_css and "true" or "false")
+    local is_css = inst.css_inject and rp:match("%.css$") ~= nil or false
+    -- JSON, where %q wrote a tab as \9 and a newline as a line break, which
+    -- JSON.parse refused. Each value is encoded on its own: an encoded
+    -- table's key order is the hash's, which differs between processes
+    -- (measured), and the escaping stays the library's (0.10's writes a
+    -- slash as \/), so a reader decodes the payload and never compares it.
+    local payload = ('{"ts":%s,"path":%s,"css":%s}'):format(
+        vim.json.encode(os.time()),
+        vim.json.encode(rp),
+        vim.json.encode(is_css)
+    )
     sse_broadcast(inst, "reload", payload)
     if inst.notify_on_reload then
         vim.schedule(function()

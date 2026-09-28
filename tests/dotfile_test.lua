@@ -45,6 +45,30 @@ vim.fn.mkdir(root .. "/list/.git", "p")
 H.write_file(root .. "/list/.env", "SECRET-5")
 H.write_file(root .. "/list/page.txt", "page")
 
+-- The reload events in data after byte mark, each decoded: the payload's
+-- escaping is the JSON library's (0.10's writes a slash as \/, measured),
+-- so no row reads its bytes. One that does not decode is kept as a path
+-- naming it, so a row's message shows it.
+local function reloads(data, mark)
+    local got = {}
+    for payload in data:sub(mark + 1):gmatch("event: reload\ndata: ([^\n]*)\n\n") do
+        local decoded, obj = pcall(vim.json.decode, payload)
+        got[#got + 1] = decoded and type(obj) == "table" and obj or { path = "undecodable " .. payload }
+    end
+    return got
+end
+
+-- Whether an event in data after mark reloads for want: a path, a test
+-- of the decoded payload, or any reload when nil.
+local function reloads_for(data, mark, want)
+    for _, obj in ipairs(reloads(data, mark)) do
+        if want == nil or obj.path == want or (type(want) == "function" and want(obj)) then
+            return true
+        end
+    end
+    return false
+end
+
 -- The dot names a listing shows as entries; the parent row ("..") is none.
 local function dot_names(body)
     local names = {}
@@ -212,22 +236,30 @@ H.case("Section 7: a dot path's change sends no reload", function()
         vim.wait(300)
         return site, c, #table.concat(c.chunks)
     end
-    local function reloaded(c, mark, ms, pattern)
+    -- Whether a reload for want (reloads_for's) arrives after mark within
+    -- ms.
+    local function reloaded(c, mark, ms, want)
         local got = c:read(ms, function(b)
-            return b:find(pattern, mark + 1) ~= nil
+            return reloads_for(b, mark, want)
         end)
-        return got:find(pattern, mark + 1) ~= nil
+        return reloads_for(got, mark, want)
     end
     -- A late event sits before the one a row waited for, so a row that
-    -- says none arrived reads the whole stream after its mark.
+    -- says none arrived reads the whole stream after its mark: whether a
+    -- reload after it names a path matching the Lua pattern.
     local function streamed(c, mark, pattern)
-        return table.concat(c.chunks):find(pattern, mark + 1) ~= nil
+        for _, obj in ipairs(reloads(table.concat(c.chunks), mark)) do
+            if tostring(obj.path):find(pattern) then
+                return true
+            end
+        end
+        return false
     end
     -- The paths the events after a mark name, for a row's message.
     local function named(c, mark)
         local paths = {}
-        for p in table.concat(c.chunks):sub(mark + 1):gmatch('"path":"([^"]*)"') do
-            paths[#paths + 1] = p
+        for _, obj in ipairs(reloads(table.concat(c.chunks), mark)) do
+            paths[#paths + 1] = tostring(obj.path)
         end
         return "(named: " .. table.concat(paths, " ") .. ")"
     end
@@ -235,24 +267,24 @@ H.case("Section 7: a dot path's change sends no reload", function()
     H.write_file(site .. "/.env", "API_KEY=SECRET-7")
     H.write_file(site .. "/.git/index", "SECRET-8")
     vim.wait(300)
-    local early = reloaded(c, mark, 1, "event: reload")
+    local early = reloaded(c, mark, 1)
     H.write_file(site .. "/page.html", "<html><body>changed</body></html>")
-    local page = reloaded(c, mark, 2000, '"path":"page%.html"')
+    local page = reloaded(c, mark, 2000, "page.html")
     ok(
-        not early and not streamed(c, mark, '"path":"%.env"') and not streamed(c, mark, '"path":"%.git'),
+        not early and not streamed(c, mark, "^%.env$") and not streamed(c, mark, "^%.git"),
         "a write to .env or .git/index sends no reload event"
     )
     ok(page, "a write to page.html reloads within 2 s, naming page.html")
     local open_site, open_c, open_mark = watched({ serve_dotfiles = true })
     H.write_file(open_site .. "/.env", "API_KEY=open")
-    ok(reloaded(open_c, open_mark, 2000, '"path":"%.env"'), "with serve_dotfiles a write to .env reloads")
+    ok(reloaded(open_c, open_mark, 2000, ".env"), "with serve_dotfiles a write to .env reloads")
     -- A watcher per directory (Linux) spent a watch on every dot directory
     -- but .git, whose changes the rule drops, and none on .git when
     -- serve_dotfiles admits it.
     H.write_file(open_site .. "/.hidden/x", "x")
-    ok(reloaded(open_c, open_mark, 2000, '"path":"%.hidden/x"'), "and a write to .hidden/x")
+    ok(reloaded(open_c, open_mark, 2000, ".hidden/x"), "and a write to .hidden/x")
     H.write_file(open_site .. "/.git/index", "index")
-    ok(reloaded(open_c, open_mark, 2000, '"path":"%.git/index"'), "and a write to .git/index")
+    ok(reloaded(open_c, open_mark, 2000, ".git/index"), "and a write to .git/index")
     local own_site = H.tmpdir()
     H.write_file(own_site .. "/.draft.html", "<html><body>DRAFT</body></html>")
     local _, oc, omark = watched({ default_index = own_site .. "/.draft.html" }, own_site)
@@ -260,10 +292,10 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.wait(300)
     H.write_file(own_site .. "/.draft.html", "<html><body>DRAFT 2</body></html>")
     ok(
-        reloaded(oc, omark, 2000, '"path":"/"') and not streamed(oc, omark, "draft"),
+        reloaded(oc, omark, 2000, "/") and not streamed(oc, omark, "draft"),
         "a write to the file the user started on, .draft.html, reloads, naming / " .. named(oc, omark)
     )
-    ok(not streamed(oc, omark, '"path":"%.env"'), "and a write to .env beside it still sends none")
+    ok(not streamed(oc, omark, "^%.env$"), "and a write to .env beside it still sends none")
     -- A watcher per directory (Linux) spent no watch on the dot directory
     -- holding the file the user started on, so it never reloaded, and the
     -- other watchers named that dot path, a link's target too, to every
@@ -276,7 +308,7 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.wait(300)
     H.write_file(held .. "/.drafts/page.html", "<html><body>DRAFT 2</body></html>")
     ok(
-        reloaded(hc, hmark, 2000, '"path":"/"') and not streamed(hc, hmark, "drafts/page"),
+        reloaded(hc, hmark, 2000, "/") and not streamed(hc, hmark, "drafts/page"),
         "a write to a default_index under .drafts/ reloads, naming / " .. named(hc, hmark)
     )
     ok(
@@ -291,7 +323,7 @@ H.case("Section 7: a dot path's change sends no reload", function()
         local _, lc, lmark = watched({ default_index = linked .. "/page.html" }, linked)
         H.write_file(linked .. "/page.html", "<html><body>REAL 2</body></html>")
         ok(
-            reloaded(lc, lmark, 2000, '"path":"/"') and not streamed(lc, lmark, "real%.html"),
+            reloaded(lc, lmark, 2000, "/") and not streamed(lc, lmark, "real%.html"),
             "and one started on page.html, a link to .hidden/real.html, naming / and never its target "
                 .. named(lc, lmark)
         )
@@ -308,7 +340,7 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.fn.mkdir(dotted, "p")
     local _, dc, dmark = watched(nil, dotted)
     H.write_file(dotted .. "/page.html", "<html><body>dotted</body></html>")
-    ok(reloaded(dc, dmark, 2000, '"path":"page%.html"'), "a root under .local reloads for page.html")
+    ok(reloaded(dc, dmark, 2000, "page.html"), "a root under .local reloads for page.html")
     -- .liveignore read that full path too, so a line naming a directory
     -- above the root dropped every reload there.
     local ignoring = H.tmpdir() .. "/dist/site"
@@ -318,10 +350,7 @@ H.case("Section 7: a dot path's change sends no reload", function()
     H.write_file(ignoring .. "/notes.log", "log")
     vim.wait(300)
     H.write_file(ignoring .. "/page.html", "<html><body>ignoring</body></html>")
-    ok(
-        reloaded(ic, imark, 2000, '"path":"page%.html"'),
-        "a .liveignore line naming a directory above the root drops no reload"
-    )
+    ok(reloaded(ic, imark, 2000, "page.html"), "a .liveignore line naming a directory above the root drops no reload")
     ok(not streamed(ic, imark, "notes%.log"), "and a line naming *.log still drops notes.log's")
     -- A line with a leading slash matched the relative path only where a
     -- directory above supplied the slash, so /dist dropped sub/dist/'s
@@ -340,7 +369,7 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.wait(300)
     H.write_file(anchored .. "/sub/dist/y.js", "y")
     ok(
-        reloaded(ac, amark, 2000, '"path":"sub/dist/y%.js"') and not streamed(ac, amark, '"path":"dist/'),
+        reloaded(ac, amark, 2000, "sub/dist/y.js") and not streamed(ac, amark, "^dist/"),
         "a .liveignore line /dist drops dist/x.js's reload and not sub/dist/y.js's " .. named(ac, amark)
     )
     local loose = ignore_site("dist\n")
@@ -350,7 +379,7 @@ H.case("Section 7: a dot path's change sends no reload", function()
     vim.wait(300)
     H.write_file(loose .. "/page.html", "<html><body>loose</body></html>")
     ok(
-        reloaded(uc, umark, 2000, '"path":"page%.html"') and not streamed(uc, umark, "dist/"),
+        reloaded(uc, umark, 2000, "page.html") and not streamed(uc, umark, "dist/"),
         "and a line dist drops both " .. named(uc, umark)
     )
     -- A started-on file with a plain name keeps its path in the payload, so
@@ -360,7 +389,9 @@ H.case("Section 7: a dot path's change sends no reload", function()
     local _, cc, cmark = watched({ default_index = css_site .. "/style.css" }, css_site)
     H.write_file(css_site .. "/style.css", "body{color:red}")
     ok(
-        reloaded(cc, cmark, 2000, '"path":"style%.css","css":true'),
+        reloaded(cc, cmark, 2000, function(obj)
+            return obj.path == "style.css" and obj.css == true
+        end),
         "a started-on style.css reloads as a stylesheet swap, named " .. named(cc, cmark)
     )
     -- A .liveignore line holding a bracket raised inside the watcher once
@@ -371,14 +402,14 @@ H.case("Section 7: a dot path's change sends no reload", function()
     local _, bc, bmark = watched(nil, bracket)
     H.write_file(bracket .. "/draft.html", "<html><body>bracket</body></html>")
     ok(
-        reloaded(bc, bmark, 2000, '"path":"draft%.html"'),
+        reloaded(bc, bmark, 2000, "draft.html"),
         "a .liveignore line with a bracket is read and draft.html reloads " .. named(bc, bmark)
     )
     local question = ignore_site("a?b\n")
     local _, qc, qmark = watched(nil, question)
     H.write_file(question .. "/axb.txt", "x")
     ok(
-        reloaded(qc, qmark, 2000, '"path":"axb%.txt"'),
+        reloaded(qc, qmark, 2000, "axb.txt"),
         "a .liveignore line a?b is literal, so axb.txt reloads " .. named(qc, qmark)
     )
 end)
@@ -433,13 +464,13 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
         local mark = #table.concat(c.chunks)
         assert(uv.fs_chmod(site, 448))
         local got = c:read(2000, function(b)
-            return b:find('"path":"/"', mark + 1, true) ~= nil
+            return reloads_for(b, mark, "/")
         end)
         local named = {}
-        for p in got:sub(mark + 1):gmatch('"path":"([^"]*)"') do
-            named[#named + 1] = p
+        for _, obj in ipairs(reloads(got, mark)) do
+            named[#named + 1] = tostring(obj.path)
         end
-        ok(got:find('"path":"/"', mark + 1, true) ~= nil, ("%s (named: %s)"):format(row[2], table.concat(named, " ")))
+        ok(reloads_for(got, mark, "/"), ("%s (named: %s)"):format(row[2], table.concat(named, " ")))
     end
 end)
 
