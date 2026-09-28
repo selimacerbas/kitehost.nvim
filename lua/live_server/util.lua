@@ -153,10 +153,10 @@ end
 -- Open URL in default browser (portable)
 -- vim.ui.open answers nil and a message when it finds no opener, without
 -- raising, so its result is read, not pcall's alone. The platform's opener
--- is tried next, and when that cannot start or exits nonzero the URL is
--- shown to open by hand. jobstart raises E475 for an opener that is not
--- executable (measured), the Linux case where vim.ui.open found none, so
--- the raise counts as not started.
+-- is tried next, and when that cannot start or exits nonzero the URL, its
+-- token's value left out, is shown to open by hand. jobstart raises E475
+-- for an opener that is not executable (measured), the Linux case where
+-- vim.ui.open found none, so the raise counts as not started.
 function U.open_browser(url)
     local ok, handle = pcall(vim.ui.open, url)
     if ok and handle then
@@ -171,8 +171,12 @@ function U.open_browser(url)
     else
         argv = { "xdg-open", url }
     end
+    -- Shown whatever notify says, so the token's value is left out: a user
+    -- who set notify = false keeps it out of :messages, and the start
+    -- notice that carries it is the one notify silences.
     local function by_hand()
-        U.notify(("Could not open a browser; open %s by hand"):format(url), { notify = true }, "WARN")
+        local shown = url:gsub("([?&]t=)[^&#]*", "%1...")
+        U.notify(("Could not open a browser; open %s by hand"):format(shown), { notify = true }, "WARN")
     end
     vim.schedule(function()
         local started, job = pcall(vim.fn.jobstart, argv, {
