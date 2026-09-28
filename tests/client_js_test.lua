@@ -4,8 +4,9 @@
 -- live reload died in the README's network setup. The token client's
 -- behaviour runs in node against stubs of the page around it: the tab
 -- keeps the token it was given, a page whose own URL uses t never replaces
--- it, a refused token is tried once and named, and a page with no token
--- waits for one and is told why.
+-- it, a refused token is tried once, named and no longer kept, a stream
+-- the page itself closed is no refusal, and a page with no token waits
+-- for one and is told why.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/client_js_test.lua"
 
@@ -51,8 +52,8 @@ H.case("Section 2: a token server's client carries the page's token to the strea
     -- Substrings alone passed a client with a syntax error, which dies on
     -- every token server, so its bytes are pinned as the tokenless one's
     -- are; the rows after the pin say what those bytes must hold.
-    eq(#r.body, 1393, "1393 bytes, pinned as the tokenless client is")
-    eq(vim.fn.sha256(r.body), "c231d968b9fe4b91ea71bec429fc2d9a7ad80b12b0dda282b834d60ada4e8ae4", "and by its sha256")
+    eq(#r.body, 1532, "1532 bytes, pinned as the tokenless client is")
+    eq(vim.fn.sha256(r.body), "51e8b4ba0f6de02fff40a4d4c7d1d63739cd1f2371902e0492c717cae2be496d", "and by its sha256")
     ok(r.body:find("location.search", 1, true) ~= nil, "it reads t from the page's query")
     ok(r.body:find("sessionStorage", 1, true) ~= nil, "and keeps it for reloads that drop the query")
     ok(r.body:find("'/__live/events?t='+encodeURIComponent(t)", 1, true) ~= nil, "and puts it on the event stream")
@@ -99,6 +100,13 @@ function page(search, where, throws) {
       const e = { key: k, oldValue: old, newValue: store[k] };
       t.docs.forEach((d) => { if (d !== on) t.queue.push(() => (d.storage || []).forEach((f) => f(e))); });
     },
+    removeItem(k) {
+      if (throws) throw new Error(throws);
+      if (!has(store, k)) return;
+      const e = { key: k, oldValue: store[k], newValue: null };
+      delete store[k];
+      t.docs.forEach((d) => { if (d !== on) t.queue.push(() => (d.storage || []).forEach((f) => f(e))); });
+    },
   };
   const addEventListener = (type, fn) => { (on[type] = on[type] || []).push(fn); };
   const setTimeout = (fn, ms) => { timers.push({ fn, at: clock + ms }); };
@@ -122,8 +130,9 @@ function page(search, where, throws) {
     if (es['on' + type]) es['on' + type]({});
   };
   // Every stream the server closes, the ones its errors open included,
-  // bounded so a client that never stops shows as a count, not a hang.
-  const refuse = () => { for (let i = 0; i < 5 && streams[i]; i++) fire(i, 'error', 2); };
+  // each followed by the turn its refusal waits for, bounded so a client
+  // that never stops shows as a count, not a hang.
+  const refuse = () => { for (let i = 0; i < 5 && streams[i]; i++) { fire(i, 'error', 2); tick(0); } };
   const urls = () => streams.map((es) => es.url);
   const kept = () => (has(store, K) ? store[K] : null);
   return { warns, streams, fire, refuse, urls, kept, tick };
@@ -132,6 +141,7 @@ const pages = {
   foreign() {
     const p = page('?t=30', { [K]: 'REAL' });
     p.fire(0, 'error', 2);
+    p.tick(0);
     const reload = p.streams[1] ? (p.streams[1].on.reload || []).length : 0;
     if (p.streams[1]) p.fire(1, 'open', 1);
     return { urls: p.urls(), kept: p.kept(), reload };
@@ -144,10 +154,10 @@ const pages = {
   },
   left() {
     const t = tab();
-    const first = page('?t=REAL', t);
+    const first = page('?t=REAL', t).kept();
     const next = page('', t);
     next.tick(2000);
-    return { first: first.urls(), urls: next.urls(), warns: next.warns };
+    return { first, urls: next.urls(), warns: next.warns };
   },
   arrives() {
     const t = tab();
@@ -164,12 +174,12 @@ const pages = {
   refused() {
     const p = page('?t=30', {});
     p.refuse();
-    return { urls: p.urls(), warns: p.warns };
+    return { urls: p.urls(), warns: p.warns, kept: p.kept() };
   },
   same() {
     const p = page('?t=OLD', { [K]: 'OLD' });
     p.refuse();
-    return { urls: p.urls(), warns: p.warns };
+    return { urls: p.urls(), warns: p.warns, kept: p.kept() };
   },
   once() {
     const p = page('?t=30', { [K]: 'OLD' });
@@ -179,7 +189,40 @@ const pages = {
   restart() {
     const p = page('', { [K]: 'OLD' });
     p.refuse();
-    return { urls: p.urls(), warns: p.warns };
+    return { urls: p.urls(), warns: p.warns, kept: p.kept() };
+  },
+  // Chromium closes a stream with readyState 2 on a navigation away and on
+  // window.stop(), the same state a refusal leaves; the turn after it never
+  // runs in a document that is leaving.
+  leaving() {
+    const p = page('?t=REAL', {});
+    p.fire(0, 'error', 2);
+    const foreign = page('?t=30', { [K]: 'REAL' });
+    foreign.fire(0, 'error', 2);
+    return { urls: p.urls(), warns: p.warns, kept: p.kept(), foreign: foreign.urls() };
+  },
+  stopped() {
+    const p = page('', { [K]: 'REAL' });
+    p.fire(0, 'open', 1);
+    p.fire(0, 'error', 2);
+    p.tick(0);
+    return { urls: p.urls(), warns: p.warns, kept: p.kept() };
+  },
+  dropped() {
+    const p = page('', { [K]: 'REAL' });
+    p.fire(0, 'open', 1);
+    p.fire(0, 'error', 0);
+    p.fire(0, 'error', 2);
+    p.tick(0);
+    return { urls: p.urls(), warns: p.warns, kept: p.kept() };
+  },
+  stale_frame() {
+    const t = tab();
+    page('?t=30', t).refuse();
+    page('?t=REAL', t);
+    const frame = page('', t);
+    t.flush();
+    return { urls: frame.urls(), kept: frame.kept() };
   },
   stale() {
     const p = page('?t=NEW', { [K]: 'OLD' });
@@ -312,6 +355,7 @@ H.case("Section 3: the tab keeps the token it was given, never a page's own t", 
     eq(warned(p), "", "and warns of nothing")
 
     p = seen("left")
+    eq(p.first, "REAL", "a page at ?t=<token> that leaves before its stream opens has kept it")
     eq(urls(p), EVENTS .. "?t=REAL", "a page left before its stream opened: the tab's next page opens with its token")
     eq(warned(p), "", "and warns of nothing")
 
@@ -341,20 +385,28 @@ H.case("Section 4: a refused token is tried once, never a third stream, and is n
     local seen, urls, warned = reader()
     local p = seen("once")
     eq(urls(p), EVENTS .. "?t=30 " .. EVENTS .. "?t=OLD", "the kept token is tried once, never a third stream")
-    eq(p.kept, "OLD", "and a refused query value is not kept after it")
+    eq(p.kept, vim.NIL, "and neither refused value is kept after it")
     eq(warned(p), REFUSED, "then the refusal is named once")
 
     p = seen("same")
     eq(urls(p), EVENTS .. "?t=OLD", "a refused query value equal to the kept token opens exactly one stream")
     eq(warned(p), REFUSED, "then the refusal is named once")
+    eq(p.kept, vim.NIL, "and the refused value is no longer kept")
 
+    -- Kept at once in an empty tab, a refused value stayed kept, and a
+    -- later page's iframe read it before that page's stream replaced it.
     p = seen("refused")
     eq(urls(p), EVENTS .. "?t=30", "a refused query value with nothing else kept opens no second stream")
     eq(warned(p), REFUSED, "then the refusal is named once")
+    eq(p.kept, vim.NIL, "and once the turn has run nothing is kept")
+
+    p = seen("stale_frame")
+    eq(urls(p), EVENTS .. "?t=REAL", "a later page's iframe opens with the token that page brought")
 
     p = seen("restart")
     eq(urls(p), EVENTS .. "?t=OLD", "a refused kept token opens no second stream")
     eq(warned(p), REFUSED, "then the refusal is named once")
+    eq(p.kept, vim.NIL, "and is no longer kept")
 end)
 
 -- The hint named "the URL the server printed", which a server.start caller
@@ -388,6 +440,28 @@ H.case("Section 5: a page with no token is told why", function()
         "and says the token could not be kept, with the error: " .. said
     )
     eq(select(2, warned(p)), 1, "once, the stream's open included")
+end)
+
+-- Chromium closes a stream with readyState 2 on every navigation away and
+-- on window.stop(), as it does for a refusal, so a leaving page warned
+-- that its token was refused and ran its fallback while it unloaded. A
+-- stream that opened is a refusal only after a reconnect error, and the
+-- refusal waits one turn, which a leaving document never reaches.
+H.case("Section 6: a stream the page closed is no refusal", function()
+    local seen, urls, warned = reader()
+    local p = seen("leaving")
+    eq(p.kept, "REAL", "a leaving page's stream closed before the turn runs: the token is kept")
+    eq(warned(p), "", "and nothing is named")
+    eq(table.concat(p.foreign or {}, " "), EVENTS .. "?t=30", "and a leaving page opens no fallback stream")
+
+    p = seen("stopped")
+    eq(warned(p), "", "a stream that opened and then closed with no reconnect error names nothing")
+    eq(p.kept, "REAL", "and keeps the token")
+    eq(urls(p), EVENTS .. "?t=REAL", "and opens no second stream")
+
+    p = seen("dropped")
+    eq(warned(p), REFUSED, "a stream that opened, lost the server and was then refused names the refusal")
+    eq(p.kept, vim.NIL, "and the refused token is no longer kept")
 end)
 
 H.finish()

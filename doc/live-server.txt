@@ -141,8 +141,8 @@ gates `/__live/asset` too.
     own, are refused at start. The event stream sends its own
     `Cache-Control` in place of a caller's, and every `/__live/*` response
     drops a caller's `Access-Control-Allow-Origin`. A `Referrer-Policy` of
-    `no-referrer` or `strict-origin` is kept as given, and any other is
-    replaced by `strict-origin`.
+    `no-referrer` or `strict-origin`, in any case, is kept and sent in
+    lower case, and any other is replaced by `strict-origin`.
 
 `cors` (boolean|string|string[], default false)
     Add `Access-Control-Allow-Origin` to the root route's successful

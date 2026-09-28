@@ -65,8 +65,9 @@ end
 -- policy sends no path or query in any Referer, same-origin included, and
 -- the origin alone to a destination as secure: no-referrer sent nothing,
 -- and every YouTube embed, which needs the origin, showed Error 153. A
--- caller's no-referrer or strict-origin, under any spelling of the name,
--- is sent as given, since neither sends a path or query: replaced, a
+-- caller's no-referrer or strict-origin, under any spelling of the name
+-- or the value, is kept and sent in lower case, as the policy names are
+-- defined, since neither sends a path or query: replaced, a
 -- caller's no-referrer was loosened, and a network bind's address reached
 -- third parties the caller kept it from. Any other policy is replaced, so
 -- the header goes out once and never sends the token.
@@ -106,13 +107,18 @@ H.case("Section 1: every response carries Referrer-Policy: strict-origin or stri
     eq(r.headers["referrer-policy"], "strict-origin", "a caller's same-origin is replaced")
     eq(r.count["referrer-policy"], 1, "and sent once")
     for _, c in ipairs({
-        { "Referrer-Policy", "no-referrer" },
-        { "Referrer-Policy", "strict-origin" },
-        { "referrer-POLICY", "No-Referrer" },
+        { "Referrer-Policy", "no-referrer", "no-referrer" },
+        { "Referrer-Policy", "strict-origin", "strict-origin" },
+        { "referrer-POLICY", "No-Referrer", "no-referrer" },
+        { "Referrer-Policy", " NO-REFERRER\t", "no-referrer" },
     }) do
         local mine = serve({ headers = { [c[1]] = c[2] } })
         r = raw(mine.port, get("/style.css", mine.port))
-        eq(r.headers["referrer-policy"], c[2], ("a caller's %s: %s is sent as given"):format(c[1], c[2]))
+        eq(
+            r.headers["referrer-policy"],
+            c[3],
+            ("a caller's %s: %s is kept and sent as %s"):format(c[1], vim.inspect(c[2]), c[3])
+        )
         eq(r.count["referrer-policy"], 1, "once")
     end
 end)

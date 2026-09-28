@@ -78,12 +78,13 @@ local REASONS = {
 -- The policies that send no path or query in any Referer.
 local KEPT_POLICIES = { ["no-referrer"] = true, ["strict-origin"] = true }
 
--- Whether a caller's Referrer-Policy value is one of them as Chromium
--- reads it, its case ignored and its blanks trimmed (measured). Two
--- one-pass trims, as parse_head's.
+-- A caller's Referrer-Policy value when it is one of them as Chromium
+-- reads it, its case ignored and its blanks trimmed (measured), in the
+-- lower case the policy names are defined in; else nil. Two one-pass
+-- trims, as parse_head's.
 local function kept_policy(v)
-    local bare = v:gsub("^[ \t]+", ""):match("^(.*[^ \t])") or ""
-    return KEPT_POLICIES[bare:lower()] == true
+    local bare = (v:gsub("^[ \t]+", ""):match("^(.*[^ \t])") or ""):lower()
+    return KEPT_POLICIES[bare] and bare or nil
 end
 
 local function write_headers(sock, status, headers)
@@ -93,8 +94,8 @@ local function write_headers(sock, status, headers)
     for k, v in pairs(headers or {}) do
         if k:lower() ~= "referrer-policy" then
             table.insert(lines, ("%s: %s\r\n"):format(k, v))
-        elseif kept_policy(v) then
-            policy = v
+        else
+            policy = kept_policy(v) or policy
         end
     end
     -- A page URL can carry ?t=<token>. The browser's default,
@@ -478,18 +479,24 @@ local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" ..
 -- refuses gives way, once, to the kept token. A document with no token
 -- waits for another to keep one and says why after two seconds; a refused
 -- token with nothing left to try is named, where the stream's error line
--- said nothing. The token is never written into the script, which any
--- page may load.
+-- said nothing, and is no longer kept, so a later page's iframe cannot
+-- read it first. Chromium closes a stream the same way on a navigation
+-- away and on window.stop(), so a stream that opened counts as refused
+-- only after a reconnect error, and the refusal waits one turn, which a
+-- leaving document never reaches. The token is never written into the
+-- script, which any page may load.
 local CLIENT_JS_TOKEN = table.concat({
     "!function(){try{",
     "var k='live-server.nvim:t',q=new URLSearchParams(location.search).get('t'),s=null,x,o;",
     "try{s=sessionStorage.getItem(k)}catch(e){x=e}",
     "var w=function(m){console.warn('[live-server.nvim] '+m)},",
     "p=function(t){try{sessionStorage.setItem(k,t)}catch(e){w('the token could not be kept: '+e)}},",
-    "c=function(t){o=1;var es=new EventSource('/__live/events?t='+encodeURIComponent(t));",
-    "es.addEventListener('open',function(){if(t===q&&s&&s!==q)p(t)});",
-    "es.addEventListener('error',function(){if(es.readyState===2){if(t===q&&s&&s!==q)c(s);",
-    "else w('the token was refused: open the page with the server\\'s ?t=<token>')}});",
+    "c=function(t){o=1;var u,es=new EventSource('/__live/events?t='+encodeURIComponent(t));",
+    "es.addEventListener('open',function(){u=1;if(t===q&&s&&s!==q)p(t)});",
+    "es.addEventListener('error',function(){if(es.readyState===0)u=0;",
+    "else if(es.readyState===2&&!u)setTimeout(function(){if(t===q&&s&&s!==q)c(s);",
+    "else{try{sessionStorage.getItem(k)===t&&sessionStorage.removeItem(k)}catch(e){}",
+    "w('the token was refused: open the page with the server\\'s ?t=<token>')}},0)});",
     CLIENT_ON,
     "};",
     "if(q){if(!s)p(q);c(q)}else if(s)c(s);else if(x)w('the token could not be kept: '+x);",
