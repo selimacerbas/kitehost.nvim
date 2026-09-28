@@ -305,6 +305,33 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
         methods.write, methods.shutdown, uv.fs_read = real_write, real_shutdown, real_read
     end
     H.defer(restore)
+    -- The notices the server sends, each with whether it ran in a fast
+    -- event, where the real vim.notify raises. A raise inside a transfer
+    -- reached the editor as a bare callback error with no notice.
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level, fast = vim.in_fast_event() })
+    end
+    -- Whether one notice, and no second, arrives after the first mark
+    -- notices within 1 s: an error on one line naming path and cause,
+    -- sent outside the fast event.
+    local function one_notice(mark, path, cause)
+        H.wait_for(function()
+            return #notes > mark
+        end, 1000)
+        vim.wait(50)
+        local note = notes[mark + 1]
+        return #notes == mark + 1
+            and note.level == vim.log.levels.ERROR
+            and not note.msg:find("\n", 1, true)
+            and note.msg:find(path .. " failed: ", 1, true) ~= nil
+            and note.msg:find(cause, 1, true) ~= nil
+            and not note.fast
+    end
     -- Hands the first write that carries body to fn; every other goes out.
     local function on_write(body, fn)
         methods.write = function(h, data, cb)
@@ -408,29 +435,25 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     ok(closed(), "and closes its file")
 
     closed = since()
+    local mark, errs = #notes, #H.errors()
     on_write("hello", function()
         error("deliberate write failure")
     end)
-    local reported = H.expect_error("deliberate write failure", function()
-        res, eof = fetch("/hello.txt")
-    end)
+    res, eof = fetch("/hello.txt")
     restore()
-    ok(reported, "a raise inside the transfer is reported")
+    ok(
+        one_notice(mark, "/hello.txt", "deliberate write failure"),
+        "a raise inside the transfer is reported once, on one line, outside the fast event"
+    )
+    eq(#H.errors(), errs, "and reaches the editor as no callback error")
     ok(eof, "and ends the connection")
     ok(closed(), "and closes its file")
 
     -- The first read runs on the handler's own stack, so its raise goes
-    -- back to the handler, which owns the socket and reports the raise as
-    -- a notification; the file is the transfer's to close.
+    -- back to the handler, which owns the socket and reports the raise;
+    -- the file is the transfer's to close.
     closed = since()
-    local notes = {}
-    local real_notify = vim.notify
-    H.defer(function()
-        vim.notify = real_notify
-    end)
-    vim.notify = function(msg)
-        table.insert(notes, msg)
-    end
+    mark = #notes
     on_file_read(function()
         error("deliberate read failure")
     end)
@@ -441,13 +464,7 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     end)
     c:close()
     restore()
-    ok(
-        H.wait_for(function()
-            return notes[1] ~= nil
-        end, 1000) and notes[1]:find("deliberate read failure", 1, true) ~= nil,
-        "a raise before the first read is reported"
-    )
-    vim.notify = real_notify
+    ok(one_notice(mark, "/hello.txt", "deliberate read failure"), "a raise before the first read is reported")
     ok(closed(), "and the transfer closes its file before the raise goes on")
 
     closed = since()
@@ -459,14 +476,17 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     ok(eof and res ~= nil and res.body == "hello", "a transfer whose shutdown cannot start closes its socket at once")
     ok(closed(), "and its file")
 
+    mark, errs = #notes, #H.errors()
     methods.shutdown = function()
         error("deliberate shutdown failure")
     end
-    reported = H.expect_error("deliberate shutdown failure", function()
-        res, eof = fetch("/hello.txt")
-    end)
+    res, eof = fetch("/hello.txt")
     restore()
-    ok(reported, "a raise after the file is closed is reported")
+    ok(
+        one_notice(mark, "/hello.txt", "deliberate shutdown failure"),
+        "a raise after the file is closed is reported once, on one line, outside the fast event"
+    )
+    eq(#H.errors(), errs, "and reaches the editor as no callback error")
     ok(eof and res ~= nil and res.body == "hello", "and ends the connection")
     eq(select(2, files()), 0, "no transfer closed its file twice")
 end)

@@ -533,28 +533,43 @@ end)
 -- raises on demand, so the raises are forced through vim.uv, the table the
 -- server reads, each for one request: fs_stat for the file asked for,
 -- before any status line, and the transfer's first read, after its head.
+-- The notice stub records whether it ran in a fast event, where the real
+-- vim.notify raises (E5560).
 H.case("Section 8: a raise inside the handler answers 500 and is reported", function()
     local uv = vim.uv
     local notes = {}
     local real_notify, real_stat, real_read = vim.notify, uv.fs_stat, uv.fs_read
-    H.defer(function()
-        vim.notify, uv.fs_stat, uv.fs_read = real_notify, real_stat, real_read
-    end)
-    vim.notify = function(msg, level)
-        table.insert(notes, { msg = msg, level = level })
-    end
-    local seen = #H.errors()
     local inst = serve()
     local port = inst.port
+    local methods = getmetatable(inst.handle).__index
+    local real_close = methods.close
+    H.defer(function()
+        vim.notify, uv.fs_stat, uv.fs_read, methods.close = real_notify, real_stat, real_read, real_close
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level, fast = vim.in_fast_event() })
+    end
+    local seen = #H.errors()
+    -- Whether notice n arrived within 1 s as an error naming cause, sent
+    -- outside the fast event.
+    local function reported(n, cause)
+        local note = H.wait_for(function()
+            return #notes >= n
+        end, 1000) and notes[n]
+        return note and note.level == vim.log.levels.ERROR and note.msg:find(cause, 1, true) ~= nil and not note.fast
+    end
 
     local target = assert(uv.fs_realpath(root .. "/style.css"))
-    uv.fs_stat = function(path, ...)
-        if path == target then
-            error("deliberate stat failure")
+    local function stat_raises()
+        uv.fs_stat = function(path, ...)
+            if path == target then
+                error("deliberate stat failure")
+            end
+            return real_stat(path, ...)
         end
-        return real_stat(path, ...)
     end
-    local res, _, _, closed = ask(port, get("/style.css", port))
+    stat_raises()
+    local res, _, _, closed = ask(port, get("/style.css?t=secret", port))
     uv.fs_stat = real_stat
     eq(res[1] and res[1].status, 500, "a raise before any status line went out is answered 500")
     ok(closed, "and the connection ends")
@@ -562,20 +577,22 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
     ok(
         body:find("Internal Server Error", 1, true) ~= nil
             and not body:find("deliberate", 1, true)
-            and not body:find("style.css", 1, true),
+            and not body:find("style.css", 1, true)
+            and not body:find("secret", 1, true),
         "its page names neither the cause nor the path"
     )
     ok(
-        H.wait_for(function()
-            return #notes >= 1
-        end, 1000),
-        "the raise is reported"
+        reported(1, "deliberate stat failure"),
+        "the raise is reported as an error naming its cause, outside the fast event"
     )
+    -- The path's query is cut: ?t=<token> rides there and :messages keeps
+    -- what a notice says.
     ok(
         notes[1] ~= nil
-            and notes[1].level == vim.log.levels.ERROR
-            and notes[1].msg:find("deliberate stat failure", 1, true) ~= nil,
-        "as an error naming its cause"
+            and not notes[1].msg:find("\n", 1, true)
+            and notes[1].msg:find("/style.css failed: ", 1, true) ~= nil
+            and not notes[1].msg:find("secret", 1, true),
+        "on one line naming the path, never its query"
     )
 
     -- stream_file's first read raises on the handler's stack, after its
@@ -610,20 +627,21 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
         ("with the one status line that went out, no 500 after it (%d status lines)"):format(lines)
     )
     ok(
-        H.wait_for(function()
-            return #notes >= 2
-        end, 1000),
-        "the late raise is reported"
+        reported(2, "deliberate read failure"),
+        "the late raise is reported as an error naming its cause, outside the fast event"
     )
     ok(
         notes[2] ~= nil
-            and notes[2].level == vim.log.levels.ERROR
-            and notes[2].msg:find("deliberate read failure", 1, true) ~= nil,
-        "as an error naming its cause"
+            and not notes[2].msg:find("\n", 1, true)
+            and notes[2].msg:find("/hello.txt failed: ", 1, true) ~= nil,
+        "on one line naming the path"
     )
     vim.wait(100)
     eq(#notes, 2, "each raise is reported once")
     eq(#H.errors(), seen, "and neither reaches the editor as an error of its own")
+    -- A control: the client's close reaches the server's read path, which
+    -- closes the socket too, so the count comes back with the boundary or
+    -- without it; it holds that the two closes give back both.
     if fds then
         ok(
             held and H.wait_for(function()
@@ -638,6 +656,40 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
     else
         H.skip("the file and the socket are given back (no descriptor listing on this platform)")
     end
+
+    -- A peer controls the path up to the head's cap; every ./ segment
+    -- still reaches the file, so the notice would carry all of them.
+    stat_raises()
+    ask(port, get("/" .. ("./"):rep(200) .. "style.css", port))
+    uv.fs_stat = real_stat
+    local shown = reported(3, "deliberate stat failure") and notes[3].msg:match("^live%-server: (.-) failed: ")
+    eq(shown and #shown, 200, "a 410-byte path is cut to 200 bytes in the notice")
+
+    -- The notice goes out before the connection is answered or closed, so
+    -- a raise there cannot swallow it: the first tcp close after the read
+    -- raises is the boundary's, which the stub makes raise once its close
+    -- is done.
+    uv.fs_read = function(fd, size, offset, cb)
+        if type(cb) == "function" then
+            methods.close = function(h, ...)
+                methods.close = real_close
+                real_close(h, ...)
+                error("deliberate close failure")
+            end
+            error("deliberate read failure")
+        end
+        return real_read(fd, size, offset, cb)
+    end
+    local escaped = H.expect_error("deliberate close failure", function()
+        local rc = assert(H.raw_connect(port))
+        assert(rc:send(get("/hello.txt", port)))
+        rc:read(3000)
+        rc:close()
+    end)
+    uv.fs_read, methods.close = real_read, real_close
+    ok(escaped, "a raise while the boundary closes the connection reaches the editor")
+    ok(reported(4, "deliberate read failure"), "and the handler's raise before it is still reported")
+
     res = ask(port, get("/style.css", port))
     eq(res[1] and res[1].status, 200, "and the server answers the next request")
 end)
