@@ -180,7 +180,7 @@ H.case("Section 4: a client that left before the beat is not written to", functi
     methods.write = real_write
     ok(beats(rest) >= 2, "the beats after it reach the stream still open")
     eq(gone, 0, "and write nothing to the two that left")
-    eq(idle:read(0), "", "a connection that is no event stream hears no beat")
+    eq(vim.inspect(idle:read(0)), vim.inspect(""), "a connection that is no event stream hears no beat")
     eq(#H.errors(), errs, "and nothing raises")
 end)
 
