@@ -1,14 +1,16 @@
 -- tests/start_test.lua
--- What start refuses, each before any socket opens and naming what it
--- refused: a bad token, protected_paths (patterns with no token among
--- them), serve_dotfiles, index_names, headers (a control byte in a value,
--- two spellings of one name and the server's own fields among them), cors,
--- allowed_hosts (a string, a map, a hole, a wildcard, an entry no Host can
--- match), a port it cannot hold or a root that does not resolve; a bind to
--- an address this machine lacks or to a port in use raises naming it and
--- leaves no socket. A pattern the check cannot read past its literal
--- starts and gates every path it is asked about, and each option is read
--- from the caller's table once.
+-- What start refuses, each before any socket opens, naming what it
+-- refused, at level 0: a bad token, protected_paths (patterns with no
+-- token among them), serve_dotfiles, index_names, headers (a control byte
+-- in a value, two spellings of one name and the server's own fields among
+-- them), cors, allowed_hosts (a string, a map, a hole, a wildcard, an
+-- entry no Host can match), live, features, host, a port it cannot hold
+-- or a root that is no string or does not resolve; a bind to an address
+-- this machine lacks or to a port in use raises naming it and leaves no
+-- socket, and a failed listen leaves no socket, timer or watcher. A
+-- pattern the check cannot read past its literal starts and gates every
+-- path it is asked about, and each option is read from the caller's table
+-- once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -19,6 +21,23 @@ H.rtp()
 local server = require("live_server.server")
 local util = require("live_server.util")
 local ok, eq, http_get = H.ok, H.eq, H.http_get
+
+-- Every refusal the suite provokes, kept as raised for the last case: the
+-- rows match a refusal by substring, which a "server.lua:NNN: " prefix
+-- would still pass.
+local refusals = {}
+local real_start = server.start
+H.defer(function()
+    server.start = real_start
+end)
+server.start = function(cfg)
+    local started, res = pcall(real_start, cfg)
+    if not started then
+        table.insert(refusals, tostring(res))
+        error(res, 0)
+    end
+    return res
+end
 
 local root = H.tmpdir()
 H.write_file(vim.fs.joinpath(root, "index.html"), "<html><body>hi</body></html>")
@@ -59,11 +78,13 @@ end
 -- replaced the server's own or went out beside it: a second framing line
 -- that left Chrome rendering nothing, and on the asset route a type that
 -- rendered a text file as HTML in the server's origin, past the sandbox
--- its extension decides. A cors
--- value goes out as a header value too, so a CR or LF in it wrote a line
--- of its own; one that is no origin as a browser sends it could never
--- match, and a list is walked with ipairs, which skips a map's keys.
-H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names, headers or cors", function()
+-- its extension decides. A cors value goes out as a header value too, so
+-- a CR or LF in it wrote a line of its own; one that is no origin as a
+-- browser sends it could never match, and a list is walked with ipairs,
+-- which skips a map's keys. live, features and its dirlist are indexed as
+-- given and host is bound as given, so a number there raised as a fault
+-- in the server's own code, naming no option.
+H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
     local bad = {
@@ -191,6 +212,12 @@ H.case("start refuses a bad token, protected_paths, serve_dotfiles, index_names,
             { [1] = "http://a.example", [3] = "http://b.example" },
             "cors must be true, an origin or a list of origins",
         },
+        { "live", 1, "live must be a table" },
+        { "live", true, "live must be a table" },
+        { "features", 1, "features must be a table" },
+        { "features", { dirlist = 1 }, "features.dirlist must be a table" },
+        { "host", 1, "host must be a string" },
+        { "host", { "127.0.0.1" }, "host must be a string" },
     }
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
@@ -479,6 +506,74 @@ H.case("a root that does not resolve is refused before any socket opens", functi
         "a missing root is refused, naming it: " .. tostring(res)
     )
     eq(after, tcps, "and opens no socket")
+    -- fs_realpath raised its own argument error for a nil root, naming no
+    -- option, and read a number as a path under the working directory.
+    for _, case in ipairs({ { "nil", nil }, { "42", 42 } }) do
+        local before = H.handle_count("tcp")
+        local bad_started, bad = pcall(server.start, { port = 0, root = case[2] })
+        local bad_after = H.handle_count("tcp")
+        if bad_started then
+            server.stop(bad)
+        end
+        ok(
+            not bad_started and tostring(bad) == "root must be a string",
+            ("root = %s is refused, naming root: %s"):format(case[1], tostring(bad))
+        )
+        eq(bad_after, before, ("root = %s opens no socket"):format(case[1]))
+    end
+end)
+
+-- A port taken between the bind and the listen fails the listen, after
+-- the socket, the reload timer and the file watchers were open: the socket
+-- was closed and the timer and watchers were left running. The stub hands
+-- start a socket whose listen answers so.
+H.case("a listen that fails leaves no socket, timer or watcher", function()
+    local real_new_tcp = vim.uv.new_tcp
+    H.defer(function()
+        vim.uv.new_tcp = real_new_tcp
+    end)
+    vim.uv.new_tcp = function(...)
+        local handle, err = real_new_tcp(...)
+        if not handle then
+            return handle, err
+        end
+        return setmetatable({}, {
+            __index = function(_, name)
+                if name == "listen" then
+                    return function()
+                        return nil, "EADDRINUSE: stubbed"
+                    end
+                end
+                return function(_, ...)
+                    return handle[name](handle, ...)
+                end
+            end,
+        })
+    end
+    for _, live in ipairs({ false, true }) do
+        local label = live and "with live reload on" or "with live reload off"
+        local before = {}
+        for _, kind in ipairs({ "tcp", "timer", "fs_event" }) do
+            before[kind] = H.handle_count(kind)
+        end
+        local started, res = pcall(server.start, { port = 0, root = root, live = { enabled = live } })
+        local after = {}
+        for _, kind in ipairs({ "tcp", "timer", "fs_event" }) do
+            after[kind] = H.handle_count(kind)
+        end
+        if started then
+            server.stop(res)
+        end
+        ok(
+            not started
+                and tostring(res):find("Failed to listen on", 1, true) ~= nil
+                and tostring(res):find("EADDRINUSE: stubbed", 1, true) ~= nil,
+            ("%s, a failed listen raises, naming it: %s"):format(label, tostring(res))
+        )
+        eq(after.tcp, before.tcp, label .. ", it leaves no socket")
+        eq(after.timer, before.timer, label .. ", no timer")
+        eq(after.fs_event, before.fs_event, label .. ", and no watcher")
+    end
 end)
 
 -- A table that computes a field could pass a check with one value and
@@ -523,6 +618,22 @@ H.case("start reads each option from the caller's table once", function()
         end
     end
     eq(table.concat(not_once, ", "), "", "start reads each option it is given, and any other, once")
+end)
+
+-- The caller shows a refusal to the user as it is raised, so a check at
+-- level 1 would lead with the server's file and line. Last, so it reads
+-- every refusal the cases above provoked.
+H.case("every refusal the suite provokes raises at level 0", function()
+    local positioned = {}
+    for _, msg in ipairs(refusals) do
+        if msg:find("%.lua:%d+: ") then
+            table.insert(positioned, msg)
+        end
+    end
+    ok(
+        #refusals > 0 and #positioned == 0,
+        ("each of the %d refusals is its message alone: %s"):format(#refusals, table.concat(positioned, " | "))
+    )
 end)
 
 H.finish()

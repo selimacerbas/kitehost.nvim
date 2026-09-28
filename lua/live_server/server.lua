@@ -1617,6 +1617,12 @@ local function check_start(cfg)
     if type(p) ~= "number" or p ~= math.floor(p) or p < 0 or p > 65535 then
         error(("port must be an integer from 0 to 65535, got %s (%s)"):format(tostring(p), type(p)), 0)
     end
+    -- A host that is no string reached the bind, and a table raised while
+    -- the bind's error was written, naming no option.
+    local host = cfg.host
+    if host ~= nil and type(host) ~= "string" then
+        error("host must be a string", 0)
+    end
     local allowed = cfg.allowed_hosts
     local allowed_set = {}
     if allowed ~= nil and allowed ~= true then
@@ -1772,18 +1778,34 @@ local function check_start(cfg)
     if cors and type(cors) ~= "table" then
         headers["Access-Control-Allow-Origin"] = type(cors) == "string" and cors or "*"
     end
+    -- Each is indexed as given, where a number raised as a fault in this
+    -- code, naming no option.
+    local live, features = cfg.live, cfg.features
+    if live ~= nil and type(live) ~= "table" then
+        error("live must be a table", 0)
+    end
+    if features ~= nil and type(features) ~= "table" then
+        error("features must be a table", 0)
+    end
+    local dirlist = features and features.dirlist
+    if dirlist ~= nil and type(dirlist) ~= "table" then
+        error("features.dirlist must be a table", 0)
+    end
+    -- fs_realpath raised its own argument error for a nil root and read a
+    -- number as a path under the working directory.
     local root = cfg.root
+    if type(root) ~= "string" then
+        error("root must be a string", 0)
+    end
     local root_real = uv.fs_realpath(root)
     if not root_real then
-        error("Invalid root: " .. tostring(root), 0)
+        error("Invalid root: " .. root, 0)
     end
 
-    local live, features = cfg.live, cfg.features
-    local dirlist = features and features.dirlist
     return {
         token = token,
         port = p,
-        host = cfg.host or "127.0.0.1",
+        host = host or "127.0.0.1",
         -- true turns the Host check off; the set holds the listed names as
         -- host_name reads a Host.
         any_host = allowed == true,
@@ -1868,7 +1890,6 @@ function S.start(cfg)
         live_debounce = checked.live_debounce,
         css_inject = checked.css_inject,
         sse_clients = {},
-        debounce_timer = uv.new_timer(),
 
         -- features
         dir_enabled = checked.dir_enabled,
@@ -1889,10 +1910,6 @@ function S.start(cfg)
         asset_root = checked.asset_root,
     }
 
-    if inst.live_enabled then
-        start_fs_watch(inst)
-    end
-
     local listening, listen_err = tcp:listen(128, function(err_listen)
         if err_listen then
             return
@@ -1907,6 +1924,12 @@ function S.start(cfg)
     if not listening then
         tcp:close()
         error("Failed to listen on " .. host .. ":" .. tostring(actual_port) .. ": " .. tostring(listen_err), 0)
+    end
+    -- Opened once the server listens: a failed listen closed the socket and
+    -- left the reload timer and the watchers running.
+    inst.debounce_timer = uv.new_timer()
+    if inst.live_enabled then
+        start_fs_watch(inst)
     end
 
     -- Scheduled, so a start from a fast event (a luv callback) cannot raise

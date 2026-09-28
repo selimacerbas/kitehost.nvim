@@ -252,10 +252,11 @@ end)
 
 -- A refused start was reported as "Failed to bind port N:" and then the
 -- server's message, so a refused option read as a busy port and a failed
--- bind named the bind twice. The server's raise names its cause, so the
--- notice is that message alone. Captured here, where the suite's own
--- notify would count the error notice against the last row.
-H.case("Section 5: a refused start is reported in the server's words", function()
+-- bind named the bind twice. The server's raise names its cause, and the
+-- notice names what failed before it: :messages shows no title. Captured
+-- here, where the suite's own notify would count the error notice against
+-- the last row.
+H.case("Section 5: a refused start says it did not start, then the server's cause", function()
     local notes = {}
     local suite_notify = vim.notify
     vim.notify = function(msg, level)
@@ -273,19 +274,21 @@ H.case("Section 5: a refused start is reported in the server's words", function(
         H.defer(function()
             ls.stop_all()
         end)
-        return notes[1] and notes[1].msg
+        return notes[1] or {}
     end
+    local note = refused_with({ token = "" })
     eq(
-        refused_with({ token = "" }),
-        "token must be a non-empty string",
-        "a refused option is reported in the server's words alone"
+        note.msg,
+        "LiveServer did not start: token must be a non-empty string",
+        "a refused option is reported in the server's words, after what failed"
     )
+    eq(note.level, vim.log.levels.ERROR, "as an error")
     -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
-    local shown = refused_with({ host = "192.0.2.1" })
+    note = refused_with({ host = "192.0.2.1" })
     ok(
-        raised[1] ~= nil and shown == raised[1],
+        raised[1] ~= nil and note.msg == "LiveServer did not start: " .. raised[1],
         ("a failed bind is reported as the server raised it: %s (raised %s)"):format(
-            tostring(shown),
+            tostring(note.msg),
             tostring(raised[1])
         )
     )
