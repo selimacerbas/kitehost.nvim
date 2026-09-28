@@ -5,14 +5,15 @@
 -- closes its file once, however it ends, and a client that half-closes
 -- after its request still reads its whole response, where an event
 -- stream's half-close ends the stream; stop closes every connection the
--- server accepted, whose set holds the open ones and those closed since
--- the last accept; a connection whose head is not read in time is
--- closed, and its timer lives only while the head is unread. A raise
--- inside a luv callback, where every handler runs, leaves the exit code
--- at 0, so the rows read the ledger's error capture (H.errors) and count
--- the handles and the descriptors directly. hello.txt and big.bin (its
--- bytes in big) are the small and the 2 MiB file the transfer rows serve,
--- and serve's cfg and get's extra are what those rows pass.
+-- server accepted, whose set holds the open ones alone; a connection
+-- whose head is not read in time is closed, and its timer lives only
+-- while the head is unread; a connection accepted while max_connections
+-- are open is closed at once, and a place frees as a socket closes. A
+-- raise inside a luv callback, where every handler runs, leaves the exit
+-- code at 0, so the rows read the ledger's error capture (H.errors) and
+-- count the handles and the descriptors directly. hello.txt and big.bin
+-- (its bytes in big) are the small and the 2 MiB file the transfer rows
+-- serve, and serve's cfg and get's extra are what those rows pass.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -801,13 +802,14 @@ H.case("Section 5: stop closes every connection it accepted", function()
 end)
 
 -- The set stop reads: a connection enters it at its accept and leaves it
--- at a later accept once closed, so it holds the open connections and
--- those closed since the last accept, however many came before. An
--- accept that fails leaves the handle the server made for it unopened,
--- and nothing closed it. A handle the server cannot make for a connection
--- raised in the listen callback, where the user saw a callback error and
--- no word that the server had stopped taking connections.
-H.case("Section 5b: the set holds the open connections and those closed since the last accept", function()
+-- as its socket closes, whoever closes it, so it holds the open
+-- connections alone, however many came before; a closed one waited in it
+-- for the next accept. An accept that fails leaves the handle the server
+-- made for it unopened, and nothing closed it. A handle the server cannot
+-- make for a connection raised in the listen callback, where the user saw
+-- a callback error and no word that the server had stopped taking
+-- connections.
+H.case("Section 5b: the set holds the open connections alone", function()
     local inst = serve()
     local port = inst.port
     local function tcp_count()
@@ -819,10 +821,11 @@ H.case("Section 5b: the set holds the open connections and those closed since th
         answered = answered + (res and res.status == 200 and 1 or 0)
     end
     assert(answered == 100, "the server answered 100 requests")
-    -- Once every socket of the 100 is closing, the next accept leaves its
-    -- own connection alone in the set.
+    -- Once every socket of the 100 is closing, none is left in the set,
+    -- and the next accept's connection is alone in it.
     local held, tcps = steady(tcp_count, 1000)
     assert(held, "the tcp count settled after the requests")
+    eq(vim.tbl_count(inst.conns), 0, "after 100 connections one after another, none is left in the set")
     local idle = assert(H.raw_connect(port))
     assert(
         H.wait_for(function()
@@ -1145,6 +1148,157 @@ H.case("Section 6b: a connection's timer lives while its head is unread", functi
             and tostring(second.msg):find("stopped accepting connections", 1, true) ~= nil,
         ("and a socket it cannot make is still warned of after the timer's notice (%d notices)"):format(#notes)
     )
+end)
+
+-- Nothing bounded the sockets a client could hold open, and each is a
+-- descriptor of the editor's own process, whose soft limit is 256 for a
+-- macOS app by default. A connection accepted while max_connections are
+-- open is closed at once, unread and unanswered, and counts nowhere; a
+-- browser page holds a handful. A connection leaves the count as its
+-- socket closes, whoever closes it, so a place frees as a response ends,
+-- a client leaves, the header timeout fires or an event stream ends. The
+-- count is kept, never recounted: each accept checked every connection
+-- in the set (100 checks with 100 open, measured).
+H.case("Section 7: connections over the cap are closed at once", function()
+    local function tcp_count()
+        return H.handle_count("tcp")
+    end
+    -- Whether the server's set reaches n connections within 2 s.
+    local function holds(inst, n)
+        return H.wait_for(function()
+            return vim.tbl_count(inst.conns) == n
+        end, 2000)
+    end
+    -- Once the tcp count holds still, every close so far has landed.
+    local function settled()
+        assert(steady(tcp_count, 1000), "the tcp count settled within 1 s")
+    end
+    -- The status one request on a fresh connection is answered with.
+    local function status(port)
+        local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
+        return res and res.status
+    end
+    -- Whether a fresh connection that sends a request is closed with no
+    -- byte sent back, and the bytes it read. Its send may meet the close
+    -- already made, so the read alone rules.
+    local function shut_out(port)
+        local c = assert(H.raw_connect(port))
+        c:send(get("/hello.txt", port))
+        local data, eof = c:read(1000)
+        c:close()
+        return eof and data == "", #data
+    end
+
+    local inst = serve({ max_connections = 2 })
+    local port = inst.port
+    local a = assert(H.raw_connect(port))
+    assert(H.raw_connect(port))
+    assert(holds(inst, 2), "the server took two connections within 2 s")
+    local tcps = tcp_count()
+    local third = assert(H.raw_connect(port))
+    third:send(get("/hello.txt", port))
+    local data, eof = third:read(1000)
+    ok(eof and data == "", ("a third connection is closed at once, unread and unanswered (%d bytes)"):format(#data))
+    ok(
+        H.wait_for(function()
+            return tcp_count() == tcps + 1
+        end, 1000),
+        ("and the server holds no socket for it (%d over the client's)"):format(tcp_count() - tcps - 1)
+    )
+    third:close()
+    assert(a:send(get("/hello.txt", port)))
+    local res = H.responses((a:read(2000)))
+    eq(res[1] and res[1].status, 200, "a connection under the cap is served")
+    a:close()
+    settled()
+    eq(status(port), 200, "and its place, freed as its response ends, serves the next connection")
+
+    inst = serve({ max_connections = 1 })
+    port = inst.port
+    local gone = assert(H.raw_connect(port))
+    assert(holds(inst, 1), "the server took the connection within 2 s")
+    gone:close()
+    settled()
+    eq(status(port), 200, "a client that leaves before its head frees its place")
+
+    inst = serve({ max_connections = 1, header_timeout_ms = 200 })
+    port = inst.port
+    local idle = assert(H.raw_connect(port))
+    local _, idle_eof = idle:read(2000)
+    assert(idle_eof, "the header timeout closed the idle connection within 2 s")
+    eq(status(port), 200, "a connection the header timeout closes frees its place")
+
+    inst = serve({ max_connections = 1 })
+    port = inst.port
+    local s = assert(H.raw_connect(port))
+    assert(s:send(get("/__live/events", port)))
+    assert(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 1
+        end, 2000),
+        "the event stream opened within 2 s"
+    )
+    local shut, n = shut_out(port)
+    ok(shut, ("an open event stream holds its place: the next connection is closed at once (%d bytes)"):format(n))
+    s:close()
+    assert(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 0
+        end, 2000),
+        "the event stream ended within 2 s"
+    )
+    settled()
+    eq(status(port), 200, "and its end frees the place")
+
+    -- Each client is closed before the next server, which holds 100: the
+    -- two ends of 100 connections are 200 of this process's descriptors.
+    inst = serve()
+    port = inst.port
+    local clients = {}
+    for i = 1, 64 do
+        clients[i] = assert(H.raw_connect(port))
+    end
+    assert(holds(inst, 64), "the server took 64 connections within 2 s")
+    shut, n = shut_out(port)
+    ok(shut, ("by default a 65th connection is closed at once (%d bytes)"):format(n))
+    for _, c in ipairs(clients) do
+        c:close()
+    end
+    settled()
+
+    -- Only the server's own checks count: the harness checks every handle
+    -- it registered each 64th registration.
+    inst = serve({ max_connections = 200, header_timeout_ms = 0 })
+    port = inst.port
+    clients = {}
+    for i = 1, 100 do
+        clients[i] = assert(H.raw_connect(port))
+    end
+    assert(holds(inst, 100), "the server took 100 connections within 2 s")
+    local watched = {}
+    for conn in pairs(inst.conns) do
+        watched[conn.sock] = true
+    end
+    local methods = getmetatable(inst.handle).__index
+    local real_is_closing = methods.is_closing
+    H.defer(function()
+        methods.is_closing = real_is_closing
+    end)
+    local checks = 0
+    methods.is_closing = function(h)
+        if watched[h] and debug.getinfo(2, "S").source:find("[/\\]live_server[/\\]server%.lua$") then
+            checks = checks + 1
+        end
+        return real_is_closing(h)
+    end
+    table.insert(clients, assert(H.raw_connect(port)))
+    local took = holds(inst, 101)
+    methods.is_closing = real_is_closing
+    assert(took, "the server took the 101st connection within 2 s")
+    eq(checks, 0, "with 100 connections open, one more accept checks none of them")
+    for _, c in ipairs(clients) do
+        c:close()
+    end
 end)
 
 H.finish()

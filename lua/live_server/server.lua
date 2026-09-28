@@ -133,6 +133,11 @@ local SERVER_FIELDS = {
     ["connection"] = true,
 }
 
+-- What a socket's close must also end, run once by the close that ends
+-- it: an accepted connection's place in its server's count. An entry
+-- leaves with its socket, which only close_once closes.
+local on_close = {}
+
 -- Every socket closes here. Two closers can reach one socket: a response's
 -- shutdown callback and the handler's close of a response that had
 -- started, and a second close raises "handle is already closing" inside a
@@ -141,6 +146,11 @@ local SERVER_FIELDS = {
 local function close_once(sock)
     if not sock:is_closing() then
         sock:close()
+        local after = on_close[sock]
+        if after then
+            on_close[sock] = nil
+            after()
+        end
     end
 end
 
@@ -1674,7 +1684,7 @@ end
 
 -- A connection's head timer is stopped and closed once, by whichever gets
 -- there first: the head read, the connection's end, the timer's own
--- callback, the prune of a closed connection or stop.
+-- callback or the close of its socket, stop's among them.
 local function conn_stop_timer(conn)
     local t = conn.timer
     conn.timer = nil
@@ -1721,19 +1731,19 @@ local function new_conn(inst, sock)
     return conn
 end
 
--- Open connections. Closed ones leave the set here, so it never holds
--- more than the open ones plus those closed since the last accept.
-local function open_conns(inst)
-    local n = 0
-    for conn in pairs(inst.conns) do
-        if conn.sock:is_closing() then
-            conn_stop_timer(conn)
-            inst.conns[conn] = nil
-        else
-            n = n + 1
-        end
+-- A connection is open from its accept until its socket closes, whoever
+-- closes it: that close takes it out of the set and the count and ends
+-- its timer. Each accept reads the count, where a walk of the set cost it
+-- one check per open connection (100 with 100 open, measured).
+local function track_conn(conn)
+    local inst = conn.inst
+    inst.conns[conn] = true
+    inst.open_conns = inst.open_conns + 1
+    on_close[conn.sock] = function()
+        inst.conns[conn] = nil
+        inst.open_conns = inst.open_conns - 1
+        conn_stop_timer(conn)
     end
-    return n
 end
 
 -- Every read on an accepted socket lands here.
@@ -2031,6 +2041,21 @@ local function check_start(cfg)
     local debounce = check_ms("live.debounce", live and live.debounce)
     -- Every connection arms a timer with it; 0 turns the timeout off.
     local header_timeout = check_ms("header_timeout_ms", cfg.header_timeout_ms)
+    -- Each accept compares the open count with it: text raised there at
+    -- every connection and left its socket open, 0 closed them all, 1.5
+    -- held 2, and NaN or math.huge capped nothing (measured).
+    local max_conns = cfg.max_connections
+    if
+        max_conns ~= nil
+        and (
+            type(max_conns) ~= "number"
+            or max_conns ~= math.floor(max_conns)
+            or max_conns < 1
+            or max_conns == math.huge
+        )
+    then
+        error("max_connections must be an integer at or above 1", 0)
+    end
     -- fs_realpath raised its own argument error for a nil root and read a
     -- number as a path under the working directory.
     local root = cfg.root
@@ -2072,14 +2097,17 @@ local function check_start(cfg)
         notify_on_reload = cfg.notify_on_reload or false,
         asset_root = cfg.asset_root,
         header_timeout = header_timeout or 10000,
+        max_connections = max_conns or 64,
     }
 end
 
 -- -------- Public server API -----------------------------------------------
 
--- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms }
+-- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms, max_connections }
 -- header_timeout_ms (default 10000, 0 off): a connection whose head is not
 -- read by then is closed with no response.
+-- max_connections (default 64): a connection accepted while that many are
+-- open is closed at once, unread and unanswered.
 -- Raises at level 0, returning nothing, when it cannot serve: a refused
 -- option, a failed bind or listen, a port in use, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check. A
@@ -2172,8 +2200,10 @@ function S.start(cfg)
         cors = checked.cors,
         cors_list = checked.cors_list,
         started_at = os.time(),
-        -- Every accepted connection, which stop closes.
+        -- Every open connection, which stop closes, and how many.
         conns = {},
+        open_conns = 0,
+        max_connections = checked.max_connections,
         header_timeout = checked.header_timeout,
 
         -- live
@@ -2235,14 +2265,20 @@ function S.start(cfg)
             close_once(sock)
             return
         end
-        open_conns(inst)
+        -- A cap on held sockets: a page opens a handful, a flood opens more
+        -- than the editor's descriptor limit. The connection over it is
+        -- never read, timed or counted.
+        if inst.open_conns >= inst.max_connections then
+            close_once(sock)
+            return
+        end
         local conn, conn_err = new_conn(inst, sock)
         if not conn then
             close_once(sock)
             warn_once("timer", ("closed a connection it could not serve (%s)"):format(tostring(conn_err)))
             return
         end
-        inst.conns[conn] = true
+        track_conn(conn)
         sock:read_start(function(err_read, chunk)
             on_read(conn, err_read, chunk)
         end)
@@ -2291,14 +2327,12 @@ function S.stop(inst)
     -- Of its sockets, stop reached the listener and the event streams
     -- alone, so an idle client, a head half sent, a stalled download with
     -- its file open and a page mid-write outlived it (measured). A
-    -- transfer closes its file when its socket closes under it. close_once
-    -- makes a second stop close nothing; the emptied set drops a stopped
-    -- server's references to its sockets.
+    -- transfer closes its file when its socket closes under it. Each close
+    -- ends its connection's timer and clears its entry, a clear Lua lets a
+    -- walk make, so a second stop finds nothing to close.
     for conn in pairs(inst.conns) do
-        conn_stop_timer(conn)
         close_once(conn.sock)
     end
-    inst.conns = {}
     stop_fs_watch(inst)
     close_once(inst.handle)
 end
