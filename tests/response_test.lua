@@ -481,10 +481,14 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
     end
 end)
 
--- The root route and the asset route answer with the instance's own header
--- tables, by reference, and send_response writes Content-Length and
--- Connection into the table it gets: a path that handed one over uncopied
--- would put a stale length into every later response.
+-- root_headers and asset_headers hand back the instance's own header
+-- tables, or under a cors list a copy root_headers makes per request for
+-- its echo and Vary; stream_file and send_html_with_injection copy what
+-- they get before writing a length, Connection or a page's Vary into it.
+-- A write that reached an instance table would ride every later response.
+-- The rows pin the tables unchanged through those copies: a file, a page,
+-- a 404, an asset and the stream head, then a listing and a file under a
+-- cors list.
 H.case("Section 7: a response leaves the instance's header tables as start made them", function()
     local inst = serve({ cors = true, headers = { ["X-Frame-Options"] = "DENY" } })
     local port = inst.port
@@ -501,6 +505,20 @@ H.case("Section 7: a response leaves the instance's header tables as start made 
     ok(
         vim.deep_equal(inst.live_headers, live_headers),
         "inst.live_headers is as start made it: " .. shown(inst.live_headers)
+    )
+    local listed = serve({
+        cors = { "http://a.example" },
+        headers = { ["X-Frame-Options"] = "DENY", vary = "Accept" },
+        features = { dirlist = { enabled = true } },
+        live = { enabled = false, inject_script = true },
+    })
+    headers = vim.deepcopy(listed.headers)
+    local from = "Origin: http://a.example\r\n"
+    eq(raw(listed.port, get("/assets/", listed.port, from)).status, 200, "a listing is served under a cors list")
+    eq(raw(listed.port, get("/style.css", listed.port, from)).status, 200, "and a file")
+    ok(
+        vim.deep_equal(listed.headers, headers),
+        "under a cors list inst.headers is as start made it: " .. shown(listed.headers)
     )
 end)
 

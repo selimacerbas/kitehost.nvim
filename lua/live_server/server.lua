@@ -122,13 +122,10 @@ local SERVER_FIELDS = {
     ["connection"] = true,
 }
 
--- A copy: root_headers and asset_headers hand back the instance's own
--- tables, and a length written into one would ride every later response.
+-- headers is a table the caller built for this one response, which the
+-- length and Connection are written into.
 local function send_response(sock, status, headers, body)
-    local h = {}
-    for k, v in pairs(headers or {}) do
-        h[k] = v
-    end
+    local h = headers or {}
     if body then
         h["Content-Length"] = #body
     end
