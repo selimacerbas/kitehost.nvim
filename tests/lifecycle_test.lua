@@ -8,7 +8,8 @@
 -- server accepted, whose set holds the open ones alone; a connection
 -- whose head is not read in time is closed, and its timer lives only
 -- while the head is unread; a connection accepted while max_connections
--- are open is closed at once, and a place frees as a socket closes. A
+-- are open is closed at once, a place frees as a socket closes, and every
+-- accepted socket closes through close_once, where the count falls. A
 -- raise inside a luv callback, where every handler runs, leaves the exit
 -- code at 0, so the rows read the ledger's error capture (H.errors) and
 -- count the handles and the descriptors directly. hello.txt and big.bin
@@ -1156,9 +1157,11 @@ end)
 -- open is closed at once, unread and unanswered, and counts nowhere; a
 -- browser page holds a handful. A connection leaves the count as its
 -- socket closes, whoever closes it, so a place frees as a response ends,
--- a client leaves, the header timeout fires or an event stream ends. The
--- count is kept, never recounted: each accept checked every connection
--- in the set (100 checks with 100 open, measured).
+-- a client leaves, the header timeout fires or an event stream ends. A
+-- connection whose read cannot start is closed: with no head timer
+-- nothing else ended it, and it held its place after its client left
+-- (measured). The count is kept, never recounted: each accept checked
+-- every connection in the set (100 checks with 100 open, measured).
 H.case("Section 7: connections over the cap are closed at once", function()
     local function tcp_count()
         return H.handle_count("tcp")
@@ -1188,8 +1191,17 @@ H.case("Section 7: connections over the cap are closed at once", function()
         c:close()
         return eof and data == "", #data
     end
+    -- The servers started before the one that holds 100 connections, each
+    -- stopped before it: the two ends of 100 connections are 200 of this
+    -- process's descriptors.
+    local servers = {}
+    local function start(cfg)
+        local started = serve(cfg)
+        table.insert(servers, started)
+        return started
+    end
 
-    local inst = serve({ max_connections = 2 })
+    local inst = start({ max_connections = 2 })
     local port = inst.port
     local a = assert(H.raw_connect(port))
     assert(H.raw_connect(port))
@@ -1213,7 +1225,7 @@ H.case("Section 7: connections over the cap are closed at once", function()
     settled()
     eq(status(port), 200, "and its place, freed as its response ends, serves the next connection")
 
-    inst = serve({ max_connections = 1 })
+    inst = start({ max_connections = 1 })
     port = inst.port
     local gone = assert(H.raw_connect(port))
     assert(holds(inst, 1), "the server took the connection within 2 s")
@@ -1221,14 +1233,14 @@ H.case("Section 7: connections over the cap are closed at once", function()
     settled()
     eq(status(port), 200, "a client that leaves before its head frees its place")
 
-    inst = serve({ max_connections = 1, header_timeout_ms = 200 })
+    inst = start({ max_connections = 1, header_timeout_ms = 200 })
     port = inst.port
     local idle = assert(H.raw_connect(port))
     local _, idle_eof = idle:read(2000)
     assert(idle_eof, "the header timeout closed the idle connection within 2 s")
     eq(status(port), 200, "a connection the header timeout closes frees its place")
 
-    inst = serve({ max_connections = 1 })
+    inst = start({ max_connections = 1 })
     port = inst.port
     local s = assert(H.raw_connect(port))
     assert(s:send(get("/__live/events", port)))
@@ -1250,9 +1262,59 @@ H.case("Section 7: connections over the cap are closed at once", function()
     settled()
     eq(status(port), 200, "and its end frees the place")
 
-    -- Each client is closed before the next server, which holds 100: the
-    -- two ends of 100 connections are 200 of this process's descriptors.
-    inst = serve()
+    -- No real read fails to start on demand. The stub fails the server's
+    -- next two, made in the listen callback, a fast event; a client's read
+    -- starts on the suite's own stack. Two, so the notice is seen to come
+    -- once.
+    inst = start({ max_connections = 1, header_timeout_ms = 0 })
+    port = inst.port
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    local methods = getmetatable(inst.handle).__index
+    local real_read_start = methods.read_start
+    H.defer(function()
+        methods.read_start = real_read_start
+    end)
+    local failing = 2
+    methods.read_start = function(h, ...)
+        if not vim.in_fast_event() or failing == 0 then
+            return real_read_start(h, ...)
+        end
+        failing = failing - 1
+        return nil, "EINVAL: stubbed", "EINVAL"
+    end
+    local errs = #H.errors()
+    local ended = 0
+    for _ = 1, 2 do
+        local c = assert(H.raw_connect(port))
+        local _, c_eof = c:read(1000)
+        ended = ended + (c_eof and 1 or 0)
+        c:close()
+    end
+    methods.read_start = real_read_start
+    eq(ended, 2, "a connection whose read cannot start is closed")
+    settled()
+    eq(status(port), 200, "and its place serves the next connection")
+    steady(function()
+        return #notes
+    end, 1000)
+    local note = notes[1] or {}
+    ok(
+        #notes == 1
+            and note.level == vim.log.levels.WARN
+            and tostring(note.msg):find("closed a connection it could not read", 1, true) ~= nil,
+        ("and the user is warned once, at WARN, for two such (%d notices: %s)"):format(#notes, tostring(note.msg))
+    )
+    eq(#H.errors(), errs, "and raises nothing")
+    vim.notify = real_notify
+
+    inst = start()
     port = inst.port
     local clients = {}
     for i = 1, 64 do
@@ -1263,6 +1325,10 @@ H.case("Section 7: connections over the cap are closed at once", function()
     ok(shut, ("by default a 65th connection is closed at once (%d bytes)"):format(n))
     for _, c in ipairs(clients) do
         c:close()
+    end
+    settled()
+    for _, earlier in ipairs(servers) do
+        server.stop(earlier)
     end
     settled()
 
@@ -1279,7 +1345,6 @@ H.case("Section 7: connections over the cap are closed at once", function()
     for conn in pairs(inst.conns) do
         watched[conn.sock] = true
     end
-    local methods = getmetatable(inst.handle).__index
     local real_is_closing = methods.is_closing
     H.defer(function()
         methods.is_closing = real_is_closing
@@ -1299,6 +1364,197 @@ H.case("Section 7: connections over the cap are closed at once", function()
     for _, c in ipairs(clients) do
         c:close()
     end
+end)
+
+-- The count falls in close_once alone, so a socket closed any other way
+-- keeps its place for good. Every close of a socket the server accepted
+-- is seen here, with whether close_once made it, over one of each way a
+-- connection ends: a file, a 404, a listing, a page, a head refused at
+-- its first byte, over the cap or cut by its client's end, a client that
+-- leaves or never finishes its head, an event stream its client ends or
+-- a broadcast write fails, a transfer reset mid-way or while stalled, a
+-- raise in the handler after the head went out, a shutdown that cannot
+-- start, and stop. The stubs that force the rarer ways sit in the method
+-- table every tcp handle shares and in vim.uv, each restored before its
+-- rows rule.
+H.case("Section 7b: every accepted socket closes through close_once", function()
+    H.write_file(root .. "/huge.bin", string.rep("h", 16 * 1024 * 1024))
+    vim.fn.mkdir(root .. "/sub", "p")
+    H.write_file(root .. "/sub/a.txt", "a")
+    local inst = serve({ header_timeout_ms = 200, features = { dirlist = { enabled = true } } })
+    local port = inst.port
+    local close_once
+    for i = 1, 100 do
+        local name, value = debug.getupvalue(server.stop, i)
+        if name == nil then
+            break
+        end
+        if name == "close_once" then
+            close_once = value
+        end
+    end
+    assert(type(close_once) == "function", "stop closes through close_once")
+    local methods = getmetatable(inst.handle).__index
+    local real_new_tcp, real_close = uv.new_tcp, methods.close
+    local real_write, real_shutdown, real_read = methods.write, methods.shutdown, uv.fs_read
+    local function restore()
+        methods.write, methods.shutdown, uv.fs_read = real_write, real_shutdown, real_read
+    end
+    H.defer(function()
+        restore()
+        uv.new_tcp, methods.close = real_new_tcp, real_close
+    end)
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    -- The server makes an accepted socket in the listen callback, a fast
+    -- event; a client's is made on the suite's own stack.
+    local made, closes, raw = {}, 0, 0
+    uv.new_tcp = function(...)
+        local h, err = real_new_tcp(...)
+        if h and vim.in_fast_event() then
+            made[h] = true
+        end
+        return h, err
+    end
+    methods.close = function(h, ...)
+        if made[h] then
+            closes = closes + 1
+            if debug.getinfo(2, "f").func ~= close_once then
+                raw = raw + 1
+            end
+        end
+        return real_close(h, ...)
+    end
+    local function settled()
+        assert(
+            steady(function()
+                return H.handle_count("tcp")
+            end, 2000),
+            "the tcp count settled within 2 s"
+        )
+    end
+    local function streams(n)
+        return H.wait_for(function()
+            return server.connected_client_count(inst) == n
+        end, 2000)
+    end
+
+    for _, bytes in ipairs({
+        get("/hello.txt", port),
+        get("/missing.txt", port),
+        get("/sub/", port),
+        get("/", port),
+        "\22\3\1\0\5hello",
+        "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 70 * 1024),
+    }) do
+        H.raw_request(port, bytes)
+    end
+    local cut = assert(H.raw_connect(port))
+    assert(cut:send("GET /hello.txt HTTP/1.1\r\n"))
+    assert(cut:half_close())
+    cut:read(2000)
+    cut:close()
+    local left = assert(H.raw_connect(port))
+    left:close()
+    local idle = assert(H.raw_connect(port))
+    local _, idle_eof = idle:read(2000)
+    assert(idle_eof, "the header timeout closed the idle connection within 2 s")
+    idle:close()
+
+    local ended = assert(H.raw_connect(port))
+    assert(ended:send(get("/__live/events", port)))
+    assert(streams(1), "an event stream opened within 2 s")
+    ended:close()
+    assert(streams(0), "the stream its client ended left within 2 s")
+    local dropped = assert(H.raw_connect(port))
+    assert(dropped:send(get("/__live/events", port)))
+    assert(streams(1), "a second event stream opened within 2 s")
+    local target = inst.sse_clients[1]
+    methods.write = function(h, ...)
+        if h == target then
+            error("EPIPE: stubbed")
+        end
+        return real_write(h, ...)
+    end
+    server.send_event(inst, "tick", "{}")
+    restore()
+    assert(streams(0), "the stream whose write failed left within 2 s")
+    dropped:read(2000)
+    dropped:close()
+
+    local reset = assert(H.raw_connect(port))
+    assert(reset:send(get("/huge.bin", port)))
+    reset:read(3000, function(d)
+        return #d >= 65536
+    end)
+    assert(reset:abort())
+    local reads = 0
+    uv.fs_read = function(...)
+        reads = reads + 1
+        return real_read(...)
+    end
+    local stalled = assert(H.raw_connect(port))
+    assert(stalled.tcp:read_stop())
+    assert(stalled:send(get("/huge.bin", port)))
+    assert(
+        steady(function()
+            return reads
+        end, 3000),
+        "the stalled transfer held still within 3 s"
+    )
+    restore()
+    assert(stalled:abort())
+    settled()
+
+    uv.fs_read = function(fd, size, offset, cb)
+        if type(cb) ~= "function" then
+            return real_read(fd, size, offset)
+        end
+        error("EIO: stubbed")
+    end
+    H.raw_request(port, get("/hello.txt", port))
+    restore()
+    assert(
+        H.wait_for(function()
+            return #notes > 0
+        end, 1000),
+        "the raise was reported within 1 s"
+    )
+    methods.shutdown = function(h, ...)
+        if made[h] then
+            return nil, "ENOTCONN: stubbed", "ENOTCONN"
+        end
+        return real_shutdown(h, ...)
+    end
+    H.raw_request(port, get("/missing.txt", port))
+    H.raw_request(port, get("/hello.txt", port))
+    restore()
+    settled()
+    eq(inst.open_conns, 0, "after one of each way a connection ends, no place is held")
+
+    local tcps = H.handle_count("tcp")
+    local waiting = assert(H.raw_connect(port))
+    assert(
+        H.wait_for(function()
+            return H.handle_count("tcp") == tcps + 2
+        end, 2000),
+        "the server took the last connection within 2 s"
+    )
+    server.stop(inst)
+    waiting:close()
+    local accepted = vim.tbl_count(made)
+    methods.close = real_close
+    ok(
+        raw == 0 and closes > 0,
+        ("every close of an accepted socket comes through close_once (%d closes, %d not)"):format(closes, raw)
+    )
+    eq(closes, accepted, "and each of the " .. accepted .. " sockets the server accepted is closed once")
 end)
 
 H.finish()

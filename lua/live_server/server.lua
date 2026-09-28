@@ -2232,14 +2232,16 @@ function S.start(cfg)
         asset_root = checked.asset_root,
     }
 
-    -- A connection the server cannot equip with a handle is dropped, and
-    -- the user is told once per instance for each kind, scheduled, since
-    -- the accept runs in a fast event. With no socket the connection is
-    -- never accepted, and libuv then stops polling the listener, so the
-    -- server takes no connection after it; a raise there did the same and
-    -- told the user only of a callback error (measured, the handle stubbed
-    -- to nil). With no head timer the connection is closed, and a close
-    -- alone would leave a page failing with no word of why.
+    -- A connection the server cannot equip with a handle, or whose read
+    -- cannot start, is dropped, and the user is told once per instance for
+    -- each kind, scheduled, since the accept runs in a fast event. With no
+    -- socket the connection is never accepted, and libuv then stops
+    -- polling the listener, so the server takes no connection after it; a
+    -- raise there did the same and told the user only of a callback error
+    -- (measured, the handle stubbed to nil). With no head timer, or no
+    -- read, the connection is closed: unread and with no timer it held its
+    -- place after its client left (measured), and a close alone would
+    -- leave a page failing with no word of why.
     local warned = {}
     local function warn_once(kind, text)
         if warned[kind] then
@@ -2266,8 +2268,9 @@ function S.start(cfg)
             return
         end
         -- A cap on held sockets: a page opens a handful, a flood opens more
-        -- than the editor's descriptor limit. The connection over it is
-        -- never read, timed or counted.
+        -- than the editor's descriptor limit. A place is what the cap
+        -- protects, so a connection over it is given none of what a place
+        -- buys.
         if inst.open_conns >= inst.max_connections then
             close_once(sock)
             return
@@ -2279,9 +2282,13 @@ function S.start(cfg)
             return
         end
         track_conn(conn)
-        sock:read_start(function(err_read, chunk)
+        local reading, read_err = sock:read_start(function(err_read, chunk)
             on_read(conn, err_read, chunk)
         end)
+        if not reading then
+            close_once(sock)
+            warn_once("read", ("closed a connection it could not read (%s)"):format(tostring(read_err)))
+        end
     end)
     if not listening then
         close_once(tcp)
