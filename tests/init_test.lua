@@ -109,6 +109,22 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
         url ~= nil and url:match("^http://127%.0%.0%.1:%d+/%?t=abc$") ~= nil,
         "a wildcard bind opens on loopback with the token: " .. tostring(url)
     )
+    -- The start probes the address its URL names, so a rule of this layer's
+    -- own could open an address no start checked. A stubbed server rule
+    -- shows which one the URL reads.
+    local real_rule = server.wildcard_loopback
+    H.defer(function()
+        server.wildcard_loopback = real_rule
+    end)
+    server.wildcard_loopback = function(host)
+        return host == "0.0.0.0" and "127.0.0.2" or nil
+    end
+    _, url = start_with({ host = "0.0.0.0" })
+    server.wildcard_loopback = real_rule
+    ok(
+        url ~= nil and url:match("^http://127%.0%.0%.2:%d+/$") ~= nil,
+        "a wildcard bind's URL names the address the server's rule gives: " .. tostring(url)
+    )
     -- Unencoded, a & or a # ends the query early and the server reads a
     -- shorter token.
     _, url = start_with({ token = "a&b#c" })

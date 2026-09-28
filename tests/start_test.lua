@@ -8,6 +8,8 @@
 -- or a root that is no string or does not resolve; a bind to an address
 -- this machine lacks or to a port in use raises naming it and leaves no
 -- socket, and a failed listen leaves no socket, timer or watcher. A
+-- wildcard bind raises when another listener holds the loopback address
+-- its URL names, and its probe of that address is never left open. A
 -- pattern the check cannot read past its literal starts and gates every
 -- path it is asked about, and each option is read from the caller's table
 -- once.
@@ -492,6 +494,123 @@ H.case("a bind that fails and a port start cannot hold raise, leaving no socket"
         not text_started and tostring(text_err):find("(string)", 1, true) ~= nil,
         "a port given as text is refused, naming its type: " .. tostring(text_err)
     )
+end)
+
+-- A browser reaches a wildcard bind on the loopback address the opened URL
+-- names. macOS lets a listener bound to 127.0.0.1 alone share the port with
+-- a wildcard bind and take every connection to that address, so the start
+-- succeeded and the URL, token and all, reached the other program
+-- (measured); Linux refuses the wildcard bind itself. The start probes that
+-- address with a socket that never listens and is closed on every path.
+H.case("a wildcard bind raises when another listener holds its URL's address", function()
+    local real_new_tcp = vim.uv.new_tcp
+    H.defer(function()
+        vim.uv.new_tcp = real_new_tcp
+    end)
+    -- Counts the sockets a start makes, and fails the one numbered fail.
+    local made, fail = 0, nil
+    vim.uv.new_tcp = function(...)
+        made = made + 1
+        if made == fail then
+            return nil, "EMFILE: stubbed"
+        end
+        return real_new_tcp(...)
+    end
+    -- Starts, counts the sockets the start made and the ones it left open,
+    -- hands a server that started to use, then stops it, so no start holds
+    -- the port for the next one.
+    local function start_counted(cfg, fail_at, use)
+        made, fail = 0, fail_at
+        local before = H.handle_count("tcp")
+        local started, res = pcall(server.start, vim.tbl_extend("keep", cfg, { root = root }))
+        local sockets, open = made, H.handle_count("tcp") - before
+        made, fail = 0, nil
+        local used
+        if started then
+            used = use and use(res)
+            server.stop(res)
+        end
+        return started, tostring(res), sockets, open, used
+    end
+
+    local _, _, loop_made, loop_open = start_counted({ port = 0 })
+    eq(loop_made, 1, "a loopback start makes its own socket alone, no probe")
+    eq(loop_open, 1, "and leaves that one open")
+
+    -- One skip per row below, so a machine that refuses a wildcard bind
+    -- counts every row it could not run.
+    local wild = assert(real_new_tcp())
+    local wild_ok, wild_err = wild:bind("0.0.0.0", 0)
+    if wild_ok then
+        wild_ok, wild_err = wild:getsockname()
+    end
+    wild:close()
+    if not wild_ok then
+        for _, row in ipairs({
+            "a start beside a loopback listener raises",
+            "naming the port",
+            "leaving no socket",
+            "naming 127.0.0.1",
+            "a start with nothing beside it serves",
+            "making its socket and the probe",
+            "closing the probe",
+            "reached on 127.0.0.1",
+            "a probe that cannot open raises",
+            "leaving no socket",
+        }) do
+            H.skip(("a wildcard bind: %s (this machine refuses one: %s)"):format(row, tostring(wild_err)))
+        end
+        return
+    end
+
+    local hold = assert(real_new_tcp())
+    H.defer(function()
+        if not hold:is_closing() then
+            hold:close()
+        end
+    end)
+    assert(hold:bind("127.0.0.1", 0))
+    assert(hold:listen(8, function() end))
+    local port = hold:getsockname().port
+    -- Whether this machine lets a wildcard bind share the port at all.
+    local beside = assert(real_new_tcp())
+    local shares = beside:bind("0.0.0.0", port) ~= nil and beside:getsockname() ~= nil
+    beside:close()
+
+    local started, res, _, open = start_counted({ host = "0.0.0.0", port = port })
+    ok(not started and res:find("EADDRINUSE", 1, true) ~= nil, "a wildcard start beside it raises: " .. res)
+    ok(not started and res:find(":" .. port, 1, true) ~= nil, "naming the port: " .. res)
+    eq(open, 0, "and leaves no socket open, the probe's included")
+    if shares then
+        ok(
+            not started and res:find("127.0.0.1:" .. port, 1, true) ~= nil,
+            "where a wildcard bind shares the port, the raise names 127.0.0.1, the address the URL names: " .. res
+        )
+    else
+        H.skip("the raise names 127.0.0.1 (this machine refuses the wildcard bind beside the listener)")
+    end
+
+    hold:close()
+    local free_started, free_res, free_made, free_open, status = start_counted(
+        { host = "0.0.0.0", port = port },
+        nil,
+        function()
+            return http_get(("http://127.0.0.1:%d/"):format(port)).status
+        end
+    )
+    ok(free_started, "with nothing on 127.0.0.1 at that port, the wildcard start serves: " .. free_res)
+    eq(free_made, 2, "its own socket and the probe")
+    eq(free_open, 1, "and the probe is closed")
+    eq(status, 200, "the URL's address reaches this server")
+
+    -- A probe that cannot open cannot tell the address is free, so the
+    -- start refuses rather than serve a URL it never checked.
+    local no_probe, no_res, _, no_open = start_counted({ host = "0.0.0.0", port = 0 }, 2)
+    ok(
+        not no_probe and no_res:find("127.0.0.1", 1, true) ~= nil and no_res:find("EMFILE: stubbed", 1, true) ~= nil,
+        "a probe that cannot open raises, naming the address and the cause: " .. no_res
+    )
+    eq(no_open, 0, "and leaves no socket open")
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise

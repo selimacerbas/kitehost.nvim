@@ -975,6 +975,18 @@ local function is_loopback_ip(ip)
     return ip == "::1" or (is_ipv4(ip) and ip:match("^127%.") ~= nil)
 end
 
+-- The loopback address a browser reaches a wildcard bind on, the one the
+-- opened URL names, or nil for an address that is no wildcard. start probes
+-- it and init.lua's URL reads it, so the address checked is the address
+-- shown.
+local function wildcard_loopback(ip)
+    if ip == "0.0.0.0" then
+        return "127.0.0.1"
+    end
+    return nil
+end
+S.wildcard_loopback = wildcard_loopback
+
 -- localhost, a *.localhost name or a loopback address: the names only this
 -- machine answers to.
 local function is_loopback_name(name)
@@ -1861,6 +1873,49 @@ function S.start(cfg)
         tcp:close()
         error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(sockname_err), 0)
     end
+
+    -- macOS and Windows let a listener bound to the loopback address alone
+    -- share the port with a wildcard bind and take every connection to that
+    -- address, where the opened URL, token and all, would go (measured on
+    -- macOS; Linux refuses the bind above). A probe bound there before the
+    -- listen is refused only while another socket holds the address, and it
+    -- never listens. One that cannot open cannot tell, so start refuses.
+    local loopback = wildcard_loopback(bound.ip)
+    if loopback then
+        local here = host .. ":" .. tostring(bound.port)
+        local there = loopback .. ":" .. tostring(bound.port)
+        local probe, probe_err = uv.new_tcp()
+        if not probe then
+            tcp:close()
+            error(
+                ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(
+                    here,
+                    there,
+                    tostring(probe_err)
+                ),
+                0
+            )
+        end
+        -- libuv holds the bind's EADDRINUSE until getsockname.
+        local probed, err_name
+        probed, probe_err, err_name = probe:bind(loopback, bound.port)
+        if probed then
+            probed, probe_err, err_name = probe:getsockname()
+        end
+        probe:close()
+        if err_name == "EADDRINUSE" then
+            tcp:close()
+            error(
+                ("Failed to bind %s: another listener holds %s, the address the URL names (%s)"):format(
+                    here,
+                    there,
+                    tostring(probe_err)
+                ),
+                0
+            )
+        end
+    end
+
     local actual_port = bound.port
 
     local inst = {
