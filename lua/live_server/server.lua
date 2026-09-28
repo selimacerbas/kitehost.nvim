@@ -1677,6 +1677,20 @@ local function new_conn(inst, sock)
     return { inst = inst, sock = sock, buf = "", handled = false }
 end
 
+-- Open connections. Closed ones leave the set here, so it never holds
+-- more than the open ones plus those closed since the last accept.
+local function open_conns(inst)
+    local n = 0
+    for conn in pairs(inst.conns) do
+        if conn.sock:is_closing() then
+            inst.conns[conn] = nil
+        else
+            n = n + 1
+        end
+    end
+    return n
+end
+
 -- Every read on an accepted socket lands here.
 local function on_read(conn, err, chunk)
     local sock = conn.sock
@@ -2084,6 +2098,8 @@ function S.start(cfg)
         cors = checked.cors,
         cors_list = checked.cors_list,
         started_at = os.time(),
+        -- Every accepted connection, which stop closes.
+        conns = {},
 
         -- live
         live_enabled = checked.live_enabled,
@@ -2116,8 +2132,15 @@ function S.start(cfg)
             return
         end
         local sock = uv.new_tcp()
-        tcp:accept(sock)
+        -- A failed accept leaves a handle made and never opened, which
+        -- nothing else would close.
+        if not tcp:accept(sock) then
+            close_once(sock)
+            return
+        end
+        open_conns(inst)
         local conn = new_conn(inst, sock)
+        inst.conns[conn] = true
         sock:read_start(function(err_read, chunk)
             on_read(conn, err_read, chunk)
         end)
@@ -2163,6 +2186,15 @@ function S.stop(inst)
         close_once(cl)
     end
     inst.sse_clients = {}
+    -- stop reached the listener and the event streams alone, so an idle
+    -- client, a head half sent, a stalled download with its file open and
+    -- a page mid-write outlived it (measured). A transfer closes its file
+    -- when its socket closes under it; the emptied set leaves a second
+    -- stop nothing to close.
+    for conn in pairs(inst.conns) do
+        close_once(conn.sock)
+    end
+    inst.conns = {}
     stop_fs_watch(inst)
     close_once(inst.handle)
 end

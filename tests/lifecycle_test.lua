@@ -4,12 +4,13 @@
 -- shutdown cannot start closes its socket at once, a file transfer
 -- closes its file once, however it ends, and a client that half-closes
 -- after its request still reads its whole response, where an event
--- stream's half-close ends the stream. A raise inside a luv callback,
--- where every handler runs, leaves the exit code at 0, so the rows read
--- the ledger's error capture (H.errors) and count the handles and the
--- descriptors directly. hello.txt and big.bin (its bytes in big) are the
--- small and the 2 MiB file the transfer rows serve, and serve's cfg and
--- get's extra are what those rows pass.
+-- stream's half-close ends the stream; stop closes every connection the
+-- server accepted, whose set holds the open ones alone. A raise inside a
+-- luv callback, where every handler runs, leaves the exit code at 0, so
+-- the rows read the ledger's error capture (H.errors) and count the
+-- handles and the descriptors directly. hello.txt and big.bin (its bytes
+-- in big) are the small and the 2 MiB file the transfer rows serve, and
+-- serve's cfg and get's extra are what those rows pass.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -611,6 +612,252 @@ H.case("Section 4: a client that half-closes after its request reads it all", fu
     local _, eof = c:read(2000)
     ok(eof, "and its connection ends")
     c:close()
+end)
+
+-- stop closed the listener and the event streams and nothing else, so a
+-- stopped server kept every other connection it had accepted: an idle
+-- client, one mid-head, a download stalled on its client with its file
+-- open, and a page whose shutdown waited on its write (the download held
+-- its file one second after stop, measured). Each shape is counted back
+-- after stop and before its client closes, since a client's close ends
+-- the server's side by itself.
+H.case("Section 5: stop closes every connection it accepted", function()
+    H.write_file(root .. "/large.bin", string.rep("b", 16 * 1024 * 1024))
+    H.write_file(root .. "/large.html", "<html><body>" .. string.rep("p", 16 * 1024 * 1024) .. "</body></html>")
+    local function tcp_count()
+        return H.handle_count("tcp")
+    end
+    -- How many clients saw the server's end within ms.
+    local function all_ended(clients, ms)
+        local ended = 0
+        H.wait_for(function()
+            ended = 0
+            for _, c in ipairs(clients) do
+                ended = ended + (c.eof and 1 or 0)
+            end
+            return ended == #clients
+        end, ms)
+        return ended
+    end
+
+    local held, tcps = steady(tcp_count, 1000)
+    assert(held, "the tcp count settled before the idle clients")
+    local inst = serve()
+    local port = inst.port
+    local clients = {}
+    for i = 1, 5 do
+        local c = assert(H.raw_connect(port))
+        if i > 3 then
+            assert(c:send(("GET /index.html HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"):format(port)))
+        end
+        clients[i] = c
+    end
+    assert(
+        H.wait_for(function()
+            return tcp_count() == tcps + 11
+        end, 1000),
+        "the server accepted the five clients within 1 s"
+    )
+    server.stop(inst)
+    eq(all_ended(clients, 2000), 5, "every client that sent nothing or half a head sees its connection end at stop")
+    ok(
+        H.wait_for(function()
+            return tcp_count() == tcps + 5
+        end, 2000),
+        ("and the server holds none of their sockets (%d over the clients')"):format(tcp_count() - tcps - 5)
+    )
+    for _, c in ipairs(clients) do
+        c:close()
+    end
+
+    -- The files the server opens, and the reads its transfers start: once
+    -- the reads hold still, a transfer waits on a write its client does
+    -- not take.
+    local files = watch_files()
+    local reads = 0
+    local real_read = uv.fs_read
+    H.defer(function()
+        uv.fs_read = real_read
+    end)
+    uv.fs_read = function(...)
+        reads = reads + 1
+        return real_read(...)
+    end
+    local fds
+    held, fds = steady(function()
+        return H.fd_count() or 0
+    end, 1000)
+    assert(held, "the descriptor count settled before the download")
+    held, tcps = steady(tcp_count, 1000)
+    assert(held, "the tcp count settled before the download")
+    inst = serve()
+    port = inst.port
+    local d = assert(H.raw_connect(port))
+    assert(d.tcp:read_stop())
+    assert(d:send(get("/large.bin", port)))
+    assert(
+        H.wait_for(function()
+            return (files()) == 1
+        end, 1000),
+        "the transfer opened its file within 1 s"
+    )
+    assert(
+        steady(function()
+            return reads
+        end, 3000),
+        "the transfer stalled on its client within 3 s"
+    )
+    assert((files()) == 1, "the file is still open while the client stalls")
+    server.stop(inst)
+    ok(
+        H.wait_for(function()
+            return (files()) == 0
+        end, 3000),
+        "a download stalled on its client at stop closes its file"
+    )
+    ok(
+        H.wait_for(function()
+            return tcp_count() == tcps + 1
+        end, 3000),
+        ("and its socket, counted while the client stays open (%d over the client's)"):format(tcp_count() - tcps - 1)
+    )
+    if H.fd_count() then
+        ok(
+            H.wait_for(function()
+                return H.fd_count() == fds + 1
+            end, 3000),
+            ("and holds no descriptor (%d over the client's)"):format(H.fd_count() - fds - 1)
+        )
+    else
+        H.skip("and holds no descriptor (no descriptor listing on this platform)")
+    end
+    d:close()
+
+    -- stop is a second closer beside a page's shutdown callback: its close
+    -- cancels the pending shutdown, whose callback then closes again. The
+    -- page is 16 MiB, past what both ends' socket buffers take, so its
+    -- write and the shutdown behind it are still pending at stop.
+    local methods = getmetatable(inst.handle).__index
+    local real_shutdown = methods.shutdown
+    H.defer(function()
+        methods.shutdown = real_shutdown
+    end)
+    local shutting = {}
+    methods.shutdown = function(h, ...)
+        table.insert(shutting, h)
+        return real_shutdown(h, ...)
+    end
+    held, tcps = steady(tcp_count, 1000)
+    assert(held, "the tcp count settled before the pages")
+    local seen = #H.errors()
+    inst = serve()
+    port = inst.port
+    local pages = {}
+    for i = 1, 3 do
+        local c = assert(H.raw_connect(port))
+        assert(c.tcp:read_stop())
+        assert(c:send(get("/large.html", port)))
+        pages[i] = c
+    end
+    assert(
+        H.wait_for(function()
+            return #shutting == 3
+        end, 3000),
+        "each page asked for its shutdown within 3 s"
+    )
+    methods.shutdown = real_shutdown
+    for _, h in ipairs(shutting) do
+        assert(h:get_write_queue_size() > 0, "each page is still being written when stop runs")
+    end
+    server.stop(inst)
+    -- Counted while the clients still read nothing: one that reads takes
+    -- the whole page, and the page then closes its own socket.
+    ok(
+        H.wait_for(function()
+            return tcp_count() == tcps + 3
+        end, 2000),
+        ("3 pages whose shutdown waits on a stalled client close at stop (%d over the clients')"):format(
+            tcp_count() - tcps - 3
+        )
+    )
+    -- The cancelled shutdown's callback runs a loop turn after the close,
+    -- and its raise reaches the error capture a turn or more after that.
+    steady(function()
+        return #H.errors()
+    end, 1000)
+    local raised = errors_since(seen)
+    ok(
+        #raised == 0,
+        "and each closes once, raising nothing" .. (#raised > 0 and (": " .. table.concat(raised, " | ")) or "")
+    )
+    for _, c in ipairs(pages) do
+        c:close()
+    end
+
+    local again, why = pcall(server.stop, inst)
+    ok(again, "a second stop raises nothing" .. (again and "" or (": " .. tostring(why))))
+end)
+
+-- The set stop reads: a connection enters it at its accept and leaves it
+-- at a later accept once closed, so a server that answered many requests
+-- holds none of them. An accept that fails leaves the handle the server
+-- made for it unopened, and nothing closed it.
+H.case("Section 5b: the server holds its open connections alone", function()
+    local inst = serve()
+    local port = inst.port
+    local answered = 0
+    for _ = 1, 100 do
+        local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
+        answered = answered + (res and res.status == 200 and 1 or 0)
+    end
+    assert(answered == 100, "the server answered 100 requests")
+    local n = type(inst.conns) == "table" and vim.tbl_count(inst.conns) or nil
+    ok(
+        n ~= nil and n <= 1,
+        ("100 connections one after another leave at most the last in the set (got %s)"):format(tostring(n))
+    )
+
+    local held, tcps = steady(function()
+        return H.handle_count("tcp")
+    end, 1000)
+    assert(held, "the tcp count settled before the failed accept")
+    -- No real accept fails on demand. The stub takes the connection into a
+    -- handle of its own and closes it, as libuv closes the descriptor of an
+    -- accept that failed, and returns the failure: the server's own handle
+    -- is left as a failed accept leaves it, made and never opened.
+    local methods = getmetatable(inst.handle).__index
+    local real_accept = methods.accept
+    H.defer(function()
+        methods.accept = real_accept
+    end)
+    local failed = false
+    methods.accept = function(listener)
+        methods.accept = real_accept
+        local taken = assert(uv.new_tcp())
+        assert(real_accept(listener, taken))
+        taken:close()
+        failed = true
+        return nil, "ECONNABORTED: stubbed", "ECONNABORTED"
+    end
+    local c = assert(H.raw_connect(port))
+    assert(
+        H.wait_for(function()
+            return failed
+        end, 1000),
+        "the server met the failed accept within 1 s"
+    )
+    methods.accept = real_accept
+    ok(
+        H.wait_for(function()
+            return H.handle_count("tcp") == tcps + 1
+        end, 2000),
+        ("a connection whose accept failed leaves the server no socket (%d over the client's)"):format(
+            H.handle_count("tcp") - tcps - 1
+        )
+    )
+    c:close()
+    local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
+    eq(res and res.status, 200, "and the server answers the next connection")
 end)
 
 H.finish()
