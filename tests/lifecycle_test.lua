@@ -4,7 +4,9 @@
 -- shutdown cannot start closes its socket at once. A raise inside a luv
 -- callback, where every handler runs, leaves the exit code at 0, so the
 -- rows read the ledger's error capture (H.errors) and count the handles
--- directly.
+-- directly. hello.txt and big.bin (its bytes in big) are the small and the
+-- 2 MiB file the transfer rows serve, and serve's cfg and get's extra are
+-- what those rows pass.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -58,7 +60,18 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
     H.write_file(root .. "/large.html", "<html><body>" .. string.rep("p", 16 * 1024 * 1024) .. "</body></html>")
     local inst = serve()
     local port = inst.port
-    local sockets = H.handle_count("tcp")
+    -- The count is a baseline for this case alone, so any socket a case
+    -- before this one left closing settles first.
+    local settled = H.handle_count("tcp")
+    H.wait_for(function()
+        local now = H.handle_count("tcp")
+        if now == settled then
+            return true
+        end
+        settled = now
+        return false
+    end, 500)
+    local sockets = settled
     local seen = #H.errors()
     for _ = 1, 3 do
         local c = assert(H.raw_connect(port))
@@ -67,9 +80,12 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
         assert(c:half_close())
         -- The server reads the end before this client closes: a close with
         -- the page unread sends a reset, which ends the write instead.
-        H.wait_for(function()
-            return H.handle_count("tcp") <= sockets + 1
-        end, 1000)
+        assert(
+            H.wait_for(function()
+                return H.handle_count("tcp") <= sockets + 1
+            end, 1000),
+            "the server read the half-close within 1 s"
+        )
         c:close()
     end
     local raised = errors_since(seen)
