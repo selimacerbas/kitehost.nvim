@@ -5,8 +5,8 @@
 -- in a value, two spellings of one name and the server's own fields among
 -- them), cors, allowed_hosts (a string, a map, a hole, a wildcard, an
 -- entry no Host can match), live and its debounce, features, host,
--- header_timeout_ms, max_connections, a port it cannot hold or a root
--- that is no string or does not resolve; a bind to an address this
+-- header_timeout_ms, sse_heartbeat_ms, max_connections, a port it cannot
+-- hold or a root that is no string or does not resolve; a bind to an address this
 -- machine lacks or to a port in use raises naming it and leaves no
 -- socket, a socket that cannot be made raises naming it, and a failed
 -- listen leaves no socket, timer or watcher. A wildcard bind raises
@@ -87,14 +87,15 @@ end
 -- which skips a map's keys. live, features and its dirlist are indexed as
 -- given and host is bound as given, where a number read as a failed bind
 -- and a table raised as a fault in the server's own code, naming no
--- option. live.debounce and header_timeout_ms each arm a timer: a
--- debounce that is no number started and then raised in the watcher's
--- callback at every file change, and luv reads NaN as 0, a negative value
--- or math.huge as never and a fraction cut down (measured), so each takes
--- an integer from 0 to 2^31 - 1 and refuses the rest alike. Each accept
--- compares its open count with max_connections, where text raised at
--- every connection and left its socket open, 0 closed them all and NaN or
--- math.huge capped nothing (measured).
+-- option. live.debounce, header_timeout_ms and sse_heartbeat_ms each
+-- arm a timer: a debounce that is no number started and then raised in
+-- the watcher's callback at every file change, and luv reads NaN as 0, a
+-- negative value or math.huge as never and a fraction cut down
+-- (measured), so each takes an integer from 0 to 2^31 - 1 and refuses
+-- the rest alike. Each accept compares its open count with
+-- max_connections, where text raised at every connection and left its
+-- socket open, 0 closed them all and NaN or math.huge capped nothing
+-- (measured).
 H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
@@ -237,6 +238,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         local range = " must be an integer from 0 to 2147483647"
         table.insert(bad, { "live", { debounce = v }, "live.debounce" .. range })
         table.insert(bad, { "header_timeout_ms", v, "header_timeout_ms" .. range })
+        table.insert(bad, { "sse_heartbeat_ms", v, "sse_heartbeat_ms" .. range })
     end
     for _, v in ipairs({ "64", true, 0, -1, 1.5, 0 / 0, math.huge }) do
         table.insert(bad, { "max_connections", v, "max_connections must be an integer at or above 1" })
@@ -280,6 +282,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         end
         started, res = pcall(server.start, { port = 0, root = root, header_timeout_ms = ms })
         ok(started, ("header_timeout_ms = %d starts: %s"):format(ms, tostring(started and "" or res)))
+        if started then
+            server.stop(res)
+        end
+        started, res = pcall(server.start, { port = 0, root = root, sse_heartbeat_ms = ms })
+        ok(started, ("sse_heartbeat_ms = %d starts: %s"):format(ms, tostring(started and "" or res)))
         if started then
             server.stop(res)
         end
@@ -861,6 +868,7 @@ H.case("start reads each option from the caller's table once", function()
         notify_on_reload = false,
         asset_root = root,
         header_timeout_ms = 5000,
+        sse_heartbeat_ms = 20000,
         max_connections = 64,
     }
     local reads = {}

@@ -582,7 +582,7 @@ local function sse_accept(inst, sock)
 end
 
 -- A stream whose socket reported its end leaves the client list here;
--- stop and a failed broadcast write remove theirs.
+-- stop and a failed write in sse_send remove theirs.
 local function sse_drop(inst, sock)
     for i, cl in ipairs(inst.sse_clients) do
         if cl == sock then
@@ -592,13 +592,14 @@ local function sse_drop(inst, sock)
     end
 end
 
-local function sse_broadcast(inst, event, payload)
-    local line = ("event: %s\ndata: %s\n\n"):format(event, payload or "{}")
+-- Writes one frame to every stream, the only writer after a stream's
+-- preamble: an event and the heartbeat both.
+local function sse_send(inst, text)
     local i = 1
     while i <= #inst.sse_clients do
         local cl = inst.sse_clients[i]
         local ok = pcall(function()
-            cl:write(line)
+            cl:write(text)
         end)
         if not ok then
             close_once(cl)
@@ -607,6 +608,10 @@ local function sse_broadcast(inst, event, payload)
             i = i + 1
         end
     end
+end
+
+local function sse_broadcast(inst, event, payload)
+    sse_send(inst, ("event: %s\ndata: %s\n\n"):format(event, payload or "{}"))
 end
 
 -- A changed path relative to the root, slash-separated, which the dot
@@ -2041,6 +2046,8 @@ local function check_start(cfg)
     local debounce = check_ms("live.debounce", live and live.debounce)
     -- Every connection arms a timer with it; 0 turns the timeout off.
     local header_timeout = check_ms("header_timeout_ms", cfg.header_timeout_ms)
+    -- The server's beat timer repeats at it; 0 turns the heartbeat off.
+    local heartbeat = check_ms("sse_heartbeat_ms", cfg.sse_heartbeat_ms)
     -- Each accept compares the open count with it: text raised there at
     -- every connection and left its socket open, 0 closed them all, 1.5
     -- held 2, and NaN or math.huge capped nothing (measured).
@@ -2097,21 +2104,25 @@ local function check_start(cfg)
         notify_on_reload = cfg.notify_on_reload or false,
         asset_root = cfg.asset_root,
         header_timeout = header_timeout or 10000,
+        heartbeat_ms = heartbeat or 20000,
         max_connections = max_conns or 64,
     }
 end
 
 -- -------- Public server API -----------------------------------------------
 
--- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms, max_connections }
+-- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms, sse_heartbeat_ms, max_connections }
 -- header_timeout_ms (default 10000, 0 off): a connection whose head is not
 -- read by then is closed with no response.
+-- sse_heartbeat_ms (default 20000, 0 off): every event stream is written
+-- a comment line (": ping") at that interval, which EventSource ignores.
 -- max_connections (default 64): a connection accepted while that many are
 -- open is closed at once, unread and unanswered.
 -- Raises at level 0, returning nothing, when it cannot serve: a refused
--- option, a failed bind or listen, a port in use, or a wildcard bind whose
--- URL's loopback address another socket holds or start cannot check. A
--- caller reads S.features.start_raises before it relies on that.
+-- option, a failed bind or listen, a port in use, a heartbeat whose timer
+-- cannot be armed, or a wildcard bind whose URL's loopback address another
+-- socket holds or start cannot check. A caller reads
+-- S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host
@@ -2212,6 +2223,7 @@ function S.start(cfg)
         live_debounce = checked.live_debounce,
         css_inject = checked.css_inject,
         sse_clients = {},
+        heartbeat_ms = checked.heartbeat_ms,
 
         -- features
         dir_enabled = checked.dir_enabled,
@@ -2297,6 +2309,33 @@ function S.start(cfg)
     -- Opened once the server listens: a failed listen closed the socket and
     -- left the reload timer and the watchers running.
     inst.debounce_timer = uv.new_timer()
+    -- A comment line on every stream keeps an idle one open through a
+    -- proxy's idle cut and lets a peer that vanished without a FIN
+    -- surface: TCP gives up on a write it never acknowledges, where an
+    -- idle socket waits for good, holding its place. A beat that cannot
+    -- be armed fails the start, as a failed listen does, since the
+    -- streams have no other bound.
+    if inst.heartbeat_ms > 0 then
+        local beat, beat_err = uv.new_timer()
+        local armed
+        if beat then
+            inst.heartbeat_timer = beat
+            armed, beat_err = beat:start(inst.heartbeat_ms, inst.heartbeat_ms, function()
+                sse_send(inst, ": ping\n\n")
+            end)
+        end
+        if not armed then
+            S.stop(inst)
+            error(
+                ("Failed to arm the heartbeat on %s:%d: %s; sse_heartbeat_ms = 0 turns it off"):format(
+                    host,
+                    actual_port,
+                    tostring(beat_err)
+                ),
+                0
+            )
+        end
+    end
     if inst.live_enabled then
         start_fs_watch(inst)
     end
@@ -2326,6 +2365,10 @@ function S.stop(inst)
             inst.debounce_timer:stop()
             inst.debounce_timer:close()
         end)
+    end
+    if inst.heartbeat_timer and not inst.heartbeat_timer:is_closing() then
+        inst.heartbeat_timer:stop()
+        inst.heartbeat_timer:close()
     end
     for _, cl in ipairs(inst.sse_clients) do
         close_once(cl)
