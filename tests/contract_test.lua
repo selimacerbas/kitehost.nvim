@@ -216,18 +216,33 @@ end)
 -- A plugin manager updates each plugin on its own, so a caller reads these
 -- flags before it relies on a shape. A cors list reads as its widest value,
 -- "*", on an install that predates lists, so a list meant to narrow access
--- needs a flag that says it will.
+-- needs a flag that says it will. An install without start_raises could
+-- return from a start that serves nothing, while another program answered
+-- on the port with the caller's token in hand, and a pcall around the
+-- start saw no error.
 H.case("Section 3: the capability flags a caller reads", function()
     local names = vim.tbl_keys(server.features)
     table.sort(names)
     eq(
         table.concat(names, " "),
-        "asset_route cors_list host_binding host_check token_auth",
+        "asset_route cors_list host_binding host_check start_raises token_auth",
         "features names every capability a caller can detect"
     )
     for _, name in ipairs(names) do
         eq(server.features[name], true, "features." .. name .. " is true")
     end
+    local hold = assert(vim.uv.new_tcp())
+    H.defer(function()
+        hold:close()
+    end)
+    assert(hold:bind("127.0.0.1", 0))
+    assert(hold:listen(8, function() end))
+    local held = hold:getsockname().port
+    local started, res = pcall(server.start, { port = held, host = "127.0.0.1", root = work .. "/ws" })
+    if started then
+        server.stop(res)
+    end
+    ok(not started, "start_raises holds: a start on a port another listener holds raises: " .. tostring(res))
 end)
 
 H.finish()

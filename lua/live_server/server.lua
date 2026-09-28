@@ -18,12 +18,15 @@ local S = {}
 -- Capability flags for callers to feature-detect against an independently
 -- versioned install (plugin managers update sibling plugins separately).
 -- An install without cors_list reads a cors list as its widest value, "*".
+-- One without start_raises could return from a start that served nothing
+-- while another program answered on the port, so a pcall saw no error.
 S.features = {
     token_auth = true,
     host_binding = true,
     asset_route = true,
     host_check = true,
     cors_list = true,
+    start_raises = true,
 }
 
 -- A document type added here joins ACTIVE_DOCUMENT, or the asset route
@@ -1849,6 +1852,10 @@ end
 -- -------- Public server API -----------------------------------------------
 
 -- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts }
+-- Raises at level 0, returning nothing, when it cannot serve: a refused
+-- option, a failed bind or listen, a port in use, or a wildcard bind whose
+-- URL's loopback address another listener holds. A caller reads
+-- S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local tcp = uv.new_tcp()
