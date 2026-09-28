@@ -512,21 +512,26 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
         vim.uv.new_tcp = real_new_tcp
         server.wildcard_loopback = real_rule
     end)
-    -- Counts the sockets a start makes. The one numbered at is handed to
-    -- start as a socket whose bind returns nil and answer's cause and name.
+    -- Counts the sockets a start makes. The one numbered at fails as answer
+    -- says: answer.new_tcp is returned by new_tcp itself, answer.bind by the
+    -- bind of a socket handed to start in its place, each as nil, a cause
+    -- and its name.
     local made, at, answer = 0, nil, nil
     vim.uv.new_tcp = function(...)
         made = made + 1
+        local stubbed = made == at and answer or nil
+        if stubbed and stubbed.new_tcp then
+            return nil, stubbed.new_tcp[1], stubbed.new_tcp[2]
+        end
         local handle, err = real_new_tcp(...)
-        if made ~= at or not handle then
+        if not stubbed or not handle then
             return handle, err
         end
-        local stubbed = answer
         return setmetatable({}, {
             __index = function(_, name)
                 if name == "bind" then
                     return function()
-                        return nil, stubbed[1], stubbed[2]
+                        return nil, stubbed.bind[1], stubbed.bind[2]
                     end
                 end
                 return function(_, ...)
@@ -538,9 +543,9 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     -- Starts, counts the sockets the start made and the ones it left open,
     -- hands a server that started to use, then stops it, so no start holds
     -- the port for the next one. The server's socket is the first a start
-    -- makes and the probe the second, whose bind probe_bind answers.
-    local function start_counted(cfg, probe_bind, use)
-        made, at, answer = 0, probe_bind and 2, probe_bind
+    -- makes and the probe the second, which probe_stub fails.
+    local function start_counted(cfg, probe_stub, use)
+        made, at, answer = 0, probe_stub and 2, probe_stub
         local before = H.handle_count("tcp")
         local started, res = pcall(server.start, vim.tbl_extend("keep", cfg, { root = root }))
         local sockets, open = made, H.handle_count("tcp") - before
@@ -570,16 +575,20 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
             "a start beside a loopback listener raises",
             "naming the port",
             "leaving no socket",
-            "naming 127.0.0.1",
+            "saying another socket holds 127.0.0.1",
             "a start with nothing beside it serves",
             "making its socket and the probe",
             "closing the probe",
             "reached on 127.0.0.1",
             "a probe whose bind finds no descriptor raises",
             "leaving no socket",
+            "a probe that cannot open raises",
+            "leaving no socket",
             "a probe of an address this machine lacks raises",
             "leaving no socket",
             "a probe of an address bind cannot read raises",
+            "leaving no socket",
+            "a loopback rule that raises refuses the start",
             "leaving no socket",
         }) do
             H.skip(("a wildcard bind: %s (this machine refuses one: %s)"):format(row, tostring(wild_err)))
@@ -605,13 +614,17 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     ok(not started and res:find("EADDRINUSE", 1, true) ~= nil, "a wildcard start beside it raises: " .. res)
     ok(not started and res:find(":" .. port, 1, true) ~= nil, "naming the port: " .. res)
     eq(open, 0, "and leaves no socket open, the probe's included")
+    -- A busy address is named as held, never as one start could not check.
     if shares then
         ok(
-            not started and res:find("127.0.0.1:" .. port, 1, true) ~= nil,
-            "where a wildcard bind shares the port, the raise names 127.0.0.1, the address the URL names: " .. res
+            not started and res:find("another socket holds 127.0.0.1:" .. port, 1, true) ~= nil,
+            "where a wildcard bind shares the port, the raise says another socket holds 127.0.0.1, the address the URL names: "
+                .. res
         )
     else
-        H.skip("the raise names 127.0.0.1 (this machine refuses the wildcard bind beside the listener)")
+        H.skip(
+            "the raise says another socket holds 127.0.0.1 (this machine refuses the wildcard bind beside the listener)"
+        )
     end
 
     hold:close()
@@ -629,11 +642,12 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
 
     -- Each refuses naming the address it could not check and the cause.
     -- EMFILE comes from the bind: libuv opens the descriptor there, not in
-    -- new_tcp. An address bind cannot read raises inside luv, where a raise
-    -- past start left both sockets open (measured).
-    local function refuses(label, rule, probe_bind, needles)
+    -- new_tcp, whose own failure is kept too. An address bind cannot read
+    -- raises inside luv, and a rule that raises raised past start: each
+    -- left the server's socket open (measured).
+    local function refuses(label, rule, probe_stub, needles)
         server.wildcard_loopback = rule or real_rule
-        local refused, why, _, left = start_counted({ host = "0.0.0.0", port = 0 }, probe_bind)
+        local refused, why, _, left = start_counted({ host = "0.0.0.0", port = 0 }, probe_stub)
         server.wildcard_loopback = real_rule
         local named = not refused
         for _, needle in ipairs(needles) do
@@ -650,7 +664,13 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     refuses(
         "a probe whose bind finds no descriptor raises",
         nil,
-        { "EMFILE: stubbed", "EMFILE" },
+        { bind = { "EMFILE: stubbed", "EMFILE" } },
+        { "cannot check 127.0.0.1:", "EMFILE: stubbed" }
+    )
+    refuses(
+        "a probe that cannot open raises",
+        nil,
+        { new_tcp = { "EMFILE: stubbed", "EMFILE" } },
         { "cannot check 127.0.0.1:", "EMFILE: stubbed" }
     )
     refuses(
@@ -665,6 +685,11 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
         nil,
         { "cannot check [127.0.0.1]:", "Invalid IP address" }
     )
+    -- Level 0, so the cause carries no position the suite's level check
+    -- would read as start's.
+    refuses("a loopback rule that raises refuses the start", function()
+        error("rule stubbed to raise", 0)
+    end, nil, { "Failed to bind 0.0.0.0:", "the loopback rule raised: rule stubbed to raise" })
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise

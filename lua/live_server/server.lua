@@ -1912,13 +1912,18 @@ function S.start(cfg)
     -- macOS; Linux refuses the bind above). start serves only when a probe
     -- before the listen finds the address free: a probe that failed any
     -- other way cannot tell, and a real EMFILE there once let the URL reach
-    -- another program (measured).
-    local loopback = S.wildcard_loopback(bound.ip)
+    -- another program (measured). A caller may replace the rule, and one
+    -- that raised went past start with the server's socket open.
+    local here = host .. ":" .. tostring(bound.port)
+    local ruled, loopback = pcall(S.wildcard_loopback, bound.ip)
+    if not ruled then
+        tcp:close()
+        error(("Failed to bind %s: the loopback rule raised: %s"):format(here, tostring(loopback)), 0)
+    end
     if loopback then
         local free, why, why_name = address_free(loopback, bound.port)
         if not free then
             tcp:close()
-            local here = host .. ":" .. tostring(bound.port)
             local there = tostring(loopback) .. ":" .. tostring(bound.port)
             if why_name == "EADDRINUSE" then
                 error(
