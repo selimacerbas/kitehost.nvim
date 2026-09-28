@@ -139,18 +139,19 @@ H.case("Section 2: a response whose shutdown cannot start closes its socket at o
     c:close()
 end)
 
--- The descriptor count once whatever an earlier case left closing has
--- closed: a peer's end reaches the server a loop turn after the client's
--- close. Ten equal samples in a row, within 1 s.
-local function settled_fds()
-    local n, same = H.fd_count(), 0
-    H.wait_for(function()
-        local now = H.fd_count()
+-- Samples sample() until it gives one value ten times in a row, within
+-- ms: whether it did, and the value. A peer's end reaches the server a
+-- loop turn after the client's close, and a transfer's next read a turn
+-- after its write, so a count is read once it holds still.
+local function steady(sample, ms)
+    local n, same = sample(), 0
+    local held = H.wait_for(function()
+        local now = sample()
         same = now == n and same + 1 or 0
         n = now
         return same >= 10
-    end, 1000)
-    return n
+    end, ms)
+    return held, n
 end
 
 -- A download its client abandoned left the file open: the write into the
@@ -159,8 +160,10 @@ end
 -- held one descriptor until the editor quit and stop gave none back
 -- (measured), so any client that can reach the port could run the editor
 -- out of descriptors. The shapes: a client that reads the first chunk and
--- resets, and one that stops reading a 16 MiB file, past what both ends'
--- socket buffers take, then resets, or half-closes and closes.
+-- resets, which mostly lands while the server reads the file (the write's
+-- return), and one that stops reading a 16 MiB file, past what both ends'
+-- socket buffers take, and once the server's write waits on it resets,
+-- or half-closes and closes (the write's callback).
 H.case("Section 3: an aborted download leaks no descriptor", function()
     local rows = {
         "the descriptor count returns to its baseline after 3 aborted downloads",
@@ -176,12 +179,24 @@ H.case("Section 3: an aborted download leaks no descriptor", function()
     H.write_file(root .. "/large.bin", string.rep("b", 16 * 1024 * 1024))
     local inst = serve()
     local port = inst.port
-    local fds = settled_fds()
-    local function back()
+    -- The reads the transfers have started: a transfer whose count holds
+    -- still waits on a write its client does not take.
+    local reads = 0
+    local real_read = uv.fs_read
+    H.defer(function()
+        uv.fs_read = real_read
+    end)
+    uv.fs_read = function(...)
+        reads = reads + 1
+        return real_read(...)
+    end
+    -- Whether the count is back at n within 3 s.
+    local function back(n)
         return H.wait_for(function()
-            return H.fd_count() == fds
+            return H.fd_count() == n
         end, 3000)
     end
+    local _, fds = steady(H.fd_count, 1000)
     for _ = 1, 3 do
         local c = assert(H.raw_connect(port))
         assert(c:send(get("/big.bin", port)))
@@ -190,23 +205,32 @@ H.case("Section 3: an aborted download leaks no descriptor", function()
         end)
         assert(c:abort())
     end
-    ok(back(), ("%s: %d (now %d)"):format(rows[1], fds, H.fd_count()))
-    -- Each client in turn, so the count says when its transfer has begun:
-    -- the file open beside the two sockets.
+    ok(back(fds), ("%s: %d (now %d)"):format(rows[1], fds, H.fd_count()))
+    -- Each client in turn, against the count before it, so a descriptor an
+    -- earlier one kept never fails a later one: the count says when its
+    -- transfer has begun (the file open beside the two sockets) and whether
+    -- it gave them all back.
     local function abandon(ends)
         local given = 0
         for _ = 1, 3 do
+            local _, before = steady(H.fd_count, 1000)
             local c = assert(H.raw_connect(port))
             assert(c.tcp:read_stop())
             assert(c:send(get("/large.bin", port)))
             assert(
                 H.wait_for(function()
-                    return H.fd_count() >= fds + 3
+                    return H.fd_count() >= before + 3
                 end, 1000),
                 "the transfer opened its file within 1 s"
             )
+            assert(
+                steady(function()
+                    return reads
+                end, 3000),
+                "the transfer stalled on the client within 3 s"
+            )
             ends(c)
-            given = given + (back() and 1 or 0)
+            given = given + (back(before) and 1 or 0)
         end
         return given
     end
