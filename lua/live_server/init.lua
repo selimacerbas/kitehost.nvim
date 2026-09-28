@@ -110,10 +110,20 @@ local function fold_headers(current, given)
 end
 
 function M.setup(opts)
+    local before = M.opts
     local current = M.opts.headers
     M.opts = vim.tbl_deep_extend("force", M.opts, opts or {})
     if type(current) == "table" and type(opts) == "table" and type(opts.headers) == "table" then
         M.opts.headers = fold_headers(current, opts.headers)
+    end
+    -- A section given as a boolean replaced its table, and every start then
+    -- raised indexing it, outside the start's pcall: false turns the section
+    -- off and true on, its other fields kept.
+    for _, section in ipairs({ "live_reload", "directory_listing" }) do
+        local given = M.opts[section]
+        if type(given) == "boolean" then
+            M.opts[section] = vim.tbl_extend("force", before[section], { enabled = given })
+        end
     end
 
     if M.opts.auto_start and M.opts.auto_start.filetypes then

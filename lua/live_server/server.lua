@@ -1965,6 +1965,13 @@ local function check_start(cfg)
     if dirlist ~= nil and type(dirlist) ~= "table" then
         error("features.dirlist must be a table", 0)
     end
+    -- The debounce arms a timer at every file change: one that is no number
+    -- raised there, in the watcher's callback, and a negative one armed a
+    -- reload that never went out (measured).
+    local debounce = live and live.debounce
+    if debounce ~= nil and (type(debounce) ~= "number" or not (debounce >= 0)) then
+        error("live.debounce must be a number at or above 0", 0)
+    end
     -- fs_realpath raised its own argument error for a nil root and read a
     -- number as a path under the working directory.
     local root = cfg.root
@@ -1999,7 +2006,7 @@ local function check_start(cfg)
         default_index = cfg.default_index,
         live_enabled = live and live.enabled ~= false,
         inject_script = live and live.inject_script ~= false,
-        live_debounce = (live and live.debounce) or 120,
+        live_debounce = debounce or 120,
         css_inject = live and live.css_inject ~= false,
         dir_enabled = not (dirlist and dirlist.enabled == false),
         dir_show_hidden = dirlist and dirlist.show_hidden or false,

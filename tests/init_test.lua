@@ -313,6 +313,41 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     )
 end)
 
+-- A section given as a boolean replaced the table every start reads its
+-- fields from, so each start raised indexing it, outside the start's
+-- pcall: a Lua error, and no server started. false turns the section
+-- off and true on, its other fields kept.
+H.case("Section 6: a section given as false or true turns it off or on", function()
+    local function section_of(cfg, section)
+        if section == "live_reload" then
+            return cfg and cfg.live
+        end
+        return cfg and cfg.features and cfg.features.dirlist
+    end
+    for _, c in ipairs({
+        { "live_reload", false },
+        { "live_reload", true },
+        { "directory_listing", false },
+        { "directory_listing", true },
+    }) do
+        local section, on = c[1], c[2]
+        local ran, cfg = pcall(start_with, { [section] = on })
+        local got = ran and section_of(cfg, section) or nil
+        ok(
+            ran and got ~= nil and got.enabled == on,
+            ("%s = %s starts with the section %s: %s"):format(
+                section,
+                tostring(on),
+                on and "on" or "off",
+                ran and vim.inspect(got, { newline = " ", indent = "" }) or tostring(cfg)
+            )
+        )
+    end
+    local ran, cfg = pcall(start_with, { live_reload = false })
+    local live = ran and section_of(cfg, "live_reload") or {}
+    eq(live.debounce, 120, "and live_reload = false keeps the section's other fields")
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then
