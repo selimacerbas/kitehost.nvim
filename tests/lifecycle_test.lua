@@ -6,12 +6,13 @@
 -- after its request still reads its whole response, where an event
 -- stream's half-close ends the stream; stop closes every connection the
 -- server accepted, whose set holds the open ones and those closed since
--- the last accept. A raise inside a luv callback, where every handler
--- runs, leaves the exit code at 0, so the rows read the ledger's error
--- capture (H.errors) and count the handles and the descriptors directly.
--- hello.txt and big.bin (its bytes in big) are the small and the 2 MiB
--- file the transfer rows serve, and serve's cfg and get's extra are what
--- those rows pass.
+-- the last accept; a connection whose head is not read in time is
+-- closed, and its timer lives only while the head is unread. A raise
+-- inside a luv callback, where every handler runs, leaves the exit code
+-- at 0, so the rows read the ledger's error capture (H.errors) and count
+-- the handles and the descriptors directly. hello.txt and big.bin (its
+-- bytes in big) are the small and the 2 MiB file the transfer rows serve,
+-- and serve's cfg and get's extra are what those rows pass.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -921,6 +922,132 @@ H.case("Section 5b: the set holds the open connections and those closed since th
     eq(#H.errors(), errs, "and raises nothing")
     eq(tcp_count(), tcps + 1, "and the server makes no socket for it")
     lost:close()
+end)
+
+-- A connection that never finished its head held its socket until its
+-- client left: 50 clients, idle or with half a head sent, held 50 sockets
+-- 12 s on (measured). A timer per connection closes one whose head is not
+-- read in time, with no response, since a browser opens spare connections
+-- it may never use. A head read in time stops the timer, so an event
+-- stream, whose head is read at once, is never timed out.
+H.case("Section 6: a connection that never finishes its head is closed", function()
+    local inst = serve({ header_timeout_ms = 200 })
+    local port = inst.port
+    local idle = assert(H.raw_connect(port))
+    local t0 = uv.hrtime()
+    local _, eof = idle:read(3000)
+    ok(eof, "an idle connection is closed")
+    ok((uv.hrtime() - t0) / 1e6 < 1500, "at the header timeout, not the test's read bound")
+    local part = assert(H.raw_connect(port))
+    assert(part:send(("GET /hello.txt HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"):format(port)))
+    local answer, part_eof = part:read(3000)
+    ok(
+        part_eof and answer == "",
+        ("a head sent in part is closed too, with no response (%d bytes read)"):format(#answer)
+    )
+    local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")
+    eq(res[1] and res[1].status, 200, "a head sent in time is served")
+    local s = assert(H.raw_connect(port))
+    assert(s:send(get("/__live/events", port)))
+    s:read(1000, function(d)
+        return d:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    local _, sse_eof = s:read(600)
+    ok(not sse_eof, "an event stream outlives the header timeout")
+    server.send_event(inst, "tick", "{}")
+    local data = s:read(1000, function(d)
+        return d:find("event: tick", 1, true) ~= nil
+    end)
+    ok(data:find("event: tick", 1, true) ~= nil, "and still receives events")
+end)
+
+-- The timer is the connection's while its head is unread: a head read
+-- stops it, so an answered request and an event stream hold none, and
+-- stop closes the timers of the connections still waiting. It is on by
+-- default and 0 turns it off. A connection no timer can be made for
+-- could be held for good, so it is closed.
+H.case("Section 6b: a connection's timer lives while its head is unread", function()
+    local function timer_count()
+        return H.handle_count("timer")
+    end
+    local function tcp_count()
+        return H.handle_count("tcp")
+    end
+    -- Once the server holds one more accepted socket than before.
+    local function accepted(tcps)
+        return H.wait_for(function()
+            return tcp_count() == tcps + 2
+        end, 1000)
+    end
+    local before = timer_count()
+    local inst = serve({ header_timeout_ms = 5000 })
+    local port = inst.port
+    local timers = timer_count()
+    local tcps = tcp_count()
+    local idle = assert(H.raw_connect(port))
+    assert(accepted(tcps), "the server accepted the idle connection within 1 s")
+    eq(timer_count(), timers + 1, "an idle connection waits on a timer of its own")
+    local waiting = timer_count()
+    local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
+    assert(res and res.status == 200, "the server answered /hello.txt")
+    eq(timer_count(), waiting, "a request whose head is read holds no timer once answered")
+    local s = assert(H.raw_connect(port))
+    assert(s:send(get("/__live/events", port)))
+    assert(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 1
+        end, 2000),
+        "the event stream opened within 2 s"
+    )
+    eq(timer_count(), waiting, "an event stream holds no timer once its head is read")
+    server.stop(inst)
+    eq(timer_count(), before, "stop closes the timer of every connection still waiting")
+    idle:close()
+    s:close()
+
+    inst = serve()
+    local due
+    assert(H.raw_connect(inst.port))
+    H.wait_for(function()
+        for conn in pairs(inst.conns) do
+            due = conn.timer and conn.timer:get_due_in()
+        end
+        return due ~= nil
+    end, 1000)
+    ok(
+        due ~= nil and due > 9000 and due <= 10000,
+        ("by default a connection waits 10 s for its head (due in %s ms)"):format(tostring(due))
+    )
+
+    inst = serve({ header_timeout_ms = 0 })
+    timers, tcps = timer_count(), tcp_count()
+    assert(H.raw_connect(inst.port))
+    assert(accepted(tcps), "the server accepted the connection within 1 s")
+    eq(timer_count(), timers, "with header_timeout_ms = 0 a connection gets no timer")
+
+    -- No real timer fails to be made. The server makes it in the listen
+    -- callback, a fast event, and the client's handles are made on the
+    -- suite's own stack, so only the server's call gets nil.
+    inst = serve({ header_timeout_ms = 5000 })
+    local errs = #H.errors()
+    local real_new_timer = uv.new_timer
+    H.defer(function()
+        uv.new_timer = real_new_timer
+    end)
+    uv.new_timer = function(...)
+        if not vim.in_fast_event() then
+            return real_new_timer(...)
+        end
+        uv.new_timer = real_new_timer
+        return nil, "ENOMEM: stubbed", "ENOMEM"
+    end
+    local lost = assert(H.raw_connect(inst.port))
+    local _, lost_eof = lost:read(2000)
+    uv.new_timer = real_new_timer
+    ok(lost_eof, "a connection the server can make no timer for is closed")
+    eq(#H.errors(), errs, "and raises nothing")
+    res = H.responses(H.raw_request(inst.port, get("/hello.txt", inst.port)) or "")[1]
+    eq(res and res.status, 200, "and the server answers the next connection")
 end)
 
 H.finish()

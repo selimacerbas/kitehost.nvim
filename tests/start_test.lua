@@ -4,15 +4,16 @@
 -- token among them), serve_dotfiles, index_names, headers (a control byte
 -- in a value, two spellings of one name and the server's own fields among
 -- them), cors, allowed_hosts (a string, a map, a hole, a wildcard, an
--- entry no Host can match), live and its debounce, features, host, a port
--- it cannot hold or a root that is no string or does not resolve; a bind
--- to an address this machine lacks or to a port in use raises naming it
--- and leaves no socket, a socket that cannot be made raises naming it,
--- and a failed listen leaves no socket, timer or watcher. A wildcard bind
--- raises unless the loopback address its URL names is free, and its probe
--- of that address is never left open. A pattern the check cannot read
--- past its literal starts and gates every path it is asked about, and
--- each option is read from the caller's table once.
+-- entry no Host can match), live and its debounce, features, host,
+-- header_timeout_ms, a port it cannot hold or a root that is no string or
+-- does not resolve; a bind to an address this machine lacks or to a port
+-- in use raises naming it and leaves no socket, a socket that cannot be
+-- made raises naming it, and a failed listen leaves no socket, timer or
+-- watcher. A wildcard bind raises unless the loopback address its URL
+-- names is free, and its probe of that address is never left open. A
+-- pattern the check cannot read past its literal starts and gates every
+-- path it is asked about, and each option is read from the caller's table
+-- once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -88,7 +89,9 @@ end
 -- and a table raised as a fault in the server's own code, naming no
 -- option. A live.debounce that is no number started and then raised in
 -- the watcher's callback at every file change, and a negative one armed
--- a reload that never went out (measured).
+-- a reload that never went out (measured). header_timeout_ms arms a timer
+-- per connection, which luv reads as 0 for NaN and as never for a
+-- negative value (measured).
 H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
@@ -224,6 +227,10 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "live", { debounce = "soon" }, "live.debounce must be a number at or above 0" },
         { "live", { debounce = -1 }, "live.debounce must be a number at or above 0" },
         { "live", { debounce = 0 / 0 }, "live.debounce must be a number at or above 0" },
+        { "header_timeout_ms", "10000", "header_timeout_ms must be an integer at or above 0" },
+        { "header_timeout_ms", -1, "header_timeout_ms must be an integer at or above 0" },
+        { "header_timeout_ms", 1.5, "header_timeout_ms must be an integer at or above 0" },
+        { "header_timeout_ms", 0 / 0, "header_timeout_ms must be an integer at or above 0" },
         { "features", 1, "features must be a table" },
         { "features", { dirlist = 1 }, "features.dirlist must be a table" },
         { "host", 1, "host must be a string" },
@@ -262,6 +269,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     end
     started, res = pcall(server.start, { port = 0, root = root, live = { enabled = false, debounce = 0 } })
     ok(started, "live.debounce = 0 starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    started, res = pcall(server.start, { port = 0, root = root, header_timeout_ms = 0 })
+    ok(started, "header_timeout_ms = 0 starts: " .. tostring(started and "" or res))
     if started then
         server.stop(res)
     end
@@ -834,6 +846,7 @@ H.case("start reads each option from the caller's table once", function()
         features = { dirlist = { enabled = false, show_hidden = false } },
         notify_on_reload = false,
         asset_root = root,
+        header_timeout_ms = 5000,
     }
     local reads = {}
     local computed = setmetatable({}, {

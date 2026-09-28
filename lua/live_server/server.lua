@@ -1672,9 +1672,41 @@ local function find_head_end(buf, from)
     return last, spelling
 end
 
--- One accepted socket's state.
+-- A connection's head timer is stopped and closed once, by whichever gets
+-- there first: the head read, the connection's end, the timer's own
+-- callback, the prune of a closed connection or stop.
+local function conn_stop_timer(conn)
+    local t = conn.timer
+    conn.timer = nil
+    if t and not t:is_closing() then
+        t:stop()
+        t:close()
+    end
+end
+
+-- One accepted socket's state, or nil when its head timer cannot be made
+-- or armed: the timer is the connection's bound, and one taken without it
+-- could be held for good. A connection that never finished its head held
+-- its socket until its client left (50 clients, idle or with half a head
+-- sent, held 50 sockets 12 s on, measured). Browsers open spare
+-- connections they may never use, so the close is silent, no 408.
 local function new_conn(inst, sock)
-    return { inst = inst, sock = sock, buf = "", handled = false }
+    local conn = { inst = inst, sock = sock, buf = "", handled = false }
+    if inst.header_timeout > 0 then
+        conn.timer = uv.new_timer()
+        local armed = conn.timer
+            and conn.timer:start(inst.header_timeout, 0, function()
+                conn_stop_timer(conn)
+                if not conn.handled then
+                    close_once(sock)
+                end
+            end)
+        if not armed then
+            conn_stop_timer(conn)
+            return nil
+        end
+    end
+    return conn
 end
 
 -- Open connections. Closed ones leave the set here, so it never holds
@@ -1683,6 +1715,7 @@ local function open_conns(inst)
     local n = 0
     for conn in pairs(inst.conns) do
         if conn.sock:is_closing() then
+            conn_stop_timer(conn)
             inst.conns[conn] = nil
         else
             n = n + 1
@@ -1695,6 +1728,9 @@ end
 local function on_read(conn, err, chunk)
     local sock = conn.sock
     if err or not chunk then
+        -- Every branch below ends the connection or leaves it to its
+        -- response, so the head timer goes first, the cut head's 400 too.
+        conn_stop_timer(conn)
         if conn.sse then
             sse_drop(conn.inst, sock)
             close_once(sock)
@@ -1730,6 +1766,7 @@ local function on_read(conn, err, chunk)
     local first = conn.buf:match("^[\r\n]*([^\r\n])")
     if first and not first:find("^[A-Z]") then
         conn.handled = true
+        conn_stop_timer(conn)
         conn.buf = ""
         return http_400(sock, "Cannot parse request line")
     end
@@ -1739,6 +1776,7 @@ local function on_read(conn, err, chunk)
     -- buffer within three bytes of the cap may hold a terminator's start.
     if head_end and head_end > MAX_HEAD or not head_end and #conn.buf > MAX_HEAD + 3 then
         conn.handled = true
+        conn_stop_timer(conn)
         conn.buf = ""
         return send_response(sock, 431, { ["Content-Type"] = "text/plain" }, "Request Header Fields Too Large")
     end
@@ -1746,6 +1784,7 @@ local function on_read(conn, err, chunk)
         return
     end
     conn.handled = true
+    conn_stop_timer(conn)
     local req, why = parse_head(conn.buf:sub(1, head_end))
     conn.buf = ""
     if not req then
@@ -1972,6 +2011,20 @@ local function check_start(cfg)
     if debounce ~= nil and (type(debounce) ~= "number" or not (debounce >= 0)) then
         error("live.debounce must be a number at or above 0", 0)
     end
+    -- Every connection arms a timer with it: luv reads NaN as 0, which would
+    -- close each connection at once, and a negative value as a timer that
+    -- never fires (measured). 0 turns the timeout off.
+    local header_timeout = cfg.header_timeout_ms
+    if
+        header_timeout ~= nil
+        and (
+            type(header_timeout) ~= "number"
+            or not (header_timeout >= 0)
+            or header_timeout ~= math.floor(header_timeout)
+        )
+    then
+        error("header_timeout_ms must be an integer at or above 0", 0)
+    end
     -- fs_realpath raised its own argument error for a nil root and read a
     -- number as a path under the working directory.
     local root = cfg.root
@@ -2012,12 +2065,15 @@ local function check_start(cfg)
         dir_show_hidden = dirlist and dirlist.show_hidden or false,
         notify_on_reload = cfg.notify_on_reload or false,
         asset_root = cfg.asset_root,
+        header_timeout = header_timeout or 10000,
     }
 end
 
 -- -------- Public server API -----------------------------------------------
 
--- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts }
+-- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms }
+-- header_timeout_ms (default 10000, 0 off): a connection whose head is not
+-- read by then is closed with no response.
 -- Raises at level 0, returning nothing, when it cannot serve: a refused
 -- option, a failed bind or listen, a port in use, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check. A
@@ -2112,6 +2168,7 @@ function S.start(cfg)
         started_at = os.time(),
         -- Every accepted connection, which stop closes.
         conns = {},
+        header_timeout = checked.header_timeout,
 
         -- live
         live_enabled = checked.live_enabled,
@@ -2174,6 +2231,10 @@ function S.start(cfg)
         end
         open_conns(inst)
         local conn = new_conn(inst, sock)
+        if not conn then
+            close_once(sock)
+            return
+        end
         inst.conns[conn] = true
         sock:read_start(function(err_read, chunk)
             on_read(conn, err_read, chunk)
@@ -2227,6 +2288,7 @@ function S.stop(inst)
     -- makes a second stop close nothing; the emptied set drops a stopped
     -- server's references to its sockets.
     for conn in pairs(inst.conns) do
+        conn_stop_timer(conn)
         close_once(conn.sock)
     end
     inst.conns = {}
