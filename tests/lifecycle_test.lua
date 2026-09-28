@@ -961,9 +961,10 @@ H.case("Section 6: a connection that never finishes its head is closed", functio
     ok(data:find("event: tick", 1, true) ~= nil, "and still receives events")
 end)
 
--- The timer is the connection's while its head is unread: a head read
--- stops it, so an answered request and an event stream hold none, and
--- stop closes the timers of the connections still waiting. It is on by
+-- The timer is the connection's while its head is unread: a head read or
+-- refused stops it, so an answered request and an event stream hold
+-- none, a connection that ends first takes its timer with it, and stop
+-- closes the timers of the connections still waiting. It is on by
 -- default and 0 turns it off. A connection no timer can be made for
 -- could be held for good, so it is closed.
 H.case("Section 6b: a connection's timer lives while its head is unread", function()
@@ -984,13 +985,38 @@ H.case("Section 6b: a connection's timer lives while its head is unread", functi
     local port = inst.port
     local timers = timer_count()
     local tcps = tcp_count()
-    local idle = assert(H.raw_connect(port))
-    assert(accepted(tcps), "the server accepted the idle connection within 1 s")
+    local gone = assert(H.raw_connect(port))
+    assert(accepted(tcps), "the server accepted a connection within 1 s")
     eq(timer_count(), timers + 1, "an idle connection waits on a timer of its own")
+    gone:close()
+    ok(
+        H.wait_for(function()
+            return timer_count() == timers
+        end, 1000),
+        "a connection that ends before its head closes its timer with it"
+    )
+    local idle = assert(H.raw_connect(port))
+    assert(
+        H.wait_for(function()
+            return timer_count() == timers + 1
+        end, 1000),
+        "the server took the idle connection within 1 s"
+    )
     local waiting = timer_count()
     local res = H.responses(H.raw_request(port, get("/hello.txt", port)) or "")[1]
     assert(res and res.status == 200, "the server answered /hello.txt")
     eq(timer_count(), waiting, "a request whose head is read holds no timer once answered")
+    -- A head refused before it is read whole: a first byte no method
+    -- starts with (a TLS ClientHello on the plain port) and one past the
+    -- cap with no end.
+    for _, c in ipairs({
+        { "a head refused at its first byte", "\22\3\1\0\5hello", 400 },
+        { "a head refused over the cap", "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 70 * 1024), 431 },
+    }) do
+        local refused = H.responses(H.raw_request(port, c[2]) or "")[1]
+        assert(refused and refused.status == c[3], ("%s is answered %d"):format(c[1], c[3]))
+        eq(timer_count(), waiting, c[1] .. " holds no timer once answered")
+    end
     local s = assert(H.raw_connect(port))
     assert(s:send(get("/__live/events", port)))
     assert(
