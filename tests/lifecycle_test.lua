@@ -155,14 +155,16 @@ local function steady(sample, ms)
 end
 
 -- A download its client abandoned left the file open: the write into the
--- gone socket failed, by its return (EBADF) or its callback (ECANCELED),
+-- gone socket failed, by its return (EBADF) or its callback (EPIPE, or
+-- ECANCELED once the read path closed it),
 -- nothing read either, and the loop stopped there. Each abandoned download
 -- held one descriptor until the editor quit and stop gave none back
 -- (measured), so any client that can reach the port could run the editor
 -- out of descriptors. The shapes: a client that reads the first chunk and
--- resets, which mostly lands while the server reads the file (the write's
--- return), and one that stops reading a 16 MiB file, past what both ends'
--- socket buffers take, and once the server's write waits on it resets,
+-- resets, which lands while the server reads the file in about half the
+-- runs (the write's return), and one that stops reading a 16 MiB file,
+-- past what both ends' socket buffers take, and once the server's write
+-- waits on it resets,
 -- or half-closes and closes (the write's callback).
 H.case("Section 3: an aborted download leaks no descriptor", function()
     local rows = {
@@ -196,7 +198,8 @@ H.case("Section 3: an aborted download leaks no descriptor", function()
             return H.fd_count() == n
         end, 3000)
     end
-    local _, fds = steady(H.fd_count, 1000)
+    local held, fds = steady(H.fd_count, 1000)
+    assert(held, "the descriptor count settled before the downloads")
     for _ = 1, 3 do
         local c = assert(H.raw_connect(port))
         assert(c:send(get("/big.bin", port)))
@@ -213,7 +216,8 @@ H.case("Section 3: an aborted download leaks no descriptor", function()
     local function abandon(ends)
         local given = 0
         for _ = 1, 3 do
-            local _, before = steady(H.fd_count, 1000)
+            local settled, before = steady(H.fd_count, 1000)
+            assert(settled, "the descriptor count settled before this download")
             local c = assert(H.raw_connect(port))
             assert(c.tcp:read_stop())
             assert(c:send(get("/large.bin", port)))
@@ -229,6 +233,10 @@ H.case("Section 3: an aborted download leaks no descriptor", function()
                 end, 3000),
                 "the transfer stalled on the client within 3 s"
             )
+            -- A finished transfer holds still too; the open file says it
+            -- stalled with the write pending, on a host whose buffers
+            -- took the whole page it would not.
+            assert(H.fd_count() >= before + 3, "the file is still open while the client stalls")
             ends(c)
             given = given + (back(before) and 1 or 0)
         end
@@ -345,6 +353,9 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     )
     ok(closed(), "and each whole transfer closes its file")
 
+    -- The same clients as the first descriptor row, counted through the
+    -- open and close spy rather than the descriptor table, which Windows
+    -- has none of; the row that runs there.
     closed = since()
     for _ = 1, 3 do
         local c = assert(H.raw_connect(port))
