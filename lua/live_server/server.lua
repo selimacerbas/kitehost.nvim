@@ -456,26 +456,31 @@ local CLIENT_END = "}catch(e){console.warn('[live-server.nvim] no EventSource',e
 local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" .. CLIENT_ON .. CLIENT_END
 
 -- A token server gates its stream, so the page's ?t= goes on it, and a
--- copy is kept for pages reached without one. A page's own URL may use t
--- for something else (a time, a tab): kept at once, that value replaced
--- the working token for the rest of the tab. So a query value is kept only
--- once the stream opens with it, and one the server refuses (the stream
--- closed) gives way, once, to a kept token. The token is never written
--- into the script, which any page may load. Without one the 401 logged
--- only "SSE error", so the client says first why: no t, or the storage
--- error that kept it from being kept.
+-- copy is kept for the tab's other documents. With nothing kept the value
+-- is kept at once: a page that left before its stream opened (a meta
+-- refresh) or an iframe that read first found none. A page's own URL may
+-- use t for something else (a time, a tab), so a value that differs from
+-- a kept token replaces it only once its stream opens, and one the server
+-- refuses gives way, once, to the kept token. A document with no token
+-- waits for another to keep one and says why after two seconds; a refused
+-- token with nothing left to try is named, where the stream's error line
+-- said nothing. The token is never written into the script, which any
+-- page may load.
 local CLIENT_JS_TOKEN = table.concat({
     "!function(){try{",
-    "var k='live-server.nvim:t',q=new URLSearchParams(location.search).get('t'),s=null,x;",
+    "var k='live-server.nvim:t',q=new URLSearchParams(location.search).get('t'),s=null,x,o;",
     "try{s=sessionStorage.getItem(k)}catch(e){x=e}",
-    "var w=function(m){console.warn('[live-server.nvim] '+m)};",
-    "if(!(q||s)){w(x?'the token could not be kept: '+x:'no token: open the page with ?t=<token> in its URL')}",
-    "var c=function(t){var es=new EventSource('/__live/events'+(t?'?t='+encodeURIComponent(t):''));",
-    "es.addEventListener('open',function(){if(q&&t===q){",
-    "try{sessionStorage.setItem(k,t)}catch(e){w('the token could not be kept: '+e)}}});",
-    "es.addEventListener('error',function(){if(es.readyState===2&&q&&t===q&&s&&s!==q){c(s)}});",
+    "var w=function(m){console.warn('[live-server.nvim] '+m)},",
+    "p=function(t){try{sessionStorage.setItem(k,t)}catch(e){w('the token could not be kept: '+e)}},",
+    "c=function(t){o=1;var es=new EventSource('/__live/events?t='+encodeURIComponent(t));",
+    "es.addEventListener('open',function(){if(t===q&&s&&s!==q)p(t)});",
+    "es.addEventListener('error',function(){if(es.readyState===2){if(t===q&&s&&s!==q)c(s);",
+    "else w('the token was refused: open the page with the server\\'s ?t=<token>')}});",
     CLIENT_ON,
-    "};c(q||s);",
+    "};",
+    "if(q){if(!s)p(q);c(q)}else if(s)c(s);else if(x)w('the token could not be kept: '+x);",
+    "else{addEventListener('storage',function(e){if(!o&&e.key===k&&e.newValue)c(e.newValue)});",
+    "setTimeout(function(){o||w('no token: open the page with ?t=<token> in its URL')},2000)}",
     CLIENT_END,
 })
 

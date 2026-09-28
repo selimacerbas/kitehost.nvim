@@ -2,9 +2,10 @@
 -- The reload client. A token server gates its event stream, and the
 -- client opened it without the token, got 401 and never reconnected, so
 -- live reload died in the README's network setup. The token client's
--- behaviour runs in node against stubs of the page around it: a page whose
--- own URL uses t keeps the working token, a refused query value gives way
--- to the kept token, and a page with no token is told why.
+-- behaviour runs in node against stubs of the page around it: the tab
+-- keeps the token it was given, a page whose own URL uses t never replaces
+-- it, a refused token is tried once and named, and a page with no token
+-- waits for one and is told why.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/client_js_test.lua"
 
@@ -50,14 +51,11 @@ H.case("Section 2: a token server's client carries the page's token to the strea
     -- Substrings alone passed a client with a syntax error, which dies on
     -- every token server, so its bytes are pinned as the tokenless one's
     -- are; the rows after the pin say what those bytes must hold.
-    eq(#r.body, 1151, "1151 bytes, pinned as the tokenless client is")
-    eq(vim.fn.sha256(r.body), "2598b033c04af41760bda5643243d383cf313649f77f72710002a0a6b567e28d", "and by its sha256")
+    eq(#r.body, 1393, "1393 bytes, pinned as the tokenless client is")
+    eq(vim.fn.sha256(r.body), "c231d968b9fe4b91ea71bec429fc2d9a7ad80b12b0dda282b834d60ada4e8ae4", "and by its sha256")
     ok(r.body:find("location.search", 1, true) ~= nil, "it reads t from the page's query")
     ok(r.body:find("sessionStorage", 1, true) ~= nil, "and keeps it for reloads that drop the query")
-    ok(
-        r.body:find("'/__live/events'+(t?'?t='+encodeURIComponent(t):'')", 1, true) ~= nil,
-        "and puts it on the event stream"
-    )
+    ok(r.body:find("'/__live/events?t='+encodeURIComponent(t)", 1, true) ~= nil, "and puts it on the event stream")
     ok(
         r.body:find("no token: open the page with ?t=<token> in its URL", 1, true) ~= nil
             and not r.body:find("printed", 1, true),
@@ -68,19 +66,44 @@ H.case("Section 2: a token server's client carries the page's token to the strea
 end)
 
 -- The served client runs as a page would run it: location, sessionStorage,
--- EventSource and console are stubs, and each page drives its streams'
--- open and error events by hand. Every page prints what it saw, and the
--- rows below rule on it.
+-- EventSource, console, the window's addEventListener and setTimeout are
+-- stubs, and each page drives its streams' open and error events and its
+-- clock by hand. The pages of one tab share one store, and a write there
+-- queues a storage event for every other document of the tab, delivered
+-- when the tab is flushed, as a browser delivers it in a later task. Every
+-- page prints what it saw, and the rows below rule on it.
 local RUNNER = [==[
 'use strict';
 const src = require('fs').readFileSync(process.argv[2], 'utf8');
 const K = 'live-server.nvim:t';
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-function page(search, store, throws) {
-  const warns = [], streams = [];
+function tab(store) {
+  const t = { store: store || {}, docs: [], queue: [] };
+  t.flush = () => { while (t.queue.length) t.queue.shift()(); };
+  return t;
+}
+function page(search, where, throws) {
+  const t = where && where.docs ? where : tab(where);
+  const store = t.store;
+  const warns = [], streams = [], timers = [], on = {};
+  let clock = 0;
+  t.docs.push(on);
   const sessionStorage = {
     getItem(k) { if (throws) throw new Error(throws); return has(store, k) ? store[k] : null; },
-    setItem(k, v) { if (throws) throw new Error(throws); store[k] = String(v); },
+    setItem(k, v) {
+      if (throws) throw new Error(throws);
+      const old = has(store, k) ? store[k] : null;
+      store[k] = String(v);
+      if (old === store[k]) return;
+      const e = { key: k, oldValue: old, newValue: store[k] };
+      t.docs.forEach((d) => { if (d !== on) t.queue.push(() => (d.storage || []).forEach((f) => f(e))); });
+    },
+  };
+  const addEventListener = (type, fn) => { (on[type] = on[type] || []).push(fn); };
+  const setTimeout = (fn, ms) => { timers.push({ fn, at: clock + ms }); };
+  const tick = (ms) => {
+    clock += ms;
+    timers.filter((x) => !x.done && x.at <= clock).forEach((x) => { x.done = true; x.fn(); });
   };
   class EventSource {
     constructor(url) { this.url = url; this.readyState = 0; this.on = {}; streams.push(this); }
@@ -88,17 +111,21 @@ function page(search, store, throws) {
   }
   const console = { log() {}, warn(...a) { warns.push(a.map(String).join(' ')); } };
   const location = { search };
-  new Function('location', 'sessionStorage', 'EventSource', 'console', 'URLSearchParams', 'document', src)(
-    location, sessionStorage, EventSource, console, URLSearchParams, {});
+  new Function('location', 'sessionStorage', 'EventSource', 'console', 'URLSearchParams', 'document',
+    'addEventListener', 'setTimeout', src)(
+    location, sessionStorage, EventSource, console, URLSearchParams, {}, addEventListener, setTimeout);
   const fire = (i, type, state) => {
     const es = streams[i];
     es.readyState = state;
     (es.on[type] || []).forEach((f) => f({}));
     if (es['on' + type]) es['on' + type]({});
   };
+  // Every stream the server closes, the ones its errors open included,
+  // bounded so a client that never stops shows as a count, not a hang.
+  const refuse = () => { for (let i = 0; i < 5 && streams[i]; i++) fire(i, 'error', 2); };
   const urls = () => streams.map((es) => es.url);
   const kept = () => (has(store, K) ? store[K] : null);
-  return { warns, streams, fire, urls, kept };
+  return { warns, streams, fire, refuse, urls, kept, tick };
 }
 const pages = {
   foreign() {
@@ -114,26 +141,55 @@ const pages = {
     p.fire(0, 'open', 1);
     return { urls: p.urls(), before, kept: p.kept(), warns: p.warns };
   },
+  left() {
+    const t = tab();
+    const first = page('?t=REAL', t);
+    const next = page('', t);
+    next.tick(2000);
+    return { first: first.urls(), urls: next.urls(), warns: next.warns };
+  },
+  arrives() {
+    const t = tab();
+    const frame = page('', t);
+    const early = frame.urls().length;
+    page('?t=REAL', t);
+    t.flush();
+    frame.tick(2000);
+    const later = page('?t=NEW', t);
+    later.fire(0, 'open', 1);
+    t.flush();
+    return { early, urls: frame.urls(), warns: frame.warns, kept: later.kept() };
+  },
   refused() {
     const p = page('?t=30', {});
-    p.fire(0, 'error', 2);
-    return { urls: p.urls(), kept: p.kept() };
+    p.refuse();
+    return { urls: p.urls(), warns: p.warns };
+  },
+  same() {
+    const p = page('?t=OLD', { [K]: 'OLD' });
+    p.refuse();
+    return { urls: p.urls(), warns: p.warns };
   },
   once() {
     const p = page('?t=30', { [K]: 'OLD' });
-    p.fire(0, 'error', 2);
-    if (p.streams[1]) p.fire(1, 'error', 2);
-    return { urls: p.urls(), kept: p.kept() };
+    p.refuse();
+    return { urls: p.urls(), kept: p.kept(), warns: p.warns };
+  },
+  restart() {
+    const p = page('', { [K]: 'OLD' });
+    p.refuse();
+    return { urls: p.urls(), warns: p.warns };
   },
   stale() {
     const p = page('?t=NEW', { [K]: 'OLD' });
+    const before = p.kept();
     p.fire(0, 'open', 1);
-    return { urls: p.urls(), kept: p.kept() };
+    return { urls: p.urls(), before, kept: p.kept() };
   },
   connecting() {
     const p = page('?t=30', { [K]: 'REAL' });
     p.fire(0, 'error', 0);
-    return { urls: p.urls(), kept: p.kept() };
+    return { urls: p.urls(), kept: p.kept(), warns: p.warns };
   },
   kept() {
     const p = page('', { [K]: 'REAL' });
@@ -141,17 +197,21 @@ const pages = {
   },
   hint() {
     const p = page('', {});
-    return { urls: p.urls(), warns: p.warns };
+    p.tick(1999);
+    const early = p.warns.slice();
+    p.tick(1);
+    p.tick(5000);
+    return { urls: p.urls(), early, warns: p.warns };
   },
   blocked() {
     const p = page('', {}, 'SecurityError: storage refused');
+    p.tick(2000);
     return { urls: p.urls(), warns: p.warns };
   },
   blocked_open() {
     const p = page('?t=REAL', {}, 'SecurityError: storage refused');
-    const early = p.warns.length;
     p.fire(0, 'open', 1);
-    return { urls: p.urls(), early, warns: p.warns };
+    return { urls: p.urls(), warns: p.warns };
   },
 };
 const out = {};
@@ -192,8 +252,12 @@ local function token_pages()
 end
 
 local EVENTS = "/__live/events"
+local REFUSED = "[live-server.nvim] the token was refused: open the page with the server's ?t=<token>"
 
-H.case("Section 3: a page's own t never replaces a working token", function()
+-- Every page of the node run, each checked for a raise, its stream URLs as
+-- one line, and its own warnings: the SSE error line every closed stream
+-- logs is the tokenless client's too, so the rows rule on the others.
+local function reader()
     local pages, why = token_pages()
     ok(pages ~= nil, "the client's pages ran: " .. tostring(why or "yes"))
     pages = pages or {}
@@ -205,6 +269,20 @@ H.case("Section 3: a page's own t never replaces a working token", function()
     local function urls(p)
         return table.concat(p.urls or {}, " ")
     end
+    local function warned(p)
+        local own = {}
+        for _, line in ipairs(p.warns or { "unread" }) do
+            if not vim.startswith(line, "[live-server.nvim] SSE error") then
+                table.insert(own, line)
+            end
+        end
+        return table.concat(own, " | "), #own
+    end
+    return seen, urls, warned
+end
+
+H.case("Section 3: the tab keeps the token it was given, never a page's own t", function()
+    local seen, urls, warned = reader()
 
     -- An application parameter named t (a time, a tab) replaced the kept
     -- token, and every later page in the tab opened its stream with it and
@@ -218,61 +296,97 @@ H.case("Section 3: a page's own t never replaces a working token", function()
     eq(p.kept, "REAL", "the kept token is still the real one after both streams")
     eq(p.reload, 1, "the second stream reloads the page as the first would")
 
+    p = seen("stale")
+    eq(p.before, "OLD", "a query value that differs from a kept token leaves it kept until its stream opens")
+    eq(p.kept, "NEW", "and replaces it once the stream opens with it")
+
+    -- Kept only once its stream opened, the token was lost by a page that
+    -- left first (a meta refresh index) and was missing for an iframe or
+    -- the next page read before that; with nothing kept there is no token
+    -- to lose.
     p = seen("fresh")
     eq(urls(p), EVENTS .. "?t=REAL", "a page at ?t=<token> opens the stream with it")
-    eq(p.before, vim.NIL, "and keeps nothing before the stream opens")
-    eq(p.kept, "REAL", "then keeps it once the stream opens")
-    eq(#(p.warns or { "unread" }), 0, "and warns of nothing")
+    eq(p.before, "REAL", "and keeps it at once when the tab holds none")
+    eq(p.kept, "REAL", "still kept once the stream opens")
+    eq(warned(p), "", "and warns of nothing")
 
-    p = seen("stale")
-    eq(p.kept, "NEW", "a query value the stream opens with replaces a stale kept token")
+    p = seen("left")
+    eq(urls(p), EVENTS .. "?t=REAL", "a page left before its stream opened: the tab's next page opens with its token")
+    eq(warned(p), "", "and warns of nothing")
 
-    p = seen("refused")
-    eq(urls(p), EVENTS .. "?t=30", "a refused query value with nothing kept opens no second stream")
-    eq(p.kept, vim.NIL, "and is never kept")
-
-    p = seen("once")
-    eq(urls(p), EVENTS .. "?t=30 " .. EVENTS .. "?t=OLD", "the kept token is tried once, never a third stream")
-    eq(p.kept, "OLD", "and a refused query value is not kept after it")
+    p = seen("arrives")
+    eq(p.early, 0, "a document with nothing to read opens no stream yet")
+    eq(urls(p), EVENTS .. "?t=REAL", "and opens it with the token another document of the tab keeps")
+    eq(warned(p), "", "and prints no hint")
+    eq(p.kept, "NEW", "a later page's token replaces the kept one")
+    eq(#(p.urls or {}), 1, "and opens no second stream in a document already connected")
 
     -- A stream still connecting reports an error on a network blip and
     -- retries itself; only a stream the server closed is given the kept one.
     p = seen("connecting")
     eq(urls(p), EVENTS .. "?t=30", "an error while the stream reconnects opens no second stream")
+    eq(warned(p), "", "and warns of nothing")
 
     p = seen("kept")
     eq(urls(p), EVENTS .. "?t=REAL", "a page with no t opens the stream with the kept token")
-    eq(#(p.warns or { "unread" }), 0, "and warns of nothing")
+    eq(warned(p), "", "and warns of nothing")
+end)
+
+-- A refused token ended in the SSE error line alone: a tab reopened at its
+-- old ?t= after a restart with a new token, or a page whose own t the
+-- server refused, was never told why. A refused query value equal to the
+-- kept token has nothing to give way to, and a retry with it looped.
+H.case("Section 4: a refused token is tried once, never a third stream, and is named", function()
+    local seen, urls, warned = reader()
+    local p = seen("once")
+    eq(urls(p), EVENTS .. "?t=30 " .. EVENTS .. "?t=OLD", "the kept token is tried once, never a third stream")
+    eq(p.kept, "OLD", "and a refused query value is not kept after it")
+    eq(warned(p), REFUSED, "then the refusal is named once")
+
+    p = seen("same")
+    eq(urls(p), EVENTS .. "?t=OLD", "a refused query value equal to the kept token opens exactly one stream")
+    eq(warned(p), REFUSED, "then the refusal is named once")
+
+    p = seen("refused")
+    eq(urls(p), EVENTS .. "?t=30", "a refused query value with nothing else kept opens no second stream")
+    eq(warned(p), REFUSED, "then the refusal is named once")
+
+    p = seen("restart")
+    eq(urls(p), EVENTS .. "?t=OLD", "a refused kept token opens no second stream")
+    eq(warned(p), REFUSED, "then the refusal is named once")
 end)
 
 -- The hint named "the URL the server printed", which a server.start caller
 -- never prints, and a storage error was dropped, so a user who had opened
--- the page with its token was told to open it again.
-H.case("Section 4: a page with no token is told why", function()
-    local pages, why = token_pages()
-    ok(pages ~= nil, "the client's pages ran: " .. tostring(why or "yes"))
-    pages = pages or {}
-    local p = pages.hint or {}
-    eq(table.concat(p.warns or {}, " | "), HINT, "no t and nothing kept: the hint alone")
-    eq(table.concat(p.urls or {}, " "), EVENTS, "and the stream opens without a token, which says 401")
+-- the page with its token was told to open it again. A document that runs
+-- before another in the tab keeps the token waits for it, so the hint
+-- waits too.
+H.case("Section 5: a page with no token is told why", function()
+    local seen, urls, warned = reader()
+    local p = seen("hint")
+    eq(urls(p), "", "no t and nothing kept: no stream opens without a token")
+    eq(table.concat(p.early or { "unread" }, " | "), "", "and no hint before two seconds")
+    eq(warned(p), HINT, "then the hint, once")
 
-    p = pages.blocked or {}
-    local warned = table.concat(p.warns or {}, " | ")
+    p = seen("blocked")
+    local said = warned(p)
     ok(
-        warned:find("the token could not be kept", 1, true) ~= nil
-            and warned:find("SecurityError: storage refused", 1, true) ~= nil,
-        "storage that throws with no t is named as the cause, with its error: " .. warned
+        said:find("the token could not be kept", 1, true) ~= nil
+            and said:find("SecurityError: storage refused", 1, true) ~= nil,
+        "storage that throws with no t is named as the cause, with its error: " .. said
     )
-    ok(not warned:find("open the page", 1, true), "and no hint to open the page again is given")
+    ok(not said:find("open the page", 1, true), "and no hint to open the page again is given")
+    eq(select(2, warned(p)), 1, "once")
 
-    p = pages.blocked_open or {}
-    warned = table.concat(p.warns or {}, " | ")
-    eq(p.early, 0, "a page at ?t=<token> whose storage throws warns of nothing before the stream opens")
+    p = seen("blocked_open")
+    said = warned(p)
+    eq(urls(p), EVENTS .. "?t=REAL", "a page at ?t=<token> whose storage throws opens the stream with it")
     ok(
-        warned:find("the token could not be kept", 1, true) ~= nil
-            and warned:find("SecurityError: storage refused", 1, true) ~= nil,
-        "and says the token could not be kept once it opens: " .. warned
+        said:find("the token could not be kept", 1, true) ~= nil
+            and said:find("SecurityError: storage refused", 1, true) ~= nil,
+        "and says the token could not be kept, with the error: " .. said
     )
+    eq(select(2, warned(p)), 1, "once, the stream's open included")
 end)
 
 H.finish()
