@@ -1,9 +1,10 @@
 -- tests/lifecycle_test.lua
 -- What the server holds while it runs and how it lets go of it: a socket
 -- is closed once, whoever ends the connection first, a response whose
--- shutdown cannot start closes its socket at once, a file transfer
--- closes its file once, however it ends, and a client that half-closes
--- after its request still reads its whole response, where an event
+-- shutdown cannot start or whose write fails at once closes its socket
+-- at once, a file transfer closes its file once, however it ends, a head
+-- write that fails included, and a client that half-closes after its
+-- request still reads its whole response, where an event
 -- stream's half-close ends the stream; stop closes every connection the
 -- server accepted, whose set holds the open ones alone; a connection
 -- whose head is not read in time is closed, and its timer lives only
@@ -162,6 +163,64 @@ H.case("Section 2: a response whose shutdown cannot start closes its socket at o
         "and the server holds no socket for it"
     )
     c:close()
+end)
+
+-- A write fails at once on a closed or shut socket, and a response read
+-- the return of neither of its writes: a head that failed was followed
+-- by its body, and a body that failed by the response's shutdown. Each
+-- write's nil, err is read now, and the response ends there, its socket
+-- closed through close_once. The stubs sit in the method table every tcp
+-- handle shares, each restored before its rows rule.
+H.case("Section 2b: a response whose write fails at once closes its socket there", function()
+    local inst = serve()
+    local port = inst.port
+    local methods = getmetatable(inst.handle).__index
+    local real_write, real_shutdown = methods.write, methods.shutdown
+    H.defer(function()
+        methods.write, methods.shutdown = real_write, real_shutdown
+    end)
+    local shuts = 0
+    methods.shutdown = function(...)
+        shuts = shuts + 1
+        return real_shutdown(...)
+    end
+    -- Fails the first write that starts with prefix; every other goes out.
+    local function fail_first(prefix)
+        methods.write = function(h, data, cb)
+            if type(data) ~= "string" or data:sub(1, #prefix) ~= prefix then
+                return real_write(h, data, cb)
+            end
+            methods.write = real_write
+            return nil, "EBADF: stubbed", "EBADF"
+        end
+    end
+    fail_first("HTTP/1.1 404 ")
+    local data, eof = H.raw_request(port, get("/missing.txt", port))
+    methods.write = real_write
+    ok(
+        eof and data == "",
+        ("a 404 whose head write fails sends nothing after it and ends the connection (got %s)"):format(
+            vim.inspect(data)
+        )
+    )
+    eq(shuts, 0, "and closes its socket there, with no shutdown")
+    shuts = 0
+    fail_first("<!doctype html>")
+    data, eof = H.raw_request(port, get("/missing.txt", port))
+    methods.write = real_write
+    local res = H.responses(data or "")[1]
+    ok(
+        eof and res ~= nil and res.status == 404 and res.body == "",
+        "a 404 whose body write fails ends the connection after its head"
+    )
+    eq(shuts, 0, "and closes its socket there, with no shutdown")
+    methods.shutdown = real_shutdown
+    ok(
+        H.wait_for(function()
+            return inst.open_conns == 0
+        end, 1000),
+        ("and neither holds a place (%d held, want 0)"):format(inst.open_conns)
+    )
 end)
 
 -- A download its client abandoned left the file open: the write into the
@@ -422,6 +481,24 @@ H.case("Section 3b: a transfer closes its file once, whichever way it ends", fun
     res, eof = fetch("/hello.txt")
     restore()
     ok(eof and res ~= nil and res.body == "", "a read that cannot start ends the response with no body")
+    ok(closed(), "and closes its file")
+
+    closed = since()
+    methods.write = function(h, data, cb)
+        if type(data) ~= "string" or data:sub(1, 9) ~= "HTTP/1.1 " then
+            return real_write(h, data, cb)
+        end
+        methods.write = real_write
+        return nil, "EBADF: stubbed", "EBADF"
+    end
+    local bytes, ended = H.raw_request(port, get("/hello.txt", port))
+    restore()
+    ok(
+        ended and bytes == "",
+        ("a head write that fails at once sends nothing after it and ends the connection (got %s)"):format(
+            vim.inspect(bytes)
+        )
+    )
     ok(closed(), "and closes its file")
 
     closed = since()

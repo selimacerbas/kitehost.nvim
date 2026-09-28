@@ -14,7 +14,7 @@
 -- reader that stops reading without closing raises no error at all, and
 -- its write queue grew with every frame; a stream more than 1 MiB behind
 -- when a frame is sent now leaves the same way, and one that keeps up
--- stays.
+-- stays; a stream whose head or retry line fails is never kept.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
@@ -277,12 +277,7 @@ end
 H.case("Section 6: a stream whose write fails leaves the list", function()
     local inst = serve({ sse_heartbeat_ms = 0 })
     local c = open_stream(inst)
-    ok(
-        H.wait_for(function()
-            return server.connected_client_count(inst) == 1
-        end, 1000),
-        "the stream is listed"
-    )
+    ok(listed(inst, 1), "the stream is listed")
     -- Stop reading on the server's side, so only the write path can see
     -- the peer go (the read path is Section 1 of request_test).
     local gone = inst.sse_clients[1]
@@ -304,15 +299,14 @@ H.case("Section 6: a stream whose write fails leaves the list", function()
     )
     local before = server.connected_client_count(inst)
     open_stream(inst)
-    ok(
-        H.wait_for(function()
-            return server.connected_client_count(inst) == before + 1
-        end, 1000),
-        "a new stream is listed"
-    )
-    inst.sse_clients[#inst.sse_clients]:close()
+    ok(listed(inst, before + 1), "a new stream is listed")
+    -- Shut, as 6c does, never closed raw: a raw close skips close_once,
+    -- whose hook frees the socket's place, so the place stayed held.
+    local last = inst.sse_clients[#inst.sse_clients]
+    assert(last:read_stop())
+    assert(last:shutdown())
     server.send_event(inst, "c", "{}")
-    eq(server.connected_client_count(inst), before, "a closed socket still listed is dropped by write's fail tuple")
+    eq(server.connected_client_count(inst), before, "a shut socket still listed is dropped by write's fail tuple")
 end)
 
 -- With no event sent, the beat is the write that finds such a peer.
@@ -541,6 +535,70 @@ H.case("Section 7: a stalled reader is dropped, a reading one is not", function(
         reading:read(0):sub(reading.from + want) == huge .. after and vim.tbl_contains(inst.sse_clients, reading_sock),
         "a reading stream hears an event larger than the cap whole, and the next, and stays listed"
     )
+    eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- A stream's head and its retry line are its first writes, made before
+-- it is listed. A closed or shut socket fails them at once, and a peer
+-- that resets right after its request can fail them on their callbacks
+-- (EPIPE); neither was read, so a stream whose head never went out was
+-- listed and written to. Such a stream now ends as one whose frame fails
+-- does: one that fails at once is never listed, one whose callback
+-- reports it leaves the list, and its socket closes either way.
+H.case("Section 8: a stream whose first writes fail is not kept", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local methods = getmetatable(inst.handle).__index
+    local real_write = methods.write
+    H.defer(function()
+        methods.write = real_write
+    end)
+    local function head(data)
+        return data:find("^HTTP/1%.1 200 ") ~= nil and data:find("text/event-stream", 1, true) ~= nil
+    end
+    local function retry(data)
+        return data == PREAMBLE
+    end
+    local function at_once()
+        return nil, "EBADF: stubbed", "EBADF"
+    end
+    local function on_callback(h, data, cb)
+        return real_write(h, data, function()
+            if cb then
+                cb("EPIPE: stubbed")
+            end
+        end)
+    end
+    local errs = #H.errors()
+    for _, s in ipairs({
+        { "head fails at once", head, at_once },
+        { "retry line fails at once", retry, at_once },
+        { "head's callback reports an error", head, on_callback },
+        { "retry line's callback reports an error", retry, on_callback },
+    }) do
+        local what, match, fail = s[1], s[2], s[3]
+        methods.write = function(h, data, cb)
+            if type(data) ~= "string" or not match(data) then
+                return real_write(h, data, cb)
+            end
+            methods.write = real_write
+            return fail(h, data, cb)
+        end
+        local c = assert(H.raw_connect(inst.port))
+        assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(inst.port)))
+        local data, eof = c:read(2000)
+        methods.write = real_write
+        ok(eof and server.connected_client_count(inst) == 0, ("a stream whose %s is ended and not listed"):format(what))
+        ok(
+            H.wait_for(function()
+                return inst.open_conns == 0
+            end, 1000),
+            ("and its socket is closed, which frees its place (%d held, want 0)"):format(inst.open_conns)
+        )
+        if match == head and fail == at_once then
+            eq(vim.inspect(data), vim.inspect(""), "and nothing follows the head that failed, the retry line included")
+        end
+        c:close()
+    end
     eq(#H.errors(), errs, "and nothing raises")
 end)
 

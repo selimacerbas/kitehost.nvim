@@ -96,7 +96,10 @@ end
 -- leaves it with its handle.
 local started = setmetatable({}, { __mode = "k" })
 
-local function write_headers(sock, status, headers)
+-- Returns what the write returned, which every caller reads: a request,
+-- or nil and the error on a closed or shut socket. on_written, when
+-- given, is the write's callback.
+local function write_headers(sock, status, headers, on_written)
     local reason = REASONS[status] or ""
     local lines = { ("HTTP/1.1 %d %s\r\n"):format(status, reason) }
     local policy = "strict-origin"
@@ -121,7 +124,7 @@ local function write_headers(sock, status, headers)
     table.insert(lines, ("Referrer-Policy: %s\r\n"):format(policy))
     table.insert(lines, "\r\n")
     started[sock] = true
-    sock:write(table.concat(lines))
+    return sock:write(table.concat(lines), on_written)
 end
 
 -- The fields a response computes for itself, which start refuses in a
@@ -155,16 +158,17 @@ local function close_once(sock)
 end
 
 -- headers is a table the caller built for this one response, which the
--- length and Connection are written into.
+-- length and Connection are written into. A write that fails at once, on
+-- a closed or shut socket, ends the response there: no body follows a
+-- head that failed, and the socket closes now, not through a shutdown.
 local function send_response(sock, status, headers, body)
     local h = headers or {}
     if body then
         h["Content-Length"] = #body
     end
     h["Connection"] = "close"
-    write_headers(sock, status, h)
-    if body then
-        sock:write(body)
+    if not write_headers(sock, status, h) or body and not sock:write(body) then
+        return close_once(sock)
     end
     local shut = sock:shutdown(function()
         close_once(sock)
@@ -562,27 +566,9 @@ local CLIENT_JS_TOKEN = table.concat({
     CLIENT_END,
 })
 
-local function sse_accept(inst, sock)
-    local h = {}
-    -- Every key is a token string: start refuses any other, and the
-    -- stream's Content-Type and Connection. A caller's Cache-Control, set
-    -- for its files, would go out under another spelling as a second line
-    -- beside the stream's own.
-    for k, v in pairs(inst.live_headers) do
-        if k:lower() ~= "cache-control" then
-            h[k] = v
-        end
-    end
-    h["Content-Type"] = "text/event-stream"
-    h["Cache-Control"] = "no-cache"
-    h["Connection"] = "keep-alive"
-    write_headers(sock, 200, h)
-    sock:write("retry: 1000\n\n")
-    table.insert(inst.sse_clients, sock)
-end
-
--- A stream leaves the client list here when its socket reports its end
--- or a write to it fails (sse_evict); stop empties the list itself.
+-- A stream leaves the client list here when its socket reports its end,
+-- or through sse_evict when a write to it fails or it falls more than
+-- SSE_MAX_QUEUE behind; stop empties the list itself.
 local function sse_drop(inst, sock)
     for i, cl in ipairs(inst.sse_clients) do
         if cl == sock then
@@ -598,6 +584,36 @@ end
 local function sse_evict(inst, sock)
     sse_drop(inst, sock)
     close_once(sock)
+end
+
+-- A stream's head and retry line are its first writes, made before it is
+-- listed. A closed or shut socket fails them at once, and a peer that
+-- resets right after its request can fail them on their callbacks
+-- (EPIPE, measured); either ends the stream as a failed frame does, and
+-- one that fails at once is never listed.
+local function sse_accept(inst, sock)
+    local h = {}
+    -- Every key is a token string: start refuses any other, and the
+    -- stream's Content-Type and Connection. A caller's Cache-Control, set
+    -- for its files, would go out under another spelling as a second line
+    -- beside the stream's own.
+    for k, v in pairs(inst.live_headers) do
+        if k:lower() ~= "cache-control" then
+            h[k] = v
+        end
+    end
+    h["Content-Type"] = "text/event-stream"
+    h["Cache-Control"] = "no-cache"
+    h["Connection"] = "keep-alive"
+    local function on_written(err)
+        if err then
+            sse_evict(inst, sock)
+        end
+    end
+    if not write_headers(sock, 200, h, on_written) or not sock:write("retry: 1000\n\n", on_written) then
+        return sse_evict(inst, sock)
+    end
+    table.insert(inst.sse_clients, sock)
 end
 
 -- A reader that stops reading without closing raises no error, so every
@@ -1085,7 +1101,9 @@ local function stream_file(sock, abs_path, extra_headers, shown)
         for k, v in pairs(extra_headers or {}) do
             headers[k] = v
         end
-        write_headers(sock, 200, headers)
+        if not write_headers(sock, 200, headers) then
+            return abort()
+        end
         read_chunk()
     end)
 end
