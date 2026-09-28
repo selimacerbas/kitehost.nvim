@@ -1370,7 +1370,7 @@ end)
 -- keeps its place for good. Every close of a socket the server accepted
 -- is seen here, with whether close_once made it, over one of each way a
 -- connection ends: a file, a 404, a listing, a page, a head refused at
--- its first byte, over the cap or cut by its client's end, a client that
+-- its first byte, over the head's size cap or cut by its client's end, a client that
 -- leaves or never finishes its head, an event stream its client ends or
 -- a broadcast write fails, a transfer reset mid-way or while stalled, a
 -- raise in the handler after the head went out, a shutdown that cannot
@@ -1393,7 +1393,10 @@ H.case("Section 7b: every accepted socket closes through close_once", function()
             close_once = value
         end
     end
-    assert(type(close_once) == "function", "stop closes through close_once")
+    assert(
+        type(close_once) == "function",
+        "S.stop holds no upvalue named close_once: renamed, or stop no longer closes through it"
+    )
     local methods = getmetatable(inst.handle).__index
     local real_new_tcp, real_close = uv.new_tcp, methods.close
     local real_write, real_shutdown, real_read = methods.write, methods.shutdown, uv.fs_read

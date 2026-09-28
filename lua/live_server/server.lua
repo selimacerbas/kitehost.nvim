@@ -2270,7 +2270,7 @@ function S.start(cfg)
         -- A cap on held sockets: a page opens a handful, a flood opens more
         -- than the editor's descriptor limit. A place is what the cap
         -- protects, so a connection over it is given none of what a place
-        -- buys.
+        -- buys: a read, a head timer, an entry in the count.
         if inst.open_conns >= inst.max_connections then
             close_once(sock)
             return
