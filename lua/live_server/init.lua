@@ -72,10 +72,10 @@ M.state = { servers = {}, opened_ports = {} } -- [port] = inst; opened_ports[por
 local start_for_path -- forward declaration (used by auto_start and start_picker)
 
 -- The URL a browser opens for a server: a wildcard bind is reached on the
--- loopback address the server's rule gives, the one its start checked no
--- other listener holds, and a server's token rides in the query, so the
--- page's first request and its injected client carry it. token is a
--- started server's, which start keeps non-empty, or nil.
+-- loopback address the server's rule gives, the one its start found free,
+-- and a server's token rides in the query, so the page's first request
+-- and its injected client carry it. token is a started server's, which
+-- start keeps non-empty, or nil.
 local function browser_url(host, port, token)
     local display = server.wildcard_loopback(host) or host
     local url = ("http://%s:%d/"):format(display, port)

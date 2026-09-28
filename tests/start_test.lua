@@ -8,8 +8,8 @@
 -- or a root that is no string or does not resolve; a bind to an address
 -- this machine lacks or to a port in use raises naming it and leaves no
 -- socket, and a failed listen leaves no socket, timer or watcher. A
--- wildcard bind raises when another listener holds the loopback address
--- its URL names, and its probe of that address is never left open. A
+-- wildcard bind raises unless the loopback address its URL names is free,
+-- and its probe of that address is never left open. A
 -- pattern the check cannot read past its literal starts and gates every
 -- path it is asked about, and each option is read from the caller's table
 -- once.
@@ -501,30 +501,50 @@ end)
 -- a wildcard bind and take every connection to that address, so the start
 -- succeeded and the URL, token and all, reached the other program
 -- (measured); Linux refuses the wildcard bind itself. The start probes that
--- address with a socket that never listens and is closed on every path.
-H.case("a wildcard bind raises when another listener holds its URL's address", function()
+-- address with a socket that never listens and is closed on every path. A
+-- probe that fails any other way cannot tell the address is free: a real
+-- EMFILE at the probe's bind let the start serve while another program
+-- answered the URL (measured).
+H.case("a wildcard bind raises unless its URL's address is free", function()
     local real_new_tcp = vim.uv.new_tcp
+    local real_rule = server.wildcard_loopback
     H.defer(function()
         vim.uv.new_tcp = real_new_tcp
+        server.wildcard_loopback = real_rule
     end)
-    -- Counts the sockets a start makes, and fails the one numbered fail.
-    local made, fail = 0, nil
+    -- Counts the sockets a start makes. The one numbered at is handed to
+    -- start as a socket whose bind returns nil and answer's cause and name.
+    local made, at, answer = 0, nil, nil
     vim.uv.new_tcp = function(...)
         made = made + 1
-        if made == fail then
-            return nil, "EMFILE: stubbed"
+        local handle, err = real_new_tcp(...)
+        if made ~= at or not handle then
+            return handle, err
         end
-        return real_new_tcp(...)
+        local stubbed = answer
+        return setmetatable({}, {
+            __index = function(_, name)
+                if name == "bind" then
+                    return function()
+                        return nil, stubbed[1], stubbed[2]
+                    end
+                end
+                return function(_, ...)
+                    return handle[name](handle, ...)
+                end
+            end,
+        })
     end
     -- Starts, counts the sockets the start made and the ones it left open,
     -- hands a server that started to use, then stops it, so no start holds
-    -- the port for the next one.
-    local function start_counted(cfg, fail_at, use)
-        made, fail = 0, fail_at
+    -- the port for the next one. The server's socket is the first a start
+    -- makes and the probe the second, whose bind probe_bind answers.
+    local function start_counted(cfg, probe_bind, use)
+        made, at, answer = 0, probe_bind and 2, probe_bind
         local before = H.handle_count("tcp")
         local started, res = pcall(server.start, vim.tbl_extend("keep", cfg, { root = root }))
         local sockets, open = made, H.handle_count("tcp") - before
-        made, fail = 0, nil
+        made, at, answer = 0, nil, nil
         local used
         if started then
             used = use and use(res)
@@ -555,7 +575,11 @@ H.case("a wildcard bind raises when another listener holds its URL's address", f
             "making its socket and the probe",
             "closing the probe",
             "reached on 127.0.0.1",
-            "a probe that cannot open raises",
+            "a probe whose bind finds no descriptor raises",
+            "leaving no socket",
+            "a probe of an address this machine lacks raises",
+            "leaving no socket",
+            "a probe of an address bind cannot read raises",
             "leaving no socket",
         }) do
             H.skip(("a wildcard bind: %s (this machine refuses one: %s)"):format(row, tostring(wild_err)))
@@ -603,14 +627,44 @@ H.case("a wildcard bind raises when another listener holds its URL's address", f
     eq(free_open, 1, "and the probe is closed")
     eq(status, 200, "the URL's address reaches this server")
 
-    -- A probe that cannot open cannot tell the address is free, so the
-    -- start refuses rather than serve a URL it never checked.
-    local no_probe, no_res, _, no_open = start_counted({ host = "0.0.0.0", port = 0 }, 2)
-    ok(
-        not no_probe and no_res:find("127.0.0.1", 1, true) ~= nil and no_res:find("EMFILE: stubbed", 1, true) ~= nil,
-        "a probe that cannot open raises, naming the address and the cause: " .. no_res
+    -- Each refuses naming the address it could not check and the cause.
+    -- EMFILE comes from the bind: libuv opens the descriptor there, not in
+    -- new_tcp. An address bind cannot read raises inside luv, where a raise
+    -- past start left both sockets open (measured).
+    local function refuses(label, rule, probe_bind, needles)
+        server.wildcard_loopback = rule or real_rule
+        local refused, why, _, left = start_counted({ host = "0.0.0.0", port = 0 }, probe_bind)
+        server.wildcard_loopback = real_rule
+        local named = not refused
+        for _, needle in ipairs(needles) do
+            named = named and why:find(needle, 1, true) ~= nil
+        end
+        ok(named, label .. ", naming the address and the cause: " .. why)
+        eq(left, 0, label .. ", leaving no socket open")
+    end
+    local function names(address)
+        return function(ip)
+            return ip == "0.0.0.0" and address or nil
+        end
+    end
+    refuses(
+        "a probe whose bind finds no descriptor raises",
+        nil,
+        { "EMFILE: stubbed", "EMFILE" },
+        { "cannot check 127.0.0.1:", "EMFILE: stubbed" }
     )
-    eq(no_open, 0, "and leaves no socket open")
+    refuses(
+        "a probe of an address this machine lacks raises",
+        names("192.0.2.1"),
+        nil,
+        { "cannot check 192.0.2.1:", "EADDRNOTAVAIL" }
+    )
+    refuses(
+        "a probe of an address bind cannot read raises",
+        names("[127.0.0.1]"),
+        nil,
+        { "cannot check [127.0.0.1]:", "Invalid IP address" }
+    )
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise

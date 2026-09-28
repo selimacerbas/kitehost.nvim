@@ -979,16 +979,41 @@ local function is_loopback_ip(ip)
 end
 
 -- The loopback address a browser reaches a wildcard bind on, the one the
--- opened URL names, or nil for an address that is no wildcard. start probes
--- it and init.lua's URL reads it, so the address checked is the address
--- shown.
-local function wildcard_loopback(ip)
+-- opened URL names, or nil for an address that is no wildcard. start's
+-- probe and init.lua's URL both read it through S, so the address checked
+-- is the address shown, a replaced rule included.
+function S.wildcard_loopback(ip)
     if ip == "0.0.0.0" then
         return "127.0.0.1"
     end
     return nil
 end
-S.wildcard_loopback = wildcard_loopback
+
+-- Whether ip:port is free, by binding a socket that never listens and
+-- closing it: true, or nil, the cause and its name. libuv holds a bind's
+-- EADDRINUSE until getsockname and opens the descriptor at the bind, so an
+-- EMFILE comes from there; bind raises on an address it cannot read, and
+-- that raise past start left both sockets open (measured).
+local function address_free(ip, port)
+    local probe, err, name = uv.new_tcp()
+    if not probe then
+        return nil, err, name
+    end
+    local called, bound, bind_err, bind_name = pcall(probe.bind, probe, ip, port)
+    local free
+    if not called then
+        err = bound
+    elseif not bound then
+        err, name = bind_err, bind_name
+    else
+        free, err, name = probe:getsockname()
+    end
+    probe:close()
+    if free then
+        return true
+    end
+    return nil, err, name
+end
 
 -- localhost, a *.localhost name or a loopback address: the names only this
 -- machine answers to.
@@ -1854,8 +1879,8 @@ end
 -- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts }
 -- Raises at level 0, returning nothing, when it cannot serve: a refused
 -- option, a failed bind or listen, a port in use, or a wildcard bind whose
--- URL's loopback address another listener holds. A caller reads
--- S.features.start_raises before it relies on that.
+-- URL's loopback address another socket holds or start cannot check. A
+-- caller reads S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local tcp = uv.new_tcp()
@@ -1884,40 +1909,29 @@ function S.start(cfg)
     -- macOS and Windows let a listener bound to the loopback address alone
     -- share the port with a wildcard bind and take every connection to that
     -- address, where the opened URL, token and all, would go (measured on
-    -- macOS; Linux refuses the bind above). A probe bound there before the
-    -- listen is refused only while another socket holds the address, and it
-    -- never listens. One that cannot open cannot tell, so start refuses.
-    local loopback = wildcard_loopback(bound.ip)
+    -- macOS; Linux refuses the bind above). start serves only when a probe
+    -- before the listen finds the address free: a probe that failed any
+    -- other way cannot tell, and a real EMFILE there once let the URL reach
+    -- another program (measured).
+    local loopback = S.wildcard_loopback(bound.ip)
     if loopback then
-        local here = host .. ":" .. tostring(bound.port)
-        local there = loopback .. ":" .. tostring(bound.port)
-        local probe, probe_err = uv.new_tcp()
-        if not probe then
+        local free, why, why_name = address_free(loopback, bound.port)
+        if not free then
             tcp:close()
+            local here = host .. ":" .. tostring(bound.port)
+            local there = tostring(loopback) .. ":" .. tostring(bound.port)
+            if why_name == "EADDRINUSE" then
+                error(
+                    ("Failed to bind %s: another socket holds %s, the address the URL names (%s)"):format(
+                        here,
+                        there,
+                        tostring(why)
+                    ),
+                    0
+                )
+            end
             error(
-                ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(
-                    here,
-                    there,
-                    tostring(probe_err)
-                ),
-                0
-            )
-        end
-        -- libuv holds the bind's EADDRINUSE until getsockname.
-        local probed, err_name
-        probed, probe_err, err_name = probe:bind(loopback, bound.port)
-        if probed then
-            probed, probe_err, err_name = probe:getsockname()
-        end
-        probe:close()
-        if err_name == "EADDRINUSE" then
-            tcp:close()
-            error(
-                ("Failed to bind %s: another listener holds %s, the address the URL names (%s)"):format(
-                    here,
-                    there,
-                    tostring(probe_err)
-                ),
+                ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(here, there, tostring(why)),
                 0
             )
         end

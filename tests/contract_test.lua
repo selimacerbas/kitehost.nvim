@@ -231,18 +231,6 @@ H.case("Section 3: the capability flags a caller reads", function()
     for _, name in ipairs(names) do
         eq(server.features[name], true, "features." .. name .. " is true")
     end
-    local hold = assert(vim.uv.new_tcp())
-    H.defer(function()
-        hold:close()
-    end)
-    assert(hold:bind("127.0.0.1", 0))
-    assert(hold:listen(8, function() end))
-    local held = hold:getsockname().port
-    local started, res = pcall(server.start, { port = held, host = "127.0.0.1", root = work .. "/ws" })
-    if started then
-        server.stop(res)
-    end
-    ok(not started, "start_raises holds: a start on a port another listener holds raises: " .. tostring(res))
 end)
 
 H.finish()
