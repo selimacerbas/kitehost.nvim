@@ -625,7 +625,9 @@ end
 -- is no measure: macOS takes 0.3 to 1.6 MB of one at once, so a reader
 -- that keeps up was dropped when a second frame came before a 3 MiB one
 -- drained; curl drains 8 MiB in 11 to 166 ms, well within the grace
--- (measured).
+-- (measured). Loop time the editor spends blocked counts too, since it
+-- advances while no queue can drain, so a send right after a block
+-- longer than the grace drops a reader that keeps up (measured).
 local SSE_MAX_QUEUE = 1024 * 1024
 local SSE_STALL_MS = 1000
 local SSE_HARD_QUEUE = 8 * 1024 * 1024
@@ -651,7 +653,7 @@ local function sse_send(inst, text)
         elseif not over_since[cl] then
             over_since[cl] = now
         end
-        if queued > SSE_HARD_QUEUE or queued > SSE_MAX_QUEUE and now - over_since[cl] > SSE_STALL_MS then
+        if queued > SSE_HARD_QUEUE or (queued > SSE_MAX_QUEUE and now - over_since[cl] > SSE_STALL_MS) then
             sse_evict(inst, cl)
         else
             local sent = cl:write(text, function(err)

@@ -15,8 +15,8 @@
 -- its write queue grew with every frame; a stream more than 1 MiB behind
 -- for longer than a second, or more than 8 MiB behind at all, now leaves
 -- the same way, the heartbeat's send judging it too, and one that keeps
--- up stays through a large frame or a burst; a stream whose head or
--- retry line fails is never kept.
+-- up stays through a large frame or a burst that stays within 8 MiB; a
+-- stream whose head or retry line fails is never kept.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
@@ -636,7 +636,7 @@ end)
 -- 64 KiB frames (measured with curl too). No stream drains within one
 -- turn of the loop, and a turn takes no loop time, so the grace holds
 -- through one.
-H.case("Section 7b: a reader that keeps up is never dropped for one large frame or one burst", function()
+H.case("Section 7b: a reader that keeps up is not dropped for a frame or a burst within 8 MiB", function()
     local function keeps_up(sends)
         local inst = serve({ sse_heartbeat_ms = 0 })
         local c = open_stream(inst)
