@@ -933,43 +933,95 @@ local function stream_file(sock, abs_path, extra_headers, shown)
     if not fd then
         return http_404(sock, shown or "/")
     end
-    local stat = uv.fs_fstat(fd)
-    if not stat or stat.type ~= "file" then
-        uv.fs_close(fd)
-        return http_404(sock, shown or "/")
+    -- From here the transfer owns the descriptor and closes it on every
+    -- exit, once. A peer that resets or goes away shows as write's fail
+    -- tuple (EBADF on a closed socket) or its callback's error, never as a
+    -- raise; a loop that read neither stopped there with the file open,
+    -- one descriptor per abandoned download until the editor quit
+    -- (measured).
+    local fd_open = true
+    local function close_fd()
+        if fd_open then
+            fd_open = false
+            -- Never retried, even on an error: the number may already
+            -- belong to a file opened since, which a second close takes.
+            uv.fs_close(fd)
+        end
     end
-
-    local headers =
-        { ["Content-Type"] = guess_mime(abs_path), ["Content-Length"] = stat.size, ["Connection"] = "close" }
-    for k, v in pairs(extra_headers or {}) do
-        headers[k] = v
+    local function finish()
+        close_fd()
+        local shut = sock:shutdown(function()
+            close_once(sock)
+        end)
+        -- nil, err on a socket that cannot shut, which never calls back.
+        if not shut then
+            close_once(sock)
+        end
     end
-    write_headers(sock, 200, headers)
-
+    local function abort()
+        close_fd()
+        close_once(sock)
+    end
+    -- Runs fn as a finally would: a raise closes the descriptor before it
+    -- goes on. In a callback no caller is left to answer the socket, so
+    -- the socket closes too; the first call runs on the handler's stack,
+    -- and its raise reaches the handler with the socket still the
+    -- handler's.
+    local function step(fn, in_callback)
+        local ran, err = pcall(fn)
+        if not ran then
+            if in_callback then
+                abort()
+            else
+                close_fd()
+            end
+            error(err, 0)
+        end
+    end
+    local CHUNK = 64 * 1024
     local offset = 0
     local function read_chunk()
-        uv.fs_read(fd, 64 * 1024, offset, function(err_read, data)
-            if err_read or not data then
-                uv.fs_close(fd)
-                sock:shutdown(function()
-                    close_once(sock)
-                end)
-                return
-            end
-            offset = offset + #data
-            sock:write(data, function()
-                if #data < 64 * 1024 then
-                    uv.fs_close(fd)
-                    sock:shutdown(function()
-                        close_once(sock)
-                    end)
-                else
-                    read_chunk()
+        local reading = uv.fs_read(fd, CHUNK, offset, function(err_read, data)
+            step(function()
+                if err_read or not data then
+                    return abort()
                 end
-            end)
+                offset = offset + #data
+                local sent = sock:write(data, function(err_write)
+                    step(function()
+                        if err_write then
+                            return abort()
+                        end
+                        if #data < CHUNK then
+                            finish()
+                        else
+                            read_chunk()
+                        end
+                    end, true)
+                end)
+                if not sent then
+                    abort()
+                end
+            end, true)
         end)
+        if not reading then
+            abort()
+        end
     end
-    read_chunk()
+    step(function()
+        local stat = uv.fs_fstat(fd)
+        if not stat or stat.type ~= "file" then
+            close_fd()
+            return http_404(sock, shown or "/")
+        end
+        local headers =
+            { ["Content-Type"] = guess_mime(abs_path), ["Content-Length"] = stat.size, ["Connection"] = "close" }
+        for k, v in pairs(extra_headers or {}) do
+            headers[k] = v
+        end
+        write_headers(sock, 200, headers)
+        read_chunk()
+    end)
 end
 
 local function serve_path(inst, sock, abs_path, req, extra_headers, shown)
