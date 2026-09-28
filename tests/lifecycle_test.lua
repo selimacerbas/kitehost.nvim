@@ -530,8 +530,9 @@ H.case("Section 4: a client that half-closes after its request reads it all", fu
     end
     local res, shut = half_closed(get("/big.bin", port), 10000)
     ok(shut and res[1] ~= nil and res[1].body == big, "a 2 MiB body arrives whole after the half-close")
-    -- Five bytes could go out whole before the FIN landed (2 of 9 runs,
-    -- measured), so the file's read is held until the server has read it.
+    -- Five bytes could go out whole before the FIN landed (13 to 28 of
+    -- 200 connections, measured), so the file's read is held until the
+    -- server has read the FIN.
     local real_read, release = uv.fs_read, nil
     H.defer(function()
         uv.fs_read = real_read
