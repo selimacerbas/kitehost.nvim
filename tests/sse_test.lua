@@ -1,11 +1,15 @@
 -- tests/sse_test.lua
--- The event stream's heartbeat. Nothing was written to an idle stream, so
--- a proxy's idle cut ended it and a peer that vanished without a FIN
--- stayed listed, holding its place, for good. A comment line (": ping"
--- and a blank line, which EventSource and both pages ignore) now goes to
--- every stream at sse_heartbeat_ms, and to nothing else; 0 turns it off,
--- stop closes its timer, and a start that cannot arm it raises and leaves
--- nothing open.
+-- The event stream's heartbeat, and the end of a stream whose write
+-- fails. Nothing was written to an idle stream, so a proxy's idle cut
+-- ended it and a peer that vanished without a FIN stayed listed, holding
+-- its place, for good. A comment line (": ping" and a blank line, which
+-- EventSource and both pages ignore) now goes to every stream at
+-- sse_heartbeat_ms, and to nothing else; 0 turns it off, stop closes its
+-- timer, and a start that cannot arm it raises and leaves nothing open.
+-- TCP gives up on a beat such a peer never acknowledges, and a stream
+-- whose write then fails, a beat's or an event's, by write's return or
+-- its callback, leaves the list and its socket closes, where the pcall
+-- once around each write saw neither and left the stream listed.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
@@ -185,7 +189,9 @@ H.case("Section 4: a client that left before the beat is not written to", functi
 end)
 
 -- A timer luv cannot make or start returns nil and an error, which read
--- nowhere left a server whose streams never hear a beat.
+-- nowhere left a server whose streams never hear a beat. Start makes the
+-- reload's timer first, so the made stub lets that one through and
+-- refuses the beat's.
 H.case("Section 5: a start that cannot arm its beat raises, naming it, and leaves nothing open", function()
     local real_new_timer = uv.new_timer
     local probe = assert(real_new_timer())
@@ -199,7 +205,12 @@ H.case("Section 5: a start that cannot arm its beat raises, naming it, and leave
         {
             "made",
             function()
-                uv.new_timer = function()
+                local calls = 0
+                uv.new_timer = function(...)
+                    calls = calls + 1
+                    if calls == 1 then
+                        return real_new_timer(...)
+                    end
                     return nil, "ENOMEM: stubbed", "ENOMEM"
                 end
             end,
@@ -243,6 +254,195 @@ H.case("Section 5: a start that cannot arm its beat raises, naming it, and leave
         eq(H.handle_count("tcp"), tcps, ("and leaves no socket when the beat cannot be %s"):format(what))
         eq(H.handle_count("timer"), timers, ("and no timer when the beat cannot be %s"):format(what))
     end
+end)
+
+local function listed(inst, n)
+    return H.wait_for(function()
+        return server.connected_client_count(inst) == n
+    end, 2000)
+end
+
+-- A write that fails ends a stream as surely as a read that reports its
+-- end. luv reports a failed write without raising, by write's return on
+-- a closed or shut socket and by its callback after a reset (EPIPE on
+-- macOS, where Linux may say ECONNRESET), and the pcall around each
+-- write read neither, so a stream whose write failed stayed listed,
+-- connected_client_count over-counted and its socket held its place.
+H.case("Section 6: a stream whose write fails leaves the list", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local c = open_stream(inst)
+    ok(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 1
+        end, 1000),
+        "the stream is listed"
+    )
+    -- Stop reading on the server's side, so only the write path can see
+    -- the peer go (the read path is Section 1 of request_test).
+    local gone = inst.sse_clients[1]
+    assert(gone:read_stop())
+    c:close()
+    vim.wait(100)
+    server.send_event(inst, "a", "{}")
+    vim.wait(100)
+    server.send_event(inst, "b", "{}")
+    ok(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 0
+        end, 1000),
+        "a peer that left is dropped when a write reports it"
+    )
+    ok(
+        gone:is_closing() and inst.open_conns == 0,
+        ("and its socket is closed, which frees its place (%d held, want 0)"):format(inst.open_conns)
+    )
+    local before = server.connected_client_count(inst)
+    open_stream(inst)
+    ok(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == before + 1
+        end, 1000),
+        "a new stream is listed"
+    )
+    inst.sse_clients[#inst.sse_clients]:close()
+    server.send_event(inst, "c", "{}")
+    eq(server.connected_client_count(inst), before, "a closed socket still listed is dropped by write's fail tuple")
+end)
+
+-- With no event sent, the beat is the write that finds such a peer.
+H.case("Section 6b: a beat whose write fails drops its stream and closes its socket", function()
+    local inst = serve({ sse_heartbeat_ms = 100 })
+    local reset = open_stream(inst)
+    assert(listed(inst, 1), "the first stream was listed within 2 s")
+    local gone = inst.sse_clients[1]
+    local kept = open_stream(inst)
+    assert(listed(inst, 2), "the second stream was listed within 2 s")
+    local errs = #H.errors()
+    assert(gone:read_stop())
+    assert(reset:abort())
+    ok(
+        H.wait_for(function()
+            return server.connected_client_count(inst) == 1 and inst.sse_clients[1] ~= gone
+        end, 2000),
+        "a peer that reset is dropped at the next beat"
+    )
+    ok(
+        gone:is_closing() and inst.open_conns == 1,
+        ("and its socket is closed, which frees its place (%d held, want 1)"):format(inst.open_conns)
+    )
+    local from = #kept:read(0) + 1
+    ok(beats((read_beats(kept, from, 2, 2000))) >= 2, "the stream still open keeps hearing the beat")
+    eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- write returns nil and an error at once on a socket shut for writing, so
+-- the stream leaves during the send, which goes on to the streams listed
+-- after it.
+H.case("Section 6c: a write that fails at once drops its stream during the send", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local socks, clients = {}, {}
+    for i = 1, 3 do
+        clients[i] = open_stream(inst)
+        assert(listed(inst, i), ("stream %d was listed within 2 s"):format(i))
+        socks[i] = inst.sse_clients[i]
+    end
+    for i = 1, 2 do
+        assert(socks[i]:read_stop())
+        assert(socks[i]:shutdown())
+    end
+    server.send_event(inst, "d", "{}")
+    eq(server.connected_client_count(inst), 1, "two streams whose writes fail at once both leave in one send")
+    ok(
+        socks[1]:is_closing() and socks[2]:is_closing() and inst.open_conns == 1,
+        ("and their sockets are closed, which frees their places (%d held, want 1)"):format(inst.open_conns)
+    )
+    local frame = "event: d\ndata: {}\n\n"
+    local got = clients[3]:read(2000, function(d)
+        return d:find(frame, clients[3].from, true) ~= nil
+    end)
+    ok(
+        vim.tbl_contains(inst.sse_clients, socks[3]) and got:find(frame, clients[3].from, true) ~= nil,
+        "and the send reaches the stream listed after them, which stays listed"
+    )
+end)
+
+-- luv raises on a write only for a bad argument, a fault in the server's
+-- own code, which the pcall took for a dead stream and hid.
+H.case("Section 6d: a write that raises is a fault its caller hears", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    open_stream(inst)
+    assert(listed(inst, 1), "the stream was listed within 2 s")
+    local target = inst.sse_clients[1]
+    local methods = getmetatable(target).__index
+    local real_write = methods.write
+    H.defer(function()
+        methods.write = real_write
+    end)
+    methods.write = function(h, ...)
+        if h == target then
+            error("bad argument: stubbed")
+        end
+        return real_write(h, ...)
+    end
+    local sent, err = pcall(server.send_event, inst, "e", "{}")
+    methods.write = real_write
+    ok(
+        not sent and tostring(err):find("bad argument: stubbed", 1, true) ~= nil,
+        ("a write that raises reaches send_event's caller: %s"):format(tostring(err))
+    )
+end)
+
+-- Stop closes a stream whose writes are still queued, and each one's
+-- callback then reports ECANCELED for a stream already gone from the list
+-- and a socket already closing.
+H.case("Section 6e: the writes stop cancels raise nothing", function()
+    local inst = serve({ sse_heartbeat_ms = 0 })
+    local c = open_stream(inst)
+    assert(listed(inst, 1), "the stream was listed within 2 s")
+    local sock = inst.sse_clients[1]
+    local methods = getmetatable(sock).__index
+    local real_write = methods.write
+    H.defer(function()
+        methods.write = real_write
+    end)
+    local cancelled, other = 0, {}
+    methods.write = function(h, data, cb)
+        if h ~= sock then
+            return real_write(h, data, cb)
+        end
+        return real_write(h, data, function(err)
+            if err == "ECANCELED" then
+                cancelled = cancelled + 1
+            elseif err then
+                table.insert(other, tostring(err))
+            end
+            if cb then
+                cb(err)
+            end
+        end)
+    end
+    -- The client stops reading, so the frames fill both ends' buffers and
+    -- the rest wait in the server's write queue.
+    assert(c.tcp:read_stop())
+    local big = string.rep("x", 1024 * 1024)
+    local sends = 0
+    while sock:get_write_queue_size() == 0 and sends < 64 do
+        server.send_event(inst, "big", big)
+        sends = sends + 1
+    end
+    assert(sock:get_write_queue_size() > 0, "a write was left queued within 64 MiB")
+    server.send_event(inst, "big", big)
+    local errs = #H.errors()
+    server.stop(inst)
+    H.wait_for(function()
+        return cancelled > 0
+    end, 1000)
+    methods.write = real_write
+    ok(
+        cancelled > 0 and #other == 0,
+        ("stop cancels the writes still queued (%d ECANCELED, others: %s)"):format(cancelled, table.concat(other, ", "))
+    )
+    eq(#H.errors(), errs, "and their callbacks raise nothing")
 end)
 
 H.finish()

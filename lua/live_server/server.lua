@@ -581,8 +581,8 @@ local function sse_accept(inst, sock)
     table.insert(inst.sse_clients, sock)
 end
 
--- A stream whose socket reported its end leaves the client list here;
--- stop and a failed write in sse_send remove theirs.
+-- A stream leaves the client list here when its socket reports its end
+-- or a write to it fails (sse_evict); stop empties the list itself.
 local function sse_drop(inst, sock)
     for i, cl in ipairs(inst.sse_clients) do
         if cl == sock then
@@ -592,20 +592,30 @@ local function sse_drop(inst, sock)
     end
 end
 
+-- A write's callback can report after the stream left (ECANCELED once
+-- stop or the read path closed it), and then finds nothing to drop and
+-- nothing left to close.
+local function sse_evict(inst, sock)
+    sse_drop(inst, sock)
+    close_once(sock)
+end
+
 -- Writes one frame to every stream, the only writer after a stream's
--- preamble: an event and the heartbeat both.
+-- preamble: an event and the heartbeat both. luv reports a dead stream
+-- without raising, by write's nil, err on a closed or shut socket and by
+-- its callback's error after a reset, or once TCP gives up on a peer that
+-- vanished; either evicts the stream. write raises only on a bad
+-- argument, a fault no pcall should hide. The list is copied, since an
+-- eviction during the walk removes from it.
 local function sse_send(inst, text)
-    local i = 1
-    while i <= #inst.sse_clients do
-        local cl = inst.sse_clients[i]
-        local ok = pcall(function()
-            cl:write(text)
+    for _, cl in ipairs(vim.list_slice(inst.sse_clients)) do
+        local sent = cl:write(text, function(err)
+            if err then
+                sse_evict(inst, cl)
+            end
         end)
-        if not ok then
-            close_once(cl)
-            table.remove(inst.sse_clients, i)
-        else
-            i = i + 1
+        if not sent then
+            sse_evict(inst, cl)
         end
     end
 end
@@ -2119,10 +2129,10 @@ end
 -- max_connections (default 64): a connection accepted while that many are
 -- open is closed at once, unread and unanswered.
 -- Raises at level 0, returning nothing, when it cannot serve: a refused
--- option, a failed bind or listen, a port in use, a heartbeat whose timer
--- cannot be armed, or a wildcard bind whose URL's loopback address another
--- socket holds or start cannot check. A caller reads
--- S.features.start_raises before it relies on that.
+-- option, a failed bind or listen, a port in use, a reload timer it cannot
+-- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
+-- URL's loopback address another socket holds or start cannot check. A
+-- caller reads S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host
@@ -2307,8 +2317,15 @@ function S.start(cfg)
         error("Failed to listen on " .. host .. ":" .. tostring(actual_port) .. ": " .. tostring(listen_err), 0)
     end
     -- Opened once the server listens: a failed listen closed the socket and
-    -- left the reload timer and the watchers running.
-    inst.debounce_timer = uv.new_timer()
+    -- left the reload timer and the watchers running. Unread, a nil here
+    -- served, and the first file change raised in the watcher's callback,
+    -- where the reload indexes the timer (measured).
+    local reload_timer, reload_err = uv.new_timer()
+    if not reload_timer then
+        S.stop(inst)
+        error(("Failed to make the reload timer on %s:%d: %s"):format(host, actual_port, tostring(reload_err)), 0)
+    end
+    inst.debounce_timer = reload_timer
     -- A comment line on every stream keeps an idle one open through a
     -- proxy's idle cut and lets a peer that vanished without a FIN
     -- surface: TCP gives up on a write it never acknowledges, where an

@@ -1481,7 +1481,7 @@ H.case("Section 7b: every accepted socket closes through close_once", function()
     local target = inst.sse_clients[1]
     methods.write = function(h, ...)
         if h == target then
-            error("EPIPE: stubbed")
+            return nil, "EPIPE: stubbed", "EPIPE"
         end
         return real_write(h, ...)
     end

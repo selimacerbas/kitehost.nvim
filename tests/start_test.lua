@@ -9,7 +9,8 @@
 -- cannot hold or a root that is no string or does not resolve; a bind to an
 -- address this machine lacks or to a port in use raises naming it and
 -- leaves no socket, a socket that cannot be made raises naming it, and a
--- failed listen leaves no socket, timer or watcher. A wildcard bind raises
+-- failed listen or a reload timer that cannot be made leaves no socket,
+-- timer or watcher, the timer's raise naming it. A wildcard bind raises
 -- unless the loopback address its URL names is free, and its probe of that
 -- address is never left open. A pattern the check cannot read past its
 -- literal starts and gates every path it is asked about, and each option is
@@ -839,6 +840,54 @@ H.case("a listen that fails leaves no socket, timer or watcher", function()
                 and tostring(res):find("Failed to listen on", 1, true) ~= nil
                 and tostring(res):find("EADDRINUSE: stubbed", 1, true) ~= nil,
             ("%s, a failed listen raises, naming it: %s"):format(label, tostring(res))
+        )
+        eq(after.tcp, before.tcp, label .. ", it leaves no socket")
+        eq(after.timer, before.timer, label .. ", no timer")
+        eq(after.fs_event, before.fs_event, label .. ", and no watcher")
+    end
+end)
+
+-- The reload timer's nil went unread, so a start served with none and
+-- the first file change raised in the watcher's callback, where the
+-- reload indexes it. With the beat off, the reload's is the one timer
+-- start makes.
+H.case("a start that cannot make its reload timer raises, naming it, and leaves nothing open", function()
+    local real_new_timer = vim.uv.new_timer
+    H.defer(function()
+        vim.uv.new_timer = real_new_timer
+    end)
+    for _, live in ipairs({ false, true }) do
+        local label = live and "with live reload on" or "with live reload off"
+        local before = {}
+        for _, kind in ipairs({ "tcp", "timer", "fs_event" }) do
+            before[kind] = H.handle_count(kind)
+        end
+        vim.uv.new_timer = function()
+            return nil, "ENOMEM: stubbed", "ENOMEM"
+        end
+        local started, res = pcall(server.start, {
+            port = 0,
+            root = root,
+            live = { enabled = live },
+            sse_heartbeat_ms = 0,
+        })
+        vim.uv.new_timer = real_new_timer
+        local after = {}
+        for _, kind in ipairs({ "tcp", "timer", "fs_event" }) do
+            after[kind] = H.handle_count(kind)
+        end
+        if started then
+            server.stop(res)
+        end
+        ok(
+            not started
+                and tostring(res):find("reload timer", 1, true) ~= nil
+                and tostring(res):find("ENOMEM: stubbed", 1, true) ~= nil
+                and not tostring(res):find("%.lua:%d+: "),
+            ("%s, a start whose reload timer cannot be made raises at level 0, naming it: %s"):format(
+                label,
+                tostring(res)
+            )
         )
         eq(after.tcp, before.tcp, label .. ", it leaves no socket")
         eq(after.timer, before.timer, label .. ", no timer")
