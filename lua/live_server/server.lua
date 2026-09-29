@@ -2875,8 +2875,9 @@ function S.enable_live(inst, enable)
     return false
 end
 
+-- A server started without live holds nil there, a third answer.
 function S.is_live_enabled(inst)
-    return inst.live_enabled
+    return inst.live_enabled == true
 end
 
 function S.connected_client_count(inst)

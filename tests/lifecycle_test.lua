@@ -2119,6 +2119,12 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
         end
     end
 
+    local bare = server.start({ port = 0, root = site })
+    H.defer(function()
+        server.stop(bare)
+    end)
+    eq(server.is_live_enabled(bare), false, "a server started without live reports live reload off")
+
     local mark = #notes
     local off = serve({ root = site, live = { enabled = false, inject_script = false } })
     local before = counts()
