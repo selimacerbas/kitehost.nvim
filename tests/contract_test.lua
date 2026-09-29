@@ -2,8 +2,9 @@
 -- The calls the two known consumers make, held as rows: markdown-preview's
 -- start, its raw-TCP inject and its page's stream, and gh-markdown-preview's
 -- tokenless server, its back channel, its page's hello and its read of
--- inst.sse_clients, and the capability flags a caller detects. A change
--- that breaks one of them reds here first.
+-- inst.sse_clients, the capability flags a caller detects and the text a
+-- taken port's refusal carries. A change that breaks one of them reds
+-- here first.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/contract_test.lua"
 
@@ -230,6 +231,53 @@ H.case("Section 3: the capability flags a caller reads", function()
     )
     for _, name in ipairs(names) do
         eq(server.features[name], true, "features." .. name .. " is true")
+    end
+end)
+
+-- markdown-preview names a taken port by finding luv's text inside this
+-- server's refusal, so each shape a held port refuses in carries it: the
+-- bind's own, the specific bind's probe of its wildcard and the wildcard
+-- bind's probe of its URL's address.
+H.case("Section 4: a taken port's refusal carries luv's text", function()
+    local taken = "EADDRINUSE: address already in use"
+    -- Listens on ip, starts on host at that port and returns the refusal,
+    -- or nil and why the row cannot run here.
+    local function refusal(ip, host)
+        local hold = assert(vim.uv.new_tcp())
+        local bound, bind_err = hold:bind(ip, 0)
+        if bound then
+            bound, bind_err = hold:listen(8, function() end)
+        end
+        local port = bound and hold:getsockname()
+        if not port then
+            hold:close()
+            return nil, tostring(bind_err)
+        end
+        local started, res = pcall(server.start, { port = port.port, host = host, root = work .. "/ws" })
+        if started then
+            server.stop(res)
+        end
+        hold:close()
+        return not started and tostring(res) or ("it served on " .. host)
+    end
+    local rows = {
+        { "127.0.0.1", "127.0.0.1", "a fixed port held on 127.0.0.1 refuses a 127.0.0.1 start" },
+        { "0.0.0.0", "127.0.0.1", "0.0.0.0 held refuses a 127.0.0.1 start, the probe of its wildcard" },
+        { "127.0.0.1", "0.0.0.0", "127.0.0.1 held refuses a 0.0.0.0 start, the probe of its URL's address" },
+    }
+    local info = vim.uv.os_uname()
+    for i, row in ipairs(rows) do
+        if i == 2 and info and info.sysname == "Linux" then
+            -- Linux refuses that bind at the bind and runs no such probe.
+            H.skip(row[3] .. " (Linux runs no probe of the wildcard)")
+        else
+            local res, why = refusal(row[1], row[2])
+            if res then
+                ok(res:find(taken, 1, true) ~= nil, row[3] .. " with luv's text: " .. res)
+            else
+                H.skip(row[3] .. " (this machine cannot hold " .. row[1] .. ": " .. why .. ")")
+            end
+        end
     end
 end)
 
