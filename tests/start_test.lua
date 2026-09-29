@@ -1103,6 +1103,39 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         "and one held four times raises, naming the URL's address: " .. res4
     )
     eq(made4, 8, "after four sockets, each with its probe")
+    -- A port the caller named is the one it asked for: no second bind.
+    local free = assert(real_tcp())
+    assert(free:bind("127.0.0.1", 0))
+    local fixed = free:getsockname().port
+    free:close()
+    local fixed_made = 0
+    vim.uv.new_tcp = function(...)
+        fixed_made = fixed_made + 1
+        local h, h_err, h_name = real_tcp(...)
+        if fixed_made ~= 2 or not h then
+            return h, h_err, h_name
+        end
+        return setmetatable({}, {
+            __index = function(_, method)
+                if method == "bind" then
+                    return function()
+                        return nil, "EADDRINUSE: stubbed", "EADDRINUSE"
+                    end
+                end
+                return function(_, ...)
+                    return h[method](h, ...)
+                end
+            end,
+        })
+    end
+    as_os("Darwin")
+    local up_fixed, res_fixed = pcall(server.start, { port = fixed, root = root })
+    vim.uv.new_tcp, vim.uv.os_uname = real_tcp, real_uname
+    if up_fixed then
+        server.stop(res_fixed)
+    end
+    ok(not up_fixed, "a fixed-port start whose probe finds the port held raises: " .. tostring(res_fixed))
+    eq(fixed_made, 2, "after one socket and its probe")
     -- A probe that fails any other way cannot tell, as the wildcard's.
     local real_new_tcp = vim.uv.new_tcp
     H.defer(function()

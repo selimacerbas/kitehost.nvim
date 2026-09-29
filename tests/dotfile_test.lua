@@ -908,7 +908,7 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
         H.skip("a mode-000 .liveignore warns once, naming it and the cause")
         H.skip("a mode-000 .liveignore serves")
     else
-        -- The cause names the path luv opened, the root as start resolves it.
+        -- The cause names the path luv opened, under the resolved root.
         local real_file = vim.fs.joinpath(assert(uv.fs_realpath(locked)), ".liveignore")
         check("a mode-000 .liveignore", locked, (tostring(probe_err):gsub(vim.pesc(locked_file), real_file)))
     end
@@ -1152,7 +1152,7 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
             server.stop(inst)
         end)
         local port = inst.port
-        -- Each change restarts the reload timer, so its start sees the window.
+        -- Each change restarts the timer, whose start sees the window.
         local seen, timer = {}, inst.debounce_timer
         inst.debounce_timer = setmetatable({}, {
             __index = function(_, method)
@@ -1201,7 +1201,7 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
     -- in a project directory.
     local saved = sheet_site()
     local save_result
-    local by_nvim = frames_after(saved, 300, function()
+    local by_nvim, _, nvim_seen = frames_after(saved, 300, function()
         save_result = vim.system({
             vim.v.progpath,
             "--headless",
@@ -1224,6 +1224,13 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
         #by_nvim == 1 and by_nvim[1].css == true and by_nvim[1].path == "style.css",
         "a stylesheet saved by Neovim's :w sends one swap naming it: " .. shown(by_nvim)
     )
+    -- Else the row passes without the names it filters: a later Neovim
+    -- that writes no probe or backup would leave it proving nothing.
+    local temp_seen = false
+    for path in pairs(nvim_seen) do
+        temp_seen = temp_seen or (path ~= "style.css" and path ~= "/")
+    end
+    ok(temp_seen, "and the window held a name the save made and removed: " .. shown(vim.tbl_keys(nvim_seen)))
 
     local renamed = sheet_site()
     local by_rename = frames_after(renamed, 300, function()

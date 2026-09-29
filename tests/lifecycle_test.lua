@@ -1804,8 +1804,53 @@ H.case("Section 8f: update_target checks its root and its index as start does", 
     if vim.system({ "mkfifo", fifo }):wait().code == 0 then
         got, err = refused(("update_target: root %s is not a directory"):format(fifo), fifo, nil)
         ok(got, "a FIFO root raises at the caller, naming it: " .. err)
+        -- With live reload on, the watcher's start on a FIFO blocked the
+        -- loop, so that retarget runs in a child Neovim bounded at 5 s.
+        local script = H.tmpdir() .. "/child.lua"
+        H.write_file(
+            script,
+            ([[
+vim.opt.rtp:prepend(%q)
+local server = require("live_server.server")
+local inst = server.start({ port = 0, root = %q, live = { enabled = true, inject_script = false } })
+local moved, res = pcall(server.update_target, inst, %q, nil)
+server.stop(inst)
+io.stdout:write(vim.json.encode({ moved = moved, res = tostring(res) }))
+]]):format(H.root, H.tmpdir(), fifo)
+        )
+        local done
+        local t0 = uv.hrtime()
+        local proc = vim.system(
+            { vim.v.progpath, "--headless", "-u", "NONE", "-l", script },
+            { text = true },
+            function(r)
+                done = r
+            end
+        )
+        local in_time = H.wait_for(function()
+            return done ~= nil
+        end, 5000)
+        local took = math.floor((uv.hrtime() - t0) / 1e6)
+        if not in_time then
+            proc:kill(9)
+            H.wait_for(function()
+                return done ~= nil
+            end, 2000)
+        end
+        local child = done and done.code == 0 and select(2, pcall(vim.json.decode, done.stdout or "")) or nil
+        ok(
+            in_time
+                and type(child) == "table"
+                and child.moved == false
+                and child.res:find(("update_target: root %s is not a directory"):format(fifo), 1, true) ~= nil,
+            ("a live server's retarget to a FIFO root raises within 5 s (%d ms): %s"):format(
+                took,
+                vim.inspect(done, { newline = " ", indent = "" })
+            )
+        )
     else
         H.skip("a FIFO root raises at the caller, naming it (mkfifo failed)")
+        H.skip("a live server's retarget to a FIFO root raises within 5 s (mkfifo failed)")
     end
     got, err = refused("update_target: root is not a string (nil)", nil, nil)
     ok(got, "a nil root raises at the caller: " .. err)
@@ -2257,6 +2302,9 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
 
     -- An entry the scan leaves untyped was never walked, so its subtree
     -- went unwatched without a word.
+    -- A link to a directory stays unwalked, untyped or not, as a typed
+    -- link is: the entry is lstat'ed, never followed.
+    assert(uv.fs_symlink(real_three .. "/a", three .. "/l"))
     mark = #notes
     before = counts()
     uv.fs_scandir_next = function(handle)
@@ -2265,7 +2313,11 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     end
     local untyped = serve({ root = three, live = live })
     uv.fs_scandir_next = real_scandir_next
-    eq(counts().fs_event - before.fs_event, 4, "an entry the scan leaves untyped is stat'ed and watched")
+    eq(
+        counts().fs_event - before.fs_event,
+        4,
+        "an entry the scan leaves untyped is lstat'ed, a directory watched and a link to one not"
+    )
     eq(server.is_live_enabled(untyped), true, "and live reload stays on")
     eq(#warnings(mark), 0, "and nothing is warned")
 end)
@@ -2291,8 +2343,8 @@ H.case("Section 9c: every notice goes out marked", function()
         uv.fs_scandir_next = real_scandir_next
         vim.notify = real_notify
     end)
-    -- ESC, BEL, a raw 0x9B, U+009B encoded and U+202E in one name.
-    local crafted = "d\27[31m\7\155\194\155\226\128\174e"
+    -- ESC, BEL, DEL, a raw 0x9B, U+009B encoded and U+202E in one name.
+    local crafted = "d\27[31m\7\127\155\194\155\226\128\174e"
     local function clean(s)
         local i = 1
         while i <= #s do
@@ -2358,7 +2410,7 @@ H.case("Section 9c: every notice goes out marked", function()
     local watch = notes[mark + 1] and notes[mark + 1].msg or ""
     eq(
         watch,
-        ("live-server: port %d cannot watch %s/d?[31m????e (ENOSPC: stubbed)"):format(inst.port, real_tree),
+        ("live-server: port %d cannot watch %s/d?[31m?????e (ENOSPC: stubbed)"):format(inst.port, real_tree),
         "a watch notice naming a crafted directory arrives marked"
     )
     local clean_watch, why = clean(watch)
@@ -2369,7 +2421,7 @@ H.case("Section 9c: every notice goes out marked", function()
     server.reload(loud, crafted .. ".html")
     vim.wait(100)
     local reload = notes[mark + 1] and notes[mark + 1].msg or ""
-    eq(reload, "Reload → d?[31m????e.html", "the notify_on_reload notice naming a crafted path arrives marked")
+    eq(reload, "Reload → d?[31m?????e.html", "the notify_on_reload notice naming a crafted path arrives marked")
     local clean_reload
     clean_reload, why = clean(reload)
     ok(clean_reload, "and carries no control, C1 pair or U+202E: " .. tostring(why))
