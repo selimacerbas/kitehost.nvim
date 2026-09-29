@@ -810,6 +810,52 @@ H.case("Section 11: a mixed debounce window reloads the page", function()
         #one == 1 and one[1].css == true and one[1].path == "style.css",
         "style.css alone sends one stylesheet swap: " .. shown(one)
     )
+    -- A file written faster than the debounce restarts the timer at each
+    -- write, so a window that kept every change grew for as long as the
+    -- writes came (67 entries after 60 writes, measured); it holds each
+    -- path once.
+    local site = H.tmpdir()
+    H.write_file(site .. "/app.log", "0")
+    local inst = server.start({
+        port = 0,
+        root = site,
+        live = { enabled = true, debounce = 1500, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local c = assert(H.raw_connect(inst.port))
+    assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(inst.port)))
+    c:read(2000, function(b)
+        return b:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    vim.wait(600)
+    local mark = #table.concat(c.chunks)
+    for i = 1, 20 do
+        H.write_file(site .. "/app.log", tostring(i))
+        vim.wait(30)
+    end
+    vim.wait(300)
+    -- The root's own directory may be named too (Section 7b), once.
+    local times = {}
+    for _, p in ipairs(inst.reload_window) do
+        times[p] = (times[p] or 0) + 1
+    end
+    local repeated = false
+    for _, n in pairs(times) do
+        repeated = repeated or n > 1
+    end
+    ok(
+        times["app.log"] == 1 and not repeated,
+        "twenty writes to one file hold it once in the window: " .. shown(inst.reload_window)
+    )
+    c:read(3000, function(b)
+        return #reloads(b, mark) > 0
+    end)
+    vim.wait(600)
+    local logs = reloads(table.concat(c.chunks), mark)
+    ok(#logs == 1 and logs[1].path == "app.log", "and send one reload naming it: " .. shown(logs))
 end)
 
 H.finish()

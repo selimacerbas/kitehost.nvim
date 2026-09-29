@@ -800,7 +800,10 @@ local function schedule_reload(inst, changed_path)
     -- payload says / so no dot name reaches an events client, and a plain
     -- name keeps its path, so a started-on stylesheet still swaps.
     local path = (own and has_dot_segment(rel)) and "/" or rel
-    if path then
+    -- Each path once, so a file written faster than the debounce, which
+    -- restarts the timer at every write, cannot grow the window.
+    if path and not inst.reload_seen[path] then
+        inst.reload_seen[path] = true
         table.insert(inst.reload_window, path)
     end
     inst.debounce_timer:stop()
@@ -808,12 +811,12 @@ local function schedule_reload(inst, changed_path)
     -- no word (measured through a stub).
     local armed, arm_err = inst.debounce_timer:start(inst.live_debounce, 0, function()
         local window = inst.reload_window
-        inst.reload_window = {}
+        inst.reload_window, inst.reload_seen = {}, {}
         S.reload(inst, window_path(window))
     end)
     if not armed then
         -- A window no timer will send is dropped, or it grows at every change.
-        inst.reload_window = {}
+        inst.reload_window, inst.reload_seen = {}, {}
         warn_once(inst, "reload", ("could not schedule a reload (%s); restart the server"):format(tostring(arm_err)))
     end
 end
@@ -2455,8 +2458,8 @@ function S.start(cfg)
         live_debounce = checked.live_debounce,
         css_inject = checked.css_inject,
         sse_clients = {},
-        -- Every change of the pending debounce window, in order.
         reload_window = {},
+        reload_seen = {},
         heartbeat_ms = checked.heartbeat_ms,
         -- The kinds of fault the user was told of (warn_once).
         warned = {},
