@@ -4,9 +4,14 @@
 -- the file served by its path under the root, never the root's own path.
 -- Since the rule the listing hides them too, where show_hidden alone named
 -- them, and a change to one sends no reload. A .liveignore that is not a
--- regular file (a FIFO, a directory) is never opened, gives no rule and is
--- named once. One debounce window reloads the page when any change in it
--- is not a stylesheet.
+-- regular file (a FIFO, a directory), cannot be read or is over 64 KiB (a
+-- link to a large file among them) is never read, gives no rule and is
+-- named once; the FIFO row starts in a child Neovim bounded at 5 s. A
+-- start refused after reading it warns nothing, and a retarget to another
+-- root warns anew. One debounce window reloads the page when any change
+-- in it is not a stylesheet, a path gone by the send is dropped (a
+-- save's probe and backup files, a temporary name renamed away), and a
+-- window names its latest page change however long the burst.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/dotfile_test.lua"
 

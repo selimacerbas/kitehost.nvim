@@ -227,7 +227,7 @@ All under the which-key group **`<leader>l`**:
   You can stop live-server instances via `:LiveServerStop` or `:LiveServerStopAll`.
 
 * **"start() bad argument #2 to 'start' (table expected, got number)"**
-  Some `luv` builds expect `fs_event:start(path, {recursive=true}, cb)` while others accept `start(path, cb)`. The plugin tries both. Make sure you're on the **latest** plugin files.
+  The plugin calls the three-argument `fs_event:start(path, flags, cb)` alone, and a watcher that cannot start leaves the server serving with live reload off and a warning, so make sure you're on the **latest** plugin files.
 
 * **Browser didn't open**
   We try `vim.ui.open` and fall back to `xdg-open`/`open`/`start`. If none work, copy the URL from the message and open manually.
@@ -279,7 +279,7 @@ server.connected_client_count(inst)                             -- number of SSE
 server.stop(inst)                                               -- shut down
 ```
 
-`update_target` returns true when the server serves the root asked, whether it moved or was already that root; it returns false when it could not, on a stopped server or, with one warning, when live reload is on and the new root cannot be watched (the root moves and live reload turns off); and it raises on a root it cannot serve (one that does not resolve), changing nothing; `server.enable_live(inst, true)` returns false with one warning, and live reload stays off, when the watcher cannot start.
+`update_target` returns true when the server serves the root asked, whether it moved or was already that root; it returns false when it could not, on a stopped server or when live reload is on and the new root cannot be watched (the root moves and live reload turns off); and it raises on a root it cannot serve (one that does not resolve or is no directory), changing nothing; `server.enable_live(inst, true)` returns false, and live reload stays off, when the watcher cannot start. A watcher that cannot start warns once per server until a watcher starts again, when the next failure warns anew; a watch that misses some directories under the root keeps live reload on, with a notice naming the first it missed and the count.
 
 ### HTTP event injection
 

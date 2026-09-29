@@ -294,8 +294,8 @@ Live-reload didn't trigger ~
     - Try `:LiveServerToggleLive` off/on, or `:LiveServerReload`.
 
 fs_event error ~
-    Some `luv` builds use different `fs_event:start()` signatures.
-    The plugin tries both. Update to latest Neovim if issues persist.
+    The plugin calls the three-argument `fs_event:start()` alone, and a
+    watcher that cannot start turns live reload off with a warning.
 
 -------------------------------------------------------------------------------
 vim:tw=78:ft=help:norl:

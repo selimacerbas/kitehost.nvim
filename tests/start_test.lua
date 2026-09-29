@@ -327,6 +327,12 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     if started then
         server.stop(res)
     end
+    -- The reader's bounds no row above reaches: F0 80..8F is an overlong
+    -- lead, and a 4-byte sequence reads its third and fourth bytes too.
+    eq(util.utf8_len("\240\143\191\191", 1), nil, "utf8_len refuses F0 8F BF BF, an overlong 4-byte sequence")
+    eq(util.utf8_len("\240\144\40\128", 1), nil, "utf8_len refuses a 4-byte sequence whose third byte is 0x28")
+    eq(util.utf8_len("\240\144\128\40", 1), nil, "utf8_len refuses a 4-byte sequence whose fourth byte is 0x28")
+    eq(util.utf8_len("\240\144\128\128", 1), 4, "and reads F0 90 80 80, the first 4-byte code point, as 4")
     started, res = pcall(server.start, {
         port = 0,
         root = root,

@@ -855,7 +855,7 @@ local function schedule_reload(inst, changed_path)
         send_reload(inst, window_send(inst, window))
     end)
     if not armed then
-        -- A window no timer will send is dropped, or it grows at every change.
+        -- A window no timer sends is dropped, or it grows at every change.
         inst.reload_window = {}
         warn_once(inst, "reload", ("could not schedule a reload (%s); restart the server"):format(tostring(arm_err)))
     end
@@ -2133,7 +2133,7 @@ local function check_start(cfg)
     if token ~= nil and (type(token) ~= "string" or token == "") then
         error("token must be a non-empty string", 0)
     end
-    -- The stream refuses the encoded URL of a token that is no UTF-8 (measured).
+    -- The stream refuses the encoded URL of a non-UTF-8 token (measured).
     if token ~= nil then
         local i = 1
         while i <= #token do
@@ -2505,8 +2505,9 @@ local function bind_probed(host, port)
         end
     end
 
-    -- macOS lets a loopback bind shadow another program's wildcard listener (measured).
-    -- This socket, bound and not listening, never meets the probe (measured on macOS).
+    -- macOS lets a loopback bind shadow another program's wildcard
+    -- listener (measured). This socket, bound and not listening, never
+    -- meets the probe (measured on macOS).
     local wildcard = wildcard_of(bound.ip)
     if wildcard then
         local free, why, why_name = address_free(wildcard, bound.port)

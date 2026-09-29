@@ -22,8 +22,10 @@
 -- start turns live reload off, at start, enable_live and update_target,
 -- with a warning re-armed when a watcher starts again, and drops the
 -- pending window; the directories under the root a scan cannot watch or
--- read are dropped with one warning per scan.
--- update_target refuses a root that does not resolve and changes nothing.
+-- read are dropped with one warning per scan. Every notice goes out
+-- marked. update_target refuses a root that does not resolve or is no
+-- directory, and an argument of the wrong type, and changes nothing; a
+-- relative index names the file it named when it was set.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 

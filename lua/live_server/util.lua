@@ -468,8 +468,9 @@ end
 
 local LIVEIGNORE_MAX = 65536
 
--- Opening a FIFO blocks the loop past SIGTERM, so the type is read first;
--- the window between the stat and the open stays, as the asset route's does.
+-- Opening a FIFO blocks the loop past SIGTERM, so the type is read
+-- first; the window between the stat and the open stays, as the asset
+-- route's does.
 function U.parse_liveignore(root)
     local path = U.joinpath(root, ".liveignore")
     local st, st_err, st_name = uv.fs_stat(path)
