@@ -20,6 +20,8 @@ H.isolate()
 H.rtp()
 
 local uv = vim.uv
+-- The FIFO rows skip on Windows, which has no FIFO.
+local is_win = vim.fn.has("win32") == 1
 local server = require("live_server.server")
 local eq, ok = H.eq, H.ok
 
