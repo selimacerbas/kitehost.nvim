@@ -1011,6 +1011,46 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     end
     ok(up0, "a port-0 start whose probe finds the port held binds again and serves: " .. tostring(up0 and "" or res0))
     eq(made_tcp, 4, "through a second socket and a second probe")
+    -- Four binds in all: a wildcard start's probe of its URL's address
+    -- (every OS) held three times serves on the fourth, and held four
+    -- times raises, each socket with its probe.
+    local function held_probes(held)
+        local n = 0
+        vim.uv.new_tcp = function(...)
+            n = n + 1
+            local h, h_err, h_name = real_tcp(...)
+            if n % 2 == 1 or n > held * 2 or not h then
+                return h, h_err, h_name
+            end
+            return setmetatable({}, {
+                __index = function(_, method)
+                    if method == "bind" then
+                        return function()
+                            return nil, "EADDRINUSE: stubbed", "EADDRINUSE"
+                        end
+                    end
+                    return function(_, ...)
+                        return h[method](h, ...)
+                    end
+                end,
+            })
+        end
+        local up, res = pcall(server.start, { host = "0.0.0.0", port = 0, root = root })
+        vim.uv.new_tcp = real_tcp
+        if up then
+            server.stop(res)
+        end
+        return up, tostring(up and "" or res), n
+    end
+    local up3, res3, made3 = held_probes(3)
+    ok(up3, "a port-0 wildcard start whose probe finds the port held three times serves: " .. res3)
+    eq(made3, 8, "on its fourth socket, each with its probe")
+    local up4, res4, made4 = held_probes(4)
+    ok(
+        not up4 and res4:find("another socket holds 127.0.0.1:", 1, true) ~= nil,
+        "and one held four times raises, naming the URL's address: " .. res4
+    )
+    eq(made4, 8, "after four sockets, each with its probe")
     -- A probe that fails any other way cannot tell, as the wildcard's.
     local real_new_tcp = vim.uv.new_tcp
     H.defer(function()
