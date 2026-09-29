@@ -1288,7 +1288,8 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
     for i = 1, 200 do
         H.write_file(("%s/f%03d.html"):format(burst, i), "0")
     end
-    local burst_frames, took = frames_after(burst, 500, function()
+    -- A 500 ms window closed mid-burst under load and sent two reloads.
+    local burst_frames, took = frames_after(burst, 1500, function()
         for write = 1, 2 do
             for i = 1, 200 do
                 H.write_file(("%s/f%03d.html"):format(burst, i), tostring(write))
