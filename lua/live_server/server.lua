@@ -208,24 +208,6 @@ local function http_400(sock, msg)
     )
 end
 
--- A terminal may act on a C1 control as on a C0 one, raw or encoded.
--- The cut falls between sequences, so the line stays well-formed UTF-8.
-local function marked(s, limit)
-    local out, i = {}, 1
-    while i <= #s do
-        local seq = util.utf8_len(s, i)
-        local len = seq or 1
-        if i + len - 1 > limit then
-            break
-        end
-        local b1, b2 = s:byte(i, i + 1)
-        local control = not seq or len == 1 and (b1 < 0x20 or b1 == 0x7F) or len == 2 and b1 == 0xC2 and b2 < 0xA0
-        table.insert(out, control and "?" or s:sub(i, i + len - 1))
-        i = i + len
-    end
-    return table.concat(out)
-end
-
 -- Tells the user, once and on one line, that answering path raised. A
 -- traceback ran to 15 lines, a hit-enter prompt per failed request, and
 -- 0.10's v:errmsg kept its last line alone; the raise's first line
@@ -237,8 +219,8 @@ end
 -- would pass an escape a peer wrote. Scheduled: a request runs in a fast
 -- event, where vim.notify raises.
 local function report_raise(path, raised)
-    local cause = marked(tostring(raised):match("^[^\n]*"), 300)
-    local shown = marked(path:match("^[^?#]*"), 200)
+    local cause = util.marked(tostring(raised):match("^[^\n]*"), 300)
+    local shown = util.marked(path:match("^[^?#]*"), 200)
     local line = ("live-server: %s failed: %s"):format(shown, cause)
     vim.schedule(function()
         util.notify(line, { notify = true }, "ERROR")
@@ -748,14 +730,21 @@ end
 
 -- The user is told of a fault once per instance for each kind, scheduled,
 -- since a fault is found in a fast event (an accept, a watcher's
--- callback).
+-- callback). A path in the text may be a peer's, so the line is marked.
+-- While start runs, the notice waits in inst.queued: a start that raises
+-- drops it, where it warned about a port no server held.
 local function warn_once(inst, kind, text)
     if inst.warned[kind] then
         return
     end
     inst.warned[kind] = true
+    local line = util.marked(("live-server: port %d %s"):format(inst.port, text))
+    if inst.queued then
+        table.insert(inst.queued, line)
+        return
+    end
     vim.schedule(function()
-        util.notify(("live-server: port %d %s"):format(inst.port, text), { notify = true }, "WARN")
+        util.notify(line, { notify = true }, "WARN")
     end)
 end
 
@@ -2543,6 +2532,8 @@ function S.start(cfg)
         heartbeat_ms = checked.heartbeat_ms,
         -- The kinds of fault the user was told of (warn_once).
         warned = {},
+        -- Warnings found during start, sent once it serves.
+        queued = {},
 
         -- features
         dir_enabled = checked.dir_enabled,
@@ -2679,6 +2670,14 @@ function S.start(cfg)
             )
         end)
     end
+    -- Past the last raise: every warning start found now names a server.
+    local queued = inst.queued
+    inst.queued = nil
+    for _, line in ipairs(queued) do
+        vim.schedule(function()
+            util.notify(line, { notify = true }, "WARN")
+        end)
+    end
     return inst
 end
 
@@ -2741,6 +2740,10 @@ function S.update_target(inst, new_root, new_index)
             2
         )
     end
+    -- A new root's .liveignore is heard, though the last root's was.
+    if root_real ~= inst.root_real then
+        inst.warned.liveignore = nil
+    end
     inst.root = new_root
     inst.root_real = root_real
     inst.default_index = index
@@ -2770,12 +2773,11 @@ function S.reload(inst, reason_path)
         vim.json.encode(is_css)
     )
     sse_broadcast(inst, "reload", payload)
+    -- The path may be a peer's file name, so the line is marked.
     if inst.notify_on_reload then
+        local line = util.marked(("Reload%s → %s"):format(is_css and " (CSS)" or "", rp ~= "" and rp or "manual"))
         vim.schedule(function()
-            util.notify(
-                ("Reload%s → %s"):format(is_css and " (CSS)" or "", rp ~= "" and rp or "manual"),
-                { notify = true }
-            )
+            util.notify(line, { notify = true })
         end)
     end
 end

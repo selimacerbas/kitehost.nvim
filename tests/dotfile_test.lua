@@ -667,11 +667,38 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
     eq(#plain_inst.ignore_patterns, 0, "update_target to a root whose .liveignore is a directory gives no rule")
     warned = warnings(mark)
     ok(#warned == 1 and warned[1] == ignored(plain_inst), "and warns once, naming it: " .. vim.inspect(warned))
+    -- A start refused after the .liveignore was read warned about a port
+    -- no server held.
+    local real_new_timer = uv.new_timer
+    H.defer(function()
+        uv.new_timer = real_new_timer
+    end)
+    uv.new_timer = function()
+        return nil, "EMFILE: stubbed", "EMFILE"
+    end
+    mark = #notes
+    local refused, refusal = pcall(server.start, {
+        port = 0,
+        root = dir_site,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    uv.new_timer = real_new_timer
+    if refused then
+        server.stop(refusal)
+    end
+    ok(
+        not refused and tostring(refusal):find("Failed to make the reload timer", 1, true) ~= nil,
+        "a start that cannot make its reload timer raises: " .. tostring(refusal)
+    )
+    warned = warnings(mark)
+    eq(#warned, 0, "and delivers no warning about the .liveignore it read: " .. vim.inspect(warned))
 
     if is_win then
         H.skip("a FIFO named .liveignore starts and serves within 5 s (Windows has no FIFO)")
         H.skip("and warns once, naming it")
         H.skip("and gives no rule")
+        H.skip("and a retarget to it from a root already warned about warns again")
         return
     end
     local fifo_site = H.tmpdir()
@@ -682,6 +709,7 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
         H.skip("a FIFO named .liveignore starts and serves within 5 s (mkfifo: " .. tostring(made.stderr) .. ")")
         H.skip("and warns once, naming it")
         H.skip("and gives no rule")
+        H.skip("and a retarget to it from a root already warned about warns again")
         return
     end
     local script = H.tmpdir() .. "/child.lua"
@@ -709,15 +737,37 @@ vim.wait(2500, function()
     return got ~= nil
 end)
 vim.wait(100)
+local first_notes = vim.deepcopy(notes)
+local two = server.start({
+    port = 0,
+    root = %q,
+    live = { enabled = false, inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+vim.wait(100)
+local before = #notes
+server.update_target(two, %q, nil)
+vim.wait(100)
+local again = {}
+for i = before + 1, #notes do
+    if notes[i].level == vim.log.levels.WARN then
+        table.insert(again, notes[i].msg)
+    end
+end
 io.stdout:write(vim.json.encode({
     status = got,
     rules = #inst.ignore_patterns,
     port = inst.port,
     root_real = inst.root_real,
-    notes = notes,
+    notes = first_notes,
+    two_port = two.port,
+    two_root_real = two.root_real,
+    two_rules = #two.ignore_patterns,
+    again = again,
 }))
+server.stop(two)
 server.stop(inst)
-]]):format(H.root, fifo_site)
+]]):format(H.root, fifo_site, dir_site, fifo_site)
     )
     local done
     local t0 = uv.hrtime()
@@ -756,6 +806,17 @@ server.stop(inst)
     end
     ok(#child_warned == 1 and child_warned[1] == want, "and warns once, naming it: " .. vim.inspect(child_warned))
     eq(shown.rules, 0, "and gives no rule")
+    -- The kind was spent per server, so a second root's went unsaid.
+    local want_again = shown.two_port
+        and ("live-server: port %d ignores %s: not a regular file"):format(
+            shown.two_port,
+            vim.fs.joinpath(shown.two_root_real, ".liveignore")
+        )
+    local again = shown.again or {}
+    ok(
+        #again == 1 and again[1] == want_again and shown.two_rules == 0,
+        "and a retarget to it from a root already warned about warns again: " .. vim.inspect(again)
+    )
 end)
 
 -- Two changes inside one debounce window kept the last path alone, so

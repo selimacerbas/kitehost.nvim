@@ -430,6 +430,42 @@ function U.utf8_len(s, i)
     return n
 end
 
+-- U+200E, U+200F, U+2028 to U+202E and U+2066 to U+2069, as UTF-8.
+local function is_format_control(b1, b2, b3)
+    if b1 ~= 0xE2 then
+        return false
+    end
+    if b2 == 0x80 then
+        return b3 == 0x8E or b3 == 0x8F or (b3 >= 0xA8 and b3 <= 0xAE)
+    end
+    return b2 == 0x81 and b3 >= 0xA6 and b3 <= 0xA9
+end
+
+-- A notice may carry a peer's bytes to a notifier that forwards them to a
+-- terminal or a desktop: a C0 or C1 control, raw or encoded, acts there,
+-- and a line or paragraph separator or a bidi control breaks or reorders
+-- the one line. Each, and each byte no sequence holds, is a "?"; a limit
+-- cuts between sequences, so the line stays well-formed UTF-8.
+function U.marked(s, limit)
+    limit = limit or #s
+    local out, i = {}, 1
+    while i <= #s do
+        local seq = U.utf8_len(s, i)
+        local len = seq or 1
+        if i + len - 1 > limit then
+            break
+        end
+        local b1, b2, b3 = s:byte(i, i + 2)
+        local control = not seq
+            or len == 1 and (b1 < 0x20 or b1 == 0x7F)
+            or len == 2 and b1 == 0xC2 and b2 < 0xA0
+            or len == 3 and is_format_control(b1, b2, b3)
+        table.insert(out, control and "?" or s:sub(i, i + len - 1))
+        i = i + len
+    end
+    return table.concat(out)
+end
+
 -- Opening a FIFO blocks the loop past SIGTERM, so the type is read first;
 -- the window between the stat and the open stays, as the asset route's does.
 function U.parse_liveignore(root)

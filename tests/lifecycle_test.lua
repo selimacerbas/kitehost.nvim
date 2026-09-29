@@ -2268,6 +2268,135 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     eq(#warnings(mark), 0, "and nothing is warned")
 end)
 
+-- A notice may carry a peer's file name, and a notifier that forwards it
+-- to a terminal or a desktop acts on an escape, a C1 control, raw or
+-- encoded, and a line separator or a bidi control breaks or reorders the
+-- one line. The watch notice and the notify_on_reload notice marked
+-- nothing; each is marked whole now, as report_raise's line is.
+H.case("Section 9c: every notice goes out marked", function()
+    local util = require("live_server.util")
+    local real_new = uv.new_fs_event
+    local real_uname = uv.os_uname
+    local real_scandir_next = uv.fs_scandir_next
+    local real_notify = vim.notify
+    local notes = {}
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        uv.new_fs_event = real_new
+        uv.os_uname = real_uname
+        uv.fs_scandir_next = real_scandir_next
+        vim.notify = real_notify
+    end)
+    -- ESC, BEL, a raw 0x9B, U+009B encoded and U+202E in one name.
+    local crafted = "d\27[31m\7\155\194\155\226\128\174e"
+    local function clean(s)
+        local i = 1
+        while i <= #s do
+            local len = util.utf8_len(s, i)
+            if not len then
+                return false, "a byte no sequence holds at " .. i
+            end
+            i = i + len
+        end
+        if s:find("[%z\1-\31\127]") then
+            return false, "a C0 control"
+        end
+        if s:find("\194[\128-\159]") then
+            return false, "an encoded C1 control"
+        end
+        if s:find("\226\128\174", 1, true) then
+            return false, "U+202E"
+        end
+        return true
+    end
+
+    -- The per-directory walk, read as Linux, lists the crafted name as a
+    -- directory whose watch cannot start.
+    uv.os_uname = function()
+        return { sysname = "Linux" }
+    end
+    local tree = H.tmpdir()
+    local real_tree = assert(uv.fs_realpath(tree))
+    local listed = {}
+    uv.fs_scandir_next = function(handle)
+        local name, typ = real_scandir_next(handle)
+        if name == nil and not listed[handle] then
+            listed[handle] = true
+            return crafted, "directory"
+        end
+        return name, typ
+    end
+    uv.new_fs_event = function()
+        local h, err = real_new()
+        if not h then
+            return h, err
+        end
+        return setmetatable({}, {
+            __index = function(_, name)
+                if name == "start" then
+                    return function(_, path, ...)
+                        if path ~= real_tree then
+                            return nil, "ENOSPC: stubbed", "ENOSPC"
+                        end
+                        return h:start(path, ...)
+                    end
+                end
+                return function(_, ...)
+                    return h[name](h, ...)
+                end
+            end,
+        })
+    end
+    local mark = #notes
+    local inst = serve({ root = tree, live = { enabled = true, inject_script = false, debounce = 20 } })
+    uv.new_fs_event, uv.fs_scandir_next, uv.os_uname = real_new, real_scandir_next, real_uname
+    vim.wait(100)
+    local watch = notes[mark + 1] and notes[mark + 1].msg or ""
+    eq(
+        watch,
+        ("live-server: port %d cannot watch %s/d?[31m????e (ENOSPC: stubbed)"):format(inst.port, real_tree),
+        "a watch notice naming a crafted directory arrives marked"
+    )
+    local clean_watch, why = clean(watch)
+    ok(clean_watch, "and carries no control, C1 pair or U+202E: " .. tostring(why))
+
+    local loud = serve({ notify_on_reload = true })
+    mark = #notes
+    server.reload(loud, crafted .. ".html")
+    vim.wait(100)
+    local reload = notes[mark + 1] and notes[mark + 1].msg or ""
+    eq(reload, "Reload → d?[31m????e.html", "the notify_on_reload notice naming a crafted path arrives marked")
+    local clean_reload
+    clean_reload, why = clean(reload)
+    ok(clean_reload, "and carries no control, C1 pair or U+202E: " .. tostring(why))
+
+    -- The separators and bidi controls a GUI notifier acts on, and a
+    -- neighbour of each range kept.
+    for _, c in ipairs({
+        { "\226\128\168", "U+2028" },
+        { "\226\128\169", "U+2029" },
+        { "\226\128\142", "U+200E" },
+        { "\226\128\143", "U+200F" },
+        { "\226\128\170", "U+202A" },
+        { "\226\128\174", "U+202E" },
+        { "\226\129\166", "U+2066" },
+        { "\226\129\169", "U+2069" },
+    }) do
+        eq(util.marked("a" .. c[1] .. "b"), "a?b", c[2] .. " is marked")
+    end
+    for _, c in ipairs({
+        { "\226\128\141", "U+200D" },
+        { "\226\128\167", "U+2027" },
+        { "\226\128\175", "U+202F" },
+        { "\226\129\165", "U+2065" },
+        { "\226\129\170", "U+206A" },
+    }) do
+        eq(util.marked("a" .. c[1] .. "b"), "a" .. c[1] .. "b", c[2] .. " is kept")
+    end
+end)
+
 -- A window pending when live reload turns off was still sent, so a page
 -- reloaded after the server reported live reload off.
 H.case("Section 9b: turning live reload off drops the pending window", function()
