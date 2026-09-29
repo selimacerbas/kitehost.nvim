@@ -142,4 +142,48 @@ H.case("every /__live/ route the server answers is documented", function()
     end
 end)
 
+-- setup() takes the keys of its defaults table. A key whose default is nil
+-- is no key of opts at run time, so the table is also read from the
+-- module's source; each run-time key found there proves that read.
+H.case("Section 2: every setup() option is in README Options", function()
+    package.loaded["live_server"] = nil
+    local opts = require("live_server").opts
+    local block = readme:match("\n## Options\n(.-)\n## ") or ""
+    ok(block ~= "", "the README has the Options section")
+    local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n")
+    local defaults = "\n" .. (source:match("\nlocal defaults = {\n(.-)\n}\n") or "")
+    local seen, keys = {}, {}
+    for k in defaults:gmatch("\n    ([%a_][%w_]*) = ") do
+        seen[k] = true
+        table.insert(keys, k)
+    end
+    for k in pairs(opts) do
+        ok(seen[k], ("opts.%s is read from the defaults table"):format(k))
+        if not seen[k] then
+            table.insert(keys, k)
+        end
+    end
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+        ok(block:find("\n  " .. k .. " ", 1, true) ~= nil, "setup option " .. k .. " is in README Options")
+        -- A section's fields are options too; the headers table's keys are
+        -- header names, and a list holds values.
+        local v = opts[k]
+        local fields = type(v) == "table" and not vim.islist(v) and sorted_keys(v) or {}
+        local is_section = #fields > 0
+        for _, f in ipairs(fields) do
+            is_section = is_section and type(f) == "string" and f:find("^[%a_][%w_]*$") ~= nil
+        end
+        if is_section then
+            local body = "\n" .. (block:match("\n  " .. vim.pesc(k) .. " = {\n(.-)\n  },") or "")
+            for _, f in ipairs(fields) do
+                ok(
+                    body:find("\n    " .. f .. " ", 1, true) ~= nil,
+                    ("setup option %s.%s is in README Options"):format(k, f)
+                )
+            end
+        end
+    end
+end)
+
 H.finish()

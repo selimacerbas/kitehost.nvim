@@ -100,11 +100,13 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
   host             = "127.0.0.1",    -- bind address; "0.0.0.0" = all interfaces (network access)
   token            = nil,            -- optional: require ?t=<token> on /__live/events, /__live/inject and protected_paths matches but /__live/script.js (and on /__live/asset, which only a caller of server.start() that passes asset_root enables)
   protected_paths  = {},             -- Lua patterns of request paths that also require the token; /__live/script.js, the injected client, never does
+  allowed_hosts    = nil,            -- more Host names a loopback bind answers besides localhost, *.localhost and loopback addresses; true turns the check off
+  serve_dotfiles   = false,          -- serve .env, .git/ and other dot paths (default: 404; .well-known is always served)
   open_on_start    = true,           -- open browser after start/retarget
   notify           = true,           -- use vim.notify for events
   notify_on_reload = false,          -- notify on every live-reload event
   headers          = { ["Cache-Control"] = "no-cache" }, -- extra response headers
-  cors             = false,          -- true/"*", one origin (e.g. "http://localhost:3000") or a list of origins
+  cors             = false,          -- true/"*", an origin string, or a list of origins; the root route only, never /__live/*
   index_names      = { "index.html", "index.htm" }, -- index files to try in order
 
   auto_start = nil,                  -- set to auto-start on filetype, e.g.:
@@ -119,10 +121,12 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 
   directory_listing = {
     enabled     = true,              -- render an index page if no index.html
-    show_hidden = false,             -- include dotfiles in listing
+    show_hidden = false,             -- list dot entries too; needs serve_dotfiles
   },
 }
 ```
+
+`live_reload` and `directory_listing` also take `true` or `false`, which turns the section on or off and keeps its other fields. `setup()` refuses a section of any other type and a flag that is not `true` or `false`, naming it (`live_reload.enabled must be true or false, got string`), and keeps the options it had. A value the server refuses is named by the server's own key when a start fails (`live.debounce` for `live_reload.debounce`).
 
 ---
 
@@ -159,7 +163,7 @@ A line starting with `/` is anchored at the served root: `/dist` skips `dist/` a
 
 ### CORS
 
-Enable cross-origin headers on the root route's successful answers; a 401, 404 or 400 carries none, so a listed origin reads an error as a CORS failure, and `/__live/*` never carries them:
+Enable cross-origin headers on the root route's successful answers; a 401, 404 or 400 carries none, so a listed origin reads an error as a CORS failure:
 
 ```lua
 cors = true,                         -- Access-Control-Allow-Origin: *
@@ -167,7 +171,7 @@ cors = "http://localhost:3000",      -- specific origin
 cors = { "http://localhost:3000", "http://localhost:5173" }, -- a listed Origin is echoed, with Vary: Origin
 ```
 
-Useful when your frontend (on the live server) makes API calls to a separate backend.
+`cors` lets the named origins (every website, with `true`) read every file the root route serves; a request from an origin the list does not name gets no CORS header. The live endpoints (`/__live/*`), the event stream and the asset route among them, never carry a CORS header, not even one set in `headers`, so no other site reads them. Write an origin as a browser sends it (lower case, no path, no default port); any other spelling is refused at start, naming it. Leave `cors` off unless a page on another origin must fetch these files.
 
 ### Statusline
 
@@ -212,6 +216,7 @@ All under the which-key group **`<leader>l`**:
 
 * **Local by default**: binds to `127.0.0.1`. Set `host = "0.0.0.0"` in your setup opts to expose over the network (e.g. when SSH-ing in and viewing on another machine). **Be deliberate about this**: every file under the served root, except a dot path unless `serve_dotfiles` is set, becomes readable by anyone who can reach the port, traffic is plain unencrypted HTTP, and without `token` the `/__live/inject` control endpoint is open too. Set `token` (and `protected_paths` for sensitive files) when binding beyond loopback, or prefer an SSH tunnel (`ssh -L 8000:localhost:8000 <host>`), which needs no config at all.
 * **Path safety**: requests are realpath-checked to prevent escaping the served root.
+* **Host check**: on a loopback bind (`127.0.0.1`, `::1`) a request whose `Host` is not `localhost`, a `*.localhost` name or a loopback address gets `421 Misdirected Request`, so a DNS-rebinding page cannot read the server; the port is never compared, so an `ssh -L` tunnel works. Add your own names with `allowed_hosts`. A network bind (`0.0.0.0`, a LAN address) has no Host check; set `token` there.
 * **Index resolution**: root directory → `default_index` (if starting from a file) → `index_names` in order → directory listing. Subdirectories always use their own index files.
 * **Port 0 (OS-assigned)**: pass `port = 0` to let the OS pick a free port. The actual port is available via `inst.port` after `server.start()`.
 * **Same port, new path**: reusing the same port retargets the server → same URL, so browsers typically reuse the same tab.
