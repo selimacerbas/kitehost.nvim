@@ -1003,6 +1003,38 @@ H.case("Section 10: one frame per event, whatever the payload holds", function()
         not raised and err:match("sse_test%.lua:%d+: send_event: the payload is not a string %(number%)$") ~= nil,
         "a number payload raises at the caller: " .. err
     )
+    -- SSE ends a line at a CR too, so a CR alone starts a field as well.
+    raised, err = raise_of("a\rretry: 1", "{}")
+    ok(
+        not raised and err:match("sse_test%.lua:%d+: send_event: the event name holds a line break$") ~= nil,
+        "an event name with a CR raises at the caller: " .. err
+    )
+    -- A name that is no string passed the line-break check through
+    -- tostring and raised inside the frame's concat, at the server's line.
+    for _, name in ipairs({ { "nil", nil }, { "table", {} } }) do
+        raised, err = raise_of(name[2], "{}")
+        ok(
+            not raised
+                and err:match(
+                        ("sse_test%%.lua:%%d+: send_event: the event name is not a string %%(%s%%)$"):format(name[1])
+                    )
+                    ~= nil,
+            ("a %s event name raises at the caller: %s"):format(name[1], err)
+        )
+    end
+    -- No payload sends the empty object.
+    from = #table.concat(c.chunks) + 1
+    server.send_event(inst, "bare", nil)
+    data = frame_of(from, "bare")
+    ok(data:find("event: bare\ndata: {}\n\n", 1, true) == 1, "a nil payload arrives as {}: " .. vim.inspect(data))
+    -- A reason that is no string went out as its tostring, an address.
+    raised, err = pcall(function()
+        server.reload(inst, { "index.html" })
+    end)
+    ok(
+        not raised and tostring(err):match("sse_test%.lua:%d+: reload: the path is not a string %(table%)$") ~= nil,
+        "a table reload path raises at the caller: " .. tostring(err)
+    )
 end)
 
 -- stop closed each stream's socket and replaced the list, a second closer

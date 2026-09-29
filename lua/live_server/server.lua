@@ -2644,7 +2644,11 @@ end
 
 -- Live-reload controls
 function S.reload(inst, reason_path)
-    local rp = tostring(reason_path or "")
+    -- Any other value went out as its tostring, a table's address.
+    if reason_path ~= nil and type(reason_path) ~= "string" then
+        error(("reload: the path is not a string (%s)"):format(type(reason_path)), 2)
+    end
+    local rp = reason_path or ""
     local is_css = inst.css_inject and is_stylesheet(rp) or false
     -- JSON, where %q wrote a tab as \9 and a newline as a line break, which
     -- JSON.parse refused. Each value is encoded on its own: an encoded
@@ -2668,8 +2672,13 @@ function S.reload(inst, reason_path)
 end
 
 function S.send_event(inst, event_type, data)
+    -- Any other value passed the line-break check through tostring and
+    -- raised inside the frame, at this file's line.
+    if type(event_type) ~= "string" then
+        error(("send_event: the event name is not a string (%s)"):format(type(event_type)), 2)
+    end
     -- A line break in the name would start a field of its own (retry, id).
-    if tostring(event_type):find("[\r\n]") then
+    if event_type:find("[\r\n]") then
         error("send_event: the event name holds a line break", 2)
     end
     if data ~= nil and type(data) ~= "string" then
