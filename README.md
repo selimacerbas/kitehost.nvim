@@ -279,7 +279,7 @@ server.connected_client_count(inst)                             -- number of SSE
 server.stop(inst)                                               -- shut down
 ```
 
-`update_target` raises on a root it cannot serve (one that does not resolve) and changes nothing, returns nothing on a stopped server, and returns false with one warning when live reload is on and the new root cannot be watched; `server.enable_live(inst, true)` returns false with one warning, and live reload stays off, when the watcher cannot start.
+`update_target` raises on a root it cannot serve (one that does not resolve) and changes nothing, returns false on a stopped server, and returns false with one warning when live reload is on and the new root cannot be watched; `server.enable_live(inst, true)` returns false with one warning, and live reload stays off, when the watcher cannot start.
 
 ### HTTP event injection
 

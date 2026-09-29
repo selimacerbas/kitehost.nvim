@@ -1734,6 +1734,7 @@ H.case("Section 8: a stopped server's update_target and enable_live open nothing
     local live_root = live.root
     local updated, update_err = pcall(server.update_target, live, H.tmpdir(), nil)
     ok(updated, "update_target on a stopped server raises nothing: " .. tostring(update_err))
+    eq(update_err, false, "and answers false, as enable_live does")
     eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
     local enabled, got = pcall(server.enable_live, off, true)
     ok(enabled, "enable_live on a stopped server raises nothing: " .. tostring(got))
