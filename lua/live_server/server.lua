@@ -752,14 +752,68 @@ local function is_stylesheet(path)
     return path:match("%.css$") ~= nil
 end
 
--- A page changed beside a stylesheet must reload whole, where a swap left it stale.
-local function window_path(window)
-    for i = #window, 1, -1 do
-        if not is_stylesheet(window[i]) then
-            return window[i]
+-- One reload frame, a swap when css and css_inject hold.
+local function send_reload(inst, rp, css)
+    local is_css = inst.css_inject and css or false
+    -- JSON, where %q wrote a tab as \9 and a newline as a line break, which
+    -- JSON.parse refused. Each value is encoded on its own: an encoded
+    -- table's key order is the hash's, which differs between processes
+    -- (measured), and the escaping stays the library's (0.10's writes a
+    -- slash as \/), so a reader decodes the payload and never compares it.
+    local payload = ('{"ts":%s,"path":%s,"css":%s}'):format(
+        vim.json.encode(os.time()),
+        vim.json.encode(rp),
+        vim.json.encode(is_css)
+    )
+    sse_broadcast(inst, "reload", payload)
+    -- The path may be a peer's file name, so the line is marked.
+    if inst.notify_on_reload then
+        local line = util.marked(("Reload%s → %s"):format(is_css and " (CSS)" or "", rp ~= "" and rp or "manual"))
+        vim.schedule(function()
+            util.notify(line, { notify = true })
+        end)
+    end
+end
+
+-- Whether a window's path still names something at the send; the root
+-- ("/") always does, and a stat that fails but for ENOENT keeps it.
+local function still_there(inst, path)
+    if path == "/" or path == "" then
+        return true
+    end
+    local st, _, st_name = uv.fs_lstat(util.joinpath(inst.root_real, path))
+    return st ~= nil or st_name ~= "ENOENT"
+end
+
+-- A page changed beside a stylesheet must reload whole, where a swap left
+-- it stale. Neovim's :w writes a probe (4913) and a backup (name~) beside
+-- the file and deletes both, and a save through a temporary name renames
+-- it away, so a stylesheet save reloaded the page naming a file already
+-- gone (measured): a path gone by the send is dropped, unless all are,
+-- since a deleted page must reload. The path and whether it is a swap.
+local function window_send(inst, window)
+    local order = {}
+    for path, seq in pairs(window) do
+        order[#order + 1] = { path = path, seq = seq }
+    end
+    table.sort(order, function(a, b)
+        return a.seq < b.seq
+    end)
+    local alive = {}
+    for _, entry in ipairs(order) do
+        if still_there(inst, entry.path) then
+            alive[#alive + 1] = entry.path
         end
     end
-    return window[#window] or ""
+    if #alive == 0 then
+        return order[#order] and order[#order].path or "", false
+    end
+    for i = #alive, 1, -1 do
+        if not is_stylesheet(alive[i]) then
+            return alive[i], false
+        end
+    end
+    return alive[#alive], true
 end
 
 local function schedule_reload(inst, changed_path)
@@ -786,37 +840,30 @@ local function schedule_reload(inst, changed_path)
     -- name keeps its path, so a started-on stylesheet still swaps.
     local path = (own and has_dot_segment(rel)) and "/" or rel
     -- Each path once, at its latest change: a file written faster than the
-    -- debounce restarts it at every write.
+    -- debounce restarts it at every write. A map to the change's number,
+    -- sorted at the send, where a move to the end was quadratic in a burst.
     if path then
-        if inst.reload_seen[path] then
-            for i, seen in ipairs(inst.reload_window) do
-                if seen == path then
-                    table.remove(inst.reload_window, i)
-                    break
-                end
-            end
-        end
-        inst.reload_seen[path] = true
-        table.insert(inst.reload_window, path)
+        inst.reload_seq = inst.reload_seq + 1
+        inst.reload_window[path] = inst.reload_seq
     end
     inst.debounce_timer:stop()
     -- start refuses a closing timer, and the change was then dropped with
     -- no word (measured through a stub).
     local armed, arm_err = inst.debounce_timer:start(inst.live_debounce, 0, function()
         local window = inst.reload_window
-        inst.reload_window, inst.reload_seen = {}, {}
-        S.reload(inst, window_path(window))
+        inst.reload_window = {}
+        send_reload(inst, window_send(inst, window))
     end)
     if not armed then
         -- A window no timer will send is dropped, or it grows at every change.
-        inst.reload_window, inst.reload_seen = {}, {}
+        inst.reload_window = {}
         warn_once(inst, "reload", ("could not schedule a reload (%s); restart the server"):format(tostring(arm_err)))
     end
 end
 
 -- A pending window would reload after live reload is reported off.
 local function drop_window(inst)
-    inst.reload_window, inst.reload_seen = {}, {}
+    inst.reload_window = {}
     local timer = inst.debounce_timer
     if timer and not timer:is_closing() then
         local stopped, stop_err = timer:stop()
@@ -2527,8 +2574,9 @@ function S.start(cfg)
         live_debounce = checked.live_debounce,
         css_inject = checked.css_inject,
         sse_clients = {},
+        -- Path to the number of its latest change (schedule_reload).
         reload_window = {},
-        reload_seen = {},
+        reload_seq = 0,
         heartbeat_ms = checked.heartbeat_ms,
         -- The kinds of fault the user was told of (warn_once).
         warned = {},
@@ -2761,25 +2809,7 @@ function S.reload(inst, reason_path)
         error(("reload: the path is not a string (%s)"):format(type(reason_path)), 2)
     end
     local rp = reason_path or ""
-    local is_css = inst.css_inject and is_stylesheet(rp) or false
-    -- JSON, where %q wrote a tab as \9 and a newline as a line break, which
-    -- JSON.parse refused. Each value is encoded on its own: an encoded
-    -- table's key order is the hash's, which differs between processes
-    -- (measured), and the escaping stays the library's (0.10's writes a
-    -- slash as \/), so a reader decodes the payload and never compares it.
-    local payload = ('{"ts":%s,"path":%s,"css":%s}'):format(
-        vim.json.encode(os.time()),
-        vim.json.encode(rp),
-        vim.json.encode(is_css)
-    )
-    sse_broadcast(inst, "reload", payload)
-    -- The path may be a peer's file name, so the line is marked.
-    if inst.notify_on_reload then
-        local line = util.marked(("Reload%s → %s"):format(is_css and " (CSS)" or "", rp ~= "" and rp or "manual"))
-        vim.schedule(function()
-            util.notify(line, { notify = true })
-        end)
-    end
+    send_reload(inst, rp, is_stylesheet(rp))
 end
 
 function S.send_event(inst, event_type, data)

@@ -1000,7 +1000,7 @@ H.case("Section 11: a mixed debounce window reloads the page", function()
     vim.wait(300)
     -- The root's own directory may be named too (Section 7b), once.
     local times = {}
-    for _, p in ipairs(inst.reload_window) do
+    for p in pairs(inst.reload_window) do
         times[p] = (times[p] or 0) + 1
     end
     local repeated = false
@@ -1072,6 +1072,129 @@ H.case("Section 11: a mixed debounce window reloads the page", function()
     ok(
         #named == 1 and named[1].path == "a.html",
         "a.html, b.html, then a.html again in one window send one reload naming a.html: " .. shown(named)
+    )
+end)
+
+-- Neovim's :w with default options writes a probe file (4913) and a
+-- backup (style.css~) beside the file and deletes both, so a stylesheet
+-- save filled the window with other names and the page reloaded, naming
+-- a file already gone (measured); a save through a temporary name and a
+-- rename did the same. A path gone by the send is dropped, unless every
+-- one is: a deleted page, or stylesheet, reloads the page. The window is
+-- a map, sorted at the send, so a burst is linear.
+H.case("Section 11b: a save's vanished temp files never decide the reload", function()
+    local function shown(got)
+        return vim.inspect(got, { newline = " ", indent = "" })
+    end
+    -- The reload frames act causes on a fresh live server over site.
+    local function frames_after(site, debounce, act)
+        local base = serve(site, { live = { enabled = true, debounce = debounce, inject_script = false } })
+        local port = tonumber(base:match(":(%d+)$"))
+        local c = assert(H.raw_connect(port))
+        H.defer(function()
+            c:close()
+        end)
+        assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
+        c:read(2000, function(b)
+            return b:find("retry: 1000\n\n", 1, true) ~= nil
+        end)
+        -- FSEvents delivered a fixture written just before the watcher
+        -- started after the stream opened (measured), so it settles first.
+        vim.wait(600)
+        local mark = #table.concat(c.chunks)
+        act()
+        local t0 = uv.hrtime()
+        c:read(debounce + 3000, function(b)
+            return #reloads(b, mark) > 0
+        end)
+        local took = math.floor((uv.hrtime() - t0) / 1e6)
+        -- A second frame from a late event would land in this wait.
+        vim.wait(600)
+        return reloads(table.concat(c.chunks), mark), took
+    end
+    local function sheet_site()
+        local site = H.tmpdir()
+        H.write_file(site .. "/index.html", "<html><body>0</body></html>")
+        H.write_file(site .. "/style.css", "body{}")
+        return site
+    end
+
+    -- The fixture sits under $TMPDIR, which backupskip names by default,
+    -- so the child clears it: every other option is Neovim's default, as
+    -- in a project directory.
+    local saved = sheet_site()
+    local save_result
+    local by_nvim = frames_after(saved, 300, function()
+        save_result = vim.system({
+            vim.v.progpath,
+            "--headless",
+            "-u",
+            "NONE",
+            "-c",
+            "set backupskip=",
+            "-c",
+            "edit " .. vim.fn.fnameescape(saved .. "/style.css"),
+            "-c",
+            "normal! Goa{}",
+            "-c",
+            "write",
+            "-c",
+            "qall!",
+        }):wait(5000)
+    end)
+    eq(save_result and H.exit_code(save_result), 0, "a child Neovim saves style.css")
+    ok(
+        #by_nvim == 1 and by_nvim[1].css == true and by_nvim[1].path == "style.css",
+        "a stylesheet saved by Neovim's :w sends one swap naming it: " .. shown(by_nvim)
+    )
+
+    local renamed = sheet_site()
+    local by_rename = frames_after(renamed, 300, function()
+        H.write_file(renamed .. "/style.css.tmp", "body{color:red}")
+        assert(uv.fs_rename(renamed .. "/style.css.tmp", renamed .. "/style.css"))
+    end)
+    ok(
+        #by_rename == 1 and by_rename[1].css == true and by_rename[1].path == "style.css",
+        "a stylesheet saved through a temporary name sends one swap naming it: " .. shown(by_rename)
+    )
+
+    local gone_page = sheet_site()
+    H.write_file(gone_page .. "/page.html", "<html><body>page</body></html>")
+    local page_frames = frames_after(gone_page, 300, function()
+        assert(uv.fs_unlink(gone_page .. "/page.html"))
+    end)
+    ok(
+        #page_frames == 1 and page_frames[1].css == false and page_frames[1].path == "page.html",
+        "a deleted page alone reloads the page, naming it: " .. shown(page_frames)
+    )
+    local gone_sheet = sheet_site()
+    local sheet_frames = frames_after(gone_sheet, 300, function()
+        assert(uv.fs_unlink(gone_sheet .. "/style.css"))
+    end)
+    ok(
+        #sheet_frames == 1 and sheet_frames[1].css == false and sheet_frames[1].path == "style.css",
+        "a deleted stylesheet alone reloads the page, naming it: " .. shown(sheet_frames)
+    )
+
+    -- 200 pages written twice, in order: the last written is named, and
+    -- the window is sent within 2 s of the last write.
+    local burst = H.tmpdir()
+    for i = 1, 200 do
+        H.write_file(("%s/f%03d.html"):format(burst, i), "0")
+    end
+    local burst_frames, took = frames_after(burst, 500, function()
+        for write = 1, 2 do
+            for i = 1, 200 do
+                H.write_file(("%s/f%03d.html"):format(burst, i), tostring(write))
+            end
+        end
+    end)
+    ok(
+        #burst_frames == 1 and burst_frames[1].path == "f200.html" and took < 2000,
+        ("a burst of 200 pages written twice sends one reload naming the last, within 2 s (%d ms): %s"):format(
+            took,
+            shown(burst_frames)
+        )
     )
 end)
 
