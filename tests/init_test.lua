@@ -516,12 +516,31 @@ end)
 -- host = "::1" opened http://::1:<port>/, which no browser parses: the
 -- colons read as the port.
 H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
+    -- open_existing reads the configured host, so these need no bind: any
+    -- IPv6 host is bracketed, and one given bracketed is bracketed once.
+    H.defer(function()
+        picked_port = 0
+    end)
+    for _, pair in ipairs({
+        { "2001:db8::1", "http://[2001:db8::1]:8123/" },
+        { "[::1]", "http://[::1]:8123/" },
+    }) do
+        package.loaded["live_server"] = nil
+        local ls = require("live_server")
+        ls.setup({ notify = false, host = pair[1] })
+        opened, picked_port = {}, 8123
+        ls.open_existing()
+        picked_port = 0
+        eq(opened[1], pair[2], ("a configured %s opens %s"):format(pair[1], pair[2]))
+    end
+
     local probe = assert(vim.uv.new_tcp())
     local v6, v6_err = probe:bind("::1", 0)
     probe:close()
     if not v6 then
         H.skip("an IPv6 loopback bind opens http://[::1]:<port>/ (no IPv6 loopback here: " .. tostring(v6_err) .. ")")
         H.skip("an IPv6 wildcard bind opens http://[::1]:<port>/ (no IPv6 loopback here)")
+        H.skip("the token follows the bracket (no IPv6 loopback here)")
         return
     end
     local _, url = start_with({ host = "::1" })
@@ -533,6 +552,11 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
     ok(
         url ~= nil and url:match("^http://%[::1%]:%d+/$") ~= nil,
         "an IPv6 wildcard bind opens http://[::1]:<port>/: " .. tostring(url)
+    )
+    _, url = start_with({ host = "::1", token = "a&b" })
+    ok(
+        url ~= nil and url:match("^http://%[::1%]:%d+/%?t=a%%26b$") ~= nil,
+        "the token follows the bracket, encoded: " .. tostring(url)
     )
 end)
 

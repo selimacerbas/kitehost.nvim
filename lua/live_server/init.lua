@@ -79,8 +79,8 @@ local start_for_path -- forward declaration (used by auto_start and start_picker
 -- start keeps non-empty, or nil.
 local function browser_url(host, port, token)
     local display = server.wildcard_loopback(host) or host
-    -- An IPv6 literal takes brackets, or its colons read as the port.
-    if display:find(":", 1, true) then
+    -- An IPv6 literal takes brackets once, or its colons read as the port.
+    if display:find(":", 1, true) and display:sub(1, 1) ~= "[" then
         display = "[" .. display .. "]"
     end
     local url = ("http://%s:%d/"):format(display, port)
