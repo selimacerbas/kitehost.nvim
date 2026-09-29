@@ -1,6 +1,6 @@
 # live-server.nvim
 
-A tiny, zero-dependency **local web server** for Neovim — written in pure Lua with `vim.uv`.
+A tiny, zero-dependency **local web server** for Neovim, written in pure Lua with `vim.uv`.
 Start a server on any file or folder, auto-reload the browser on save, and quickly reopen existing ports.
 
 * **Pure Lua**: no npm, no Python, no binaries.
@@ -99,9 +99,9 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
   default_port     = 8000,           -- default suggestion in the port picker
   host             = "127.0.0.1",    -- bind address; "0.0.0.0" = all interfaces (network access)
   token            = nil,            -- optional: require ?t=<token> on /__live/events, /__live/inject and protected_paths matches but /__live/script.js (and on /__live/asset, which only a caller of server.start() that passes asset_root enables)
-  protected_paths  = {},             -- Lua patterns of request paths that also require the token; /__live/script.js, the injected client, never does
+  protected_paths  = {},             -- Lua patterns of request paths that also require the token; /__live/script.js, the injected client, never does; a non-empty list needs `token`
   allowed_hosts    = nil,            -- more Host names a loopback bind answers besides localhost, *.localhost and loopback addresses; true turns the check off
-  serve_dotfiles   = false,          -- serve .env, .git/ and other dot paths (default: 404; .well-known is always served)
+  serve_dotfiles   = false,          -- serve .env, .git/ and other dot paths (default: 404; `/.well-known/` at the root is served)
   open_on_start    = true,           -- open browser after start/retarget
   notify           = true,           -- use vim.notify for events
   notify_on_reload = false,          -- notify on every live-reload event
@@ -126,7 +126,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 }
 ```
 
-`live_reload` and `directory_listing` also take `true` or `false`, which turns the section on or off and keeps its other fields. `setup()` refuses a section of any other type and a flag that is not `true` or `false`, naming it (`live_reload.enabled must be true or false, got string`), and keeps the options it had. A value the server refuses is named by the server's own key when a start fails (`live.debounce` for `live_reload.debounce`).
+`live_reload` and `directory_listing` also take `true` or `false`, which turns the section on or off and keeps its other fields. `setup()` refuses a section of any other type and a flag that is not `true` or `false`, naming it (`live_reload.enabled must be true or false, got string`; `open_on_start`, `notify` and `serve_dotfiles` the same way; `auto_start` must be a table), and keeps the options it had. A value the server refuses is named by the server's own key when a start fails (`live.debounce` for `live_reload.debounce`).
 
 ---
 
@@ -134,7 +134,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 
 ### CSS hot-inject
 
-When `css_inject` is enabled (default), editing a `.css` file triggers an instant stylesheet swap in the browser — no full page reload, no DOM state lost. All other file changes still trigger a full reload.
+When `css_inject` is enabled (default), editing a `.css` file triggers an instant stylesheet swap in the browser: no full page reload, no DOM state lost. All other file changes still trigger a full reload.
 A change under a dot path (`.env`, `.git/`) pushes no reload unless `serve_dotfiles` is set, the file you started on excepted, and `.liveignore` patterns match the path relative to the served root.
 
 ### Auto-start
@@ -145,7 +145,7 @@ Set `auto_start` to automatically start a server when you open a matching filety
 auto_start = { filetypes = { "html" }, port = 8000 }
 ```
 
-The server starts once per directory — opening another HTML file in the same folder won't spawn a duplicate.
+The server starts once per directory: opening another HTML file in the same folder won't spawn a duplicate.
 
 ### `.liveignore`
 
@@ -171,7 +171,7 @@ cors = "http://localhost:3000",      -- specific origin
 cors = { "http://localhost:3000", "http://localhost:5173" }, -- a listed Origin is echoed, with Vary: Origin
 ```
 
-`cors` lets the named origins (every website, with `true`) read every file the root route serves; a request from an origin the list does not name gets no CORS header. The live endpoints (`/__live/*`), the event stream and the asset route among them, never carry a CORS header, not even one set in `headers`, so no other site reads them. Write an origin as a browser sends it (lower case, no path, no default port); any other spelling is refused at start, naming it. Leave `cors` off unless a page on another origin must fetch these files.
+`cors` lets the named origins (every website, with `true`) read every file the root route serves; with a list, a request from an origin it does not name gets no CORS header; one origin string is sent on every answer, and only that origin may read it. The live endpoints (`/__live/*`), the event stream and the asset route among them, never carry a CORS header, not even one set in `headers`, so no other site reads them. Write an origin as a browser sends it: any other spelling a browser never sends (an upper-case letter, a path, a default port) is refused at start, naming it; write an IP address in its usual form (127.0.0.1, not 127.1), which start does not check. Leave `cors` off unless a page on another origin must fetch these files.
 
 ### Statusline
 
@@ -190,7 +190,7 @@ Returns `"[LS :8000]"` when a server is running, or `""` when idle.
 
 ### Styled error pages
 
-404 and 400 errors display a clean, dark-mode-aware HTML page instead of raw text — easier to spot during development.
+404 and 400 errors display a clean, dark-mode-aware HTML page instead of raw text, easier to spot during development.
 
 ---
 
@@ -208,7 +208,7 @@ All under the which-key group **`<leader>l`**:
 | `<leader>lS` | Stop one (pick port)           |
 | `<leader>lA` | Stop all                       |
 
-> We register only the **group label** in `init`, and return actual mappings in `keys` — the recommended pattern for Folke's ecosystem to avoid conflicts and enable lazy-loading on keypress.
+> We register only the **group label** in `init`, and return actual mappings in `keys`, the recommended pattern for Folke's ecosystem to avoid conflicts and enable lazy-loading on keypress.
 
 ---
 

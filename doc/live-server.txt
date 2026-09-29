@@ -37,8 +37,8 @@ REQUIREMENTS                                    *live-server-requirements*
 - Linux, macOS, or Windows
 
 Optional:
-- telescope.nvim — better path/port picker UX
-- which-key.nvim — keymap group labels
+- telescope.nvim: better path/port picker UX
+- which-key.nvim: keymap group labels
 
 ===============================================================================
 COMMANDS                                        *live-server-commands*
@@ -161,8 +161,8 @@ gates `/__live/asset` too.
         auto_start = { filetypes = { "html" }, port = 8000 }
 <
     Fields:
-    - `filetypes` (string[]) — Neovim filetypes to trigger on.
-    - `port` (number, optional) — Port to use. Falls back to `default_port`.
+    - `filetypes` (string[]): Neovim filetypes to trigger on.
+    - `port` (number, optional): Port to use. Falls back to `default_port`.
 
 `live_reload.enabled` (boolean, default true)
     Watch files under the served root and push SSE reload events. A
