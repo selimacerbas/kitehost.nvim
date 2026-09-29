@@ -2433,6 +2433,37 @@ H.case("Section 9b: turning live reload off drops the pending window", function(
         not table.concat(c.chunks):find("event: reload", mark + 1, true),
         "and no reload is sent within 2 s: " .. table.concat(c.chunks):sub(mark + 1)
     )
+
+    -- The failure that turns live reload off drops the window the same way.
+    local real_new, real_notify = uv.new_fs_event, vim.notify
+    H.defer(function()
+        uv.new_fs_event, vim.notify = real_new, real_notify
+    end)
+    vim.notify = function() end
+    eq(server.enable_live(inst, true), true, "live reload turned on again")
+    vim.wait(600)
+    mark = #table.concat(c.chunks)
+    H.write_file(site .. "/index.html", "<html><body>2</body></html>")
+    ok(
+        H.wait_for(function()
+            return next(inst.reload_window) ~= nil
+        end, 2000),
+        "a second change opens a window"
+    )
+    uv.new_fs_event = function()
+        return nil, "EMFILE: stubbed", "EMFILE"
+    end
+    local retargeted = server.update_target(inst, site, nil)
+    uv.new_fs_event = real_new
+    eq(retargeted, false, "a retarget whose watcher cannot start answers false")
+    eq(next(inst.reload_window), nil, "and empties the window")
+    c:read(2000, function(b)
+        return b:find("event: reload", mark + 1, true) ~= nil
+    end)
+    ok(
+        not table.concat(c.chunks):find("event: reload", mark + 1, true),
+        "and no reload is sent within 2 s: " .. table.concat(c.chunks):sub(mark + 1)
+    )
 end)
 
 H.finish()
