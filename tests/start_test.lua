@@ -1237,6 +1237,55 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     end
 end)
 
+-- An IPv6 wildcard bind is opened on [::1], so its start probes ::1 as an
+-- IPv4 one probes 127.0.0.1: a program listening on ::1 alone shares the
+-- port on macOS and would take the URL, token and all.
+H.case("an IPv6 wildcard bind raises unless ::1, its URL's address, is free", function()
+    eq(server.wildcard_loopback("::"), "::1", "the IPv6 wildcard is reached on ::1")
+    local hold = assert(vim.uv.new_tcp())
+    H.defer(function()
+        if not hold:is_closing() then
+            hold:close()
+        end
+    end)
+    local held, held_err = hold:bind("::1", 0)
+    if held then
+        held, held_err = hold:listen(8, function() end)
+    end
+    if not held then
+        hold:close()
+        H.skip("a :: start beside a ::1 listener raises (no IPv6 loopback here: " .. tostring(held_err) .. ")")
+        H.skip("leaving no socket")
+        return
+    end
+    local port = hold:getsockname().port
+    -- Whether this machine lets a wildcard bind share the port at all.
+    local beside = assert(vim.uv.new_tcp())
+    local shares, shares_err = beside:bind("::", port)
+    if shares then
+        shares, shares_err = beside:getsockname()
+    end
+    beside:close()
+    local before = H.handle_count("tcp")
+    local started, res = pcall(server.start, { host = "::", port = port, root = root })
+    if started then
+        server.stop(res)
+    end
+    local open = H.handle_count("tcp") - before
+    res = tostring(res)
+    if shares then
+        ok(
+            not started
+                and res:find("Failed to bind :::" .. port, 1, true) == 1
+                and res:find("another socket holds ::1:" .. port, 1, true) ~= nil,
+            "a :: start beside a ::1 listener raises, naming both addresses: " .. res
+        )
+    else
+        H.skip("a :: start beside a ::1 listener raises (the bind beside it fails: " .. tostring(shares_err) .. ")")
+    end
+    eq(open, 0, "a :: start beside a ::1 listener leaves no socket")
+end)
+
 -- The root was resolved after the server's socket was bound, and its raise
 -- left that socket open for the rest of the session.
 H.case("a root that does not resolve is refused before any socket opens", function()

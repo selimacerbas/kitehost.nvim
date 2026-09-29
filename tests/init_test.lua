@@ -427,8 +427,10 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     local notes = {}
     local suite_notify = vim.notify
     local real_realpath = vim.uv.fs_realpath
+    -- The suite's picker, not the real one, so a later section still runs.
+    local suite_pick_path = util.pick_path
     H.defer(function()
-        vim.notify, vim.uv.fs_realpath, util.pick_path, picked_port = suite_notify, real_realpath, real_pick_path, 0
+        vim.notify, vim.uv.fs_realpath, util.pick_path, picked_port = suite_notify, real_realpath, suite_pick_path, 0
     end)
     vim.notify = function(msg, level)
         table.insert(notes, { msg = msg, level = level })
@@ -509,6 +511,29 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     )
     eq(said.level, vim.log.levels.WARN, "as a warning")
     eq(#notes, 1, "and is the one notice")
+end)
+
+-- host = "::1" opened http://::1:<port>/, which no browser parses: the
+-- colons read as the port.
+H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
+    local probe = assert(vim.uv.new_tcp())
+    local v6, v6_err = probe:bind("::1", 0)
+    probe:close()
+    if not v6 then
+        H.skip("an IPv6 loopback bind opens http://[::1]:<port>/ (no IPv6 loopback here: " .. tostring(v6_err) .. ")")
+        H.skip("an IPv6 wildcard bind opens http://[::1]:<port>/ (no IPv6 loopback here)")
+        return
+    end
+    local _, url = start_with({ host = "::1" })
+    ok(
+        url ~= nil and url:match("^http://%[::1%]:%d+/$") ~= nil,
+        "an IPv6 loopback bind opens http://[::1]:<port>/: " .. tostring(url)
+    )
+    _, url = start_with({ host = "::" })
+    ok(
+        url ~= nil and url:match("^http://%[::1%]:%d+/$") ~= nil,
+        "an IPv6 wildcard bind opens http://[::1]:<port>/: " .. tostring(url)
+    )
 end)
 
 local errors = 0

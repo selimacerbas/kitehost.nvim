@@ -1329,6 +1329,9 @@ function S.wildcard_loopback(ip)
     if ip == "0.0.0.0" then
         return "127.0.0.1"
     end
+    if ip == "::" then
+        return "::1"
+    end
     return nil
 end
 
