@@ -922,6 +922,52 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
     check("a .liveignore whose stat fails", failing, "EIO: stubbed", function()
         uv.fs_stat = real_stat
     end)
+
+    -- Each bound alone: the stat's keeps a large file from being opened
+    -- at all, and the descriptor's catches one swapped in after the stat.
+    local real_open, real_fstat = uv.fs_open, uv.fs_fstat
+    H.defer(function()
+        uv.fs_open, uv.fs_fstat = real_open, real_fstat
+    end)
+    local large = site_with(big)
+    local large_file = vim.fs.joinpath(assert(uv.fs_realpath(large)), ".liveignore")
+    local opened = 0
+    uv.fs_open = function(path, ...)
+        if path == large_file then
+            opened = opened + 1
+        end
+        return real_open(path, ...)
+    end
+    check("a 70 KiB .liveignore (opens counted)", large, over, function()
+        uv.fs_open = real_open
+    end)
+    eq(opened, 0, "and a 70 KiB .liveignore is never opened")
+
+    local swapped = site_with("dist\n")
+    local swapped_file = vim.fs.joinpath(assert(uv.fs_realpath(swapped)), ".liveignore")
+    local swapped_fd
+    uv.fs_stat = function(path, ...)
+        if path == swapped_file then
+            return { type = "file", size = 5 }
+        end
+        return real_stat(path, ...)
+    end
+    uv.fs_open = function(path, ...)
+        local fd, err, name = real_open(path, ...)
+        if path == swapped_file then
+            swapped_fd = fd
+        end
+        return fd, err, name
+    end
+    uv.fs_fstat = function(fd, ...)
+        if fd ~= nil and fd == swapped_fd then
+            return { type = "file", size = 71680 }
+        end
+        return real_fstat(fd, ...)
+    end
+    check("a .liveignore that grows past the bound after its stat", swapped, over, function()
+        uv.fs_stat, uv.fs_open, uv.fs_fstat = real_stat, real_open, real_fstat
+    end)
 end)
 
 -- Two changes inside one debounce window kept the last path alone, so
