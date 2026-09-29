@@ -861,7 +861,12 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         t:close()
         return bound ~= nil and bound ~= false
     end
-    for _, pair in ipairs({ { "0.0.0.0", "127.0.0.1" }, { "::", "::1" }, { "0.0.0.0", "::ffff:127.0.0.1" } }) do
+    for _, pair in ipairs({
+        { "0.0.0.0", "127.0.0.1" },
+        { "::", "::1" },
+        { "0.0.0.0", "::ffff:127.0.0.1" },
+        { "::", "127.0.0.1" },
+    }) do
         local wildcard, specific = pair[1], pair[2]
         local got = binds(specific) and held_by(wildcard, specific)
         if not got then
@@ -876,18 +881,16 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             H.skip("leaving no socket")
             H.skip("and no descriptor")
         else
-            local here, there = ("%s:%d"):format(specific, got.port), ("%s:%d"):format(wildcard, got.port)
-            -- Linux refuses the bind before the probe, naming the address.
+            local here = ("%s:%d"):format(specific, got.port)
+            -- Linux refuses the bind before the probe, with the bind's own cause.
+            local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
+                got.port
+            )
+            local bind_refused = not got.res:find("another socket", 1, true) and got.res:find("EADDRINUSE", 1, true)
             ok(
                 not got.started
                     and got.res:find("Failed to bind " .. here, 1, true) == 1
-                    and (
-                        got.res:find(
-                            ("another socket holds %s, which this address would shadow"):format(there),
-                            1,
-                            true
-                        ) or got.res:find("EADDRINUSE", 1, true)
-                    ),
+                    and (got.res:find(shadow, 1, true) or bind_refused),
                 ("a %s start beside a %s listener raises, naming both: %s"):format(specific, wildcard, got.res)
             )
             eq(got.tcp, 0, ("a %s start beside a %s listener leaves no socket"):format(specific, wildcard))

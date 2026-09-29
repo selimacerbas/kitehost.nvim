@@ -2412,9 +2412,9 @@ function S.start(cfg)
             local there = wildcard .. ":" .. tostring(bound.port)
             if why_name == "EADDRINUSE" then
                 error(
-                    ("Failed to bind %s: another socket holds %s, which this address would shadow (%s)"):format(
+                    ("Failed to bind %s: another socket holds a wildcard on port %d, which this address would shadow (%s)"):format(
                         here,
-                        there,
+                        bound.port,
                         tostring(why)
                     ),
                     0
