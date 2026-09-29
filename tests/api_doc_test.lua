@@ -18,6 +18,10 @@ local ok = H.ok
 
 local readme = table.concat(vim.fn.readfile(H.root .. "/README.md"), "\n")
 local section = readme:match("\n### Server%-level API %(for plugin authors%)\n(.-)\n### ") or ""
+-- The notices' paragraph describes them for a person and says it stands
+-- outside the promise, so nothing it names is read as promised.
+local notices
+section, notices = section:gsub("\nOutside the promise,[^\n]*", "")
 
 local function sorted_keys(t)
     local keys = vim.tbl_keys(t)
@@ -32,6 +36,7 @@ H.case("every export of live_server.server is documented", function()
         ok(section:find(shown, 1, true) ~= nil, ("server.%s is documented"):format(name))
     end
     ok(section:find("SemVer", 1, true) ~= nil, "the section says SemVer covers it")
+    ok(notices == 1, "the notices' paragraph is set outside the promise")
 end)
 
 -- Read in the flags' own paragraph, where a flag named like an option
@@ -94,7 +99,9 @@ H.case("every option start reads is documented", function()
 end)
 
 -- The instance table holds the server's own state; two fields are
--- promised, and naming any other as inst.<field> would promise it too.
+-- promised, and naming any other as inst.<field> would promise it too,
+-- whether or not a given instance carries it (token is set only with a
+-- token), so every inst.<name> the section writes is read.
 H.case("the instance's two public fields, and no other, are documented", function()
     local inst = server.start({ port = 0, root = H.tmpdir() })
     H.defer(function()
@@ -104,12 +111,14 @@ H.case("the instance's two public fields, and no other, are documented", functio
         ok(inst[field] ~= nil, ("a started instance holds %s"):format(field))
         ok(section:find("inst%." .. field .. "%f[^%w_]") ~= nil, ("inst.%s is documented"):format(field))
     end
-    local named = {}
-    for _, field in ipairs(sorted_keys(inst)) do
-        if field ~= "host" and field ~= "port" and section:find("inst%." .. vim.pesc(field) .. "%f[^%w_]") then
+    local named, seen = {}, {}
+    for field in section:gmatch("inst%.([%a_][%w_]*)") do
+        if field ~= "host" and field ~= "port" and not seen[field] then
+            seen[field] = true
             table.insert(named, field)
         end
     end
+    table.sort(named)
     ok(#named == 0, "no other field is named: " .. table.concat(named, ", "))
 end)
 
