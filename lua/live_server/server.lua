@@ -2641,13 +2641,20 @@ end
 
 -- A stopped server's reload timer is closed, so a watcher opened here
 -- would reload nothing and nothing would close it. false when live reload
--- was on and the new root cannot be watched.
+-- was on and the new root cannot be watched; a root that does not resolve
+-- raises at the caller and changes nothing.
 function S.update_target(inst, new_root, new_index)
     if inst.handle:is_closing() then
         return
     end
+    -- One that does not resolve left inst.root naming it while the old one
+    -- was served.
+    local root_real, real_err = uv.fs_realpath(new_root)
+    if not root_real then
+        error(("update_target: root %s does not resolve (%s)"):format(tostring(new_root), tostring(real_err)), 2)
+    end
     inst.root = new_root
-    inst.root_real = uv.fs_realpath(new_root) or inst.root_real
+    inst.root_real = root_real
     inst.default_index = new_index
     read_liveignore(inst)
     if inst.live_enabled then

@@ -22,6 +22,7 @@
 -- start refuses a live start and turns live reload off at enable_live
 -- and update_target, with one warning, and a directory under the root
 -- that cannot be watched or read is dropped with one warning.
+-- update_target refuses a root that does not resolve and changes nothing.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -936,6 +937,21 @@ H.case("Section 5b: the set holds the open connections alone", function()
         methods.accept = real_accept
     end)
     local failed = false
+    local accept_notes, heads = {}, 0
+    local accept_notify, accept_timer = vim.notify, uv.new_timer
+    H.defer(function()
+        vim.notify, uv.new_timer = accept_notify, accept_timer
+    end)
+    vim.notify = function(msg, level)
+        table.insert(accept_notes, { msg = msg, level = level })
+    end
+    uv.new_timer = function(...)
+        if vim.in_fast_event() then
+            heads = heads + 1
+        end
+        return accept_timer(...)
+    end
+    local open_before = inst.open_conns
     methods.accept = function(listener)
         methods.accept = real_accept
         local taken = assert(uv.new_tcp())
@@ -952,6 +968,12 @@ H.case("Section 5b: the set holds the open connections alone", function()
         "the server met the failed accept within 1 s"
     )
     methods.accept = real_accept
+    uv.new_timer = accept_timer
+    vim.wait(100)
+    vim.notify = accept_notify
+    eq(#accept_notes, 0, "a failed accept tells the user nothing: " .. vim.inspect(accept_notes))
+    eq(inst.open_conns, open_before, "takes no place")
+    eq(heads, 0, "and makes no head timer")
     ok(
         H.wait_for(function()
             return H.handle_count("tcp") == tcps + 1
@@ -1146,9 +1168,10 @@ H.case("Section 6b: a connection's timer lives while its head is unread", functi
         end
         return due ~= nil
     end, 1000)
+    eq(inst.header_timeout, 10000, "by default the header timeout is 10 s")
     ok(
-        due ~= nil and due > 9000 and due <= 10000,
-        ("by default a connection waits 10 s for its head (due in %s ms)"):format(tostring(due))
+        due ~= nil and due >= 9900 and due <= 10000,
+        ("and a connection's timer is armed with it (due in %s ms)"):format(tostring(due))
     )
 
     inst = serve({ header_timeout_ms = 0 })
@@ -1231,6 +1254,47 @@ H.case("Section 6b: a connection's timer lives while its head is unread", functi
             and second.level == vim.log.levels.WARN
             and tostring(second.msg):find("stopped accepting connections", 1, true) ~= nil,
         ("and a socket it cannot make is still warned of after the timer's notice (%d notices)"):format(#notes)
+    )
+
+    -- A timer made whose start fails leaves the connection no deadline,
+    -- so it is closed, and the timer with it.
+    local unarmed = serve({ header_timeout_ms = 5000 })
+    local settled
+    settled, tcps = steady(tcp_count, 1000)
+    assert(settled, "the tcp count settled before the timer that cannot start")
+    timers = timer_count()
+    uv.new_timer = function(...)
+        local t, t_err = real_new_timer(...)
+        if not vim.in_fast_event() or not t then
+            return t, t_err
+        end
+        uv.new_timer = real_new_timer
+        return setmetatable({}, {
+            __index = function(_, name)
+                if name == "start" then
+                    return function()
+                        return nil, "EINVAL: stubbed", "EINVAL"
+                    end
+                end
+                return function(_, ...)
+                    return t[name](t, ...)
+                end
+            end,
+        })
+    end
+    local unmet_timer = assert(H.raw_connect(unarmed.port))
+    local _, unarmed_eof = unmet_timer:read(2000)
+    uv.new_timer = real_new_timer
+    unmet_timer:close()
+    ok(unarmed_eof, "a connection whose timer cannot start is closed")
+    ok(
+        H.wait_for(function()
+            return tcp_count() == tcps and timer_count() == timers
+        end, 1000),
+        ("and leaves no socket or timer (%d sockets, %d timers over before)"):format(
+            tcp_count() - tcps,
+            timer_count() - timers
+        )
     )
 end)
 
@@ -1655,6 +1719,18 @@ H.case("Section 8: a stopped server's update_target and enable_live open nothing
     server.stop(live)
     server.stop(off)
     local watchers = H.handle_count("fs_event")
+    -- Counted at the make, since a stopped server keeps live reload off
+    -- and a count of open handles cannot see a watcher made and dropped.
+    local made = 0
+    local real_new_fs_event = uv.new_fs_event
+    H.defer(function()
+        uv.new_fs_event = real_new_fs_event
+    end)
+    uv.new_fs_event = function(...)
+        made = made + 1
+        return real_new_fs_event(...)
+    end
+    local live_root = live.root
     local updated, update_err = pcall(server.update_target, live, root, nil)
     ok(updated, "update_target on a stopped server raises nothing: " .. tostring(update_err))
     eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
@@ -1663,7 +1739,35 @@ H.case("Section 8: a stopped server's update_target and enable_live open nothing
     eq(got, false, "and reports live reload off")
     eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
     eq(server.is_live_enabled(live), false, "and a stopped server reports live reload off")
+    uv.new_fs_event = real_new_fs_event
+    eq(made, 0, "and neither makes a watcher")
+    eq(live.root, live_root, "and update_target leaves a stopped server's root as it was")
     eq(#H.errors(), errs, "and nothing raises in a callback")
+end)
+
+-- update_target set the root to a path realpath could not resolve while
+-- the server went on serving the old one, and markdown-preview pcalls the
+-- call, so its retarget failed with no word. It raises at the caller and
+-- changes nothing.
+H.case("Section 8d: update_target refuses a root that does not resolve", function()
+    local inst = serve()
+    local missing = root .. "/missing"
+    local was_root, was_real = inst.root, inst.root_real
+    local raised, err = pcall(function()
+        server.update_target(inst, missing, nil)
+    end)
+    ok(
+        not raised
+            and tostring(err):find(
+                    "lifecycle_test%.lua:%d+: update_target: root " .. vim.pesc(missing) .. " does not resolve %("
+                )
+                ~= nil,
+        "a root that does not resolve raises at the caller, naming it: " .. tostring(err)
+    )
+    eq(inst.root, was_root, "and the root is unchanged")
+    eq(inst.root_real, was_real, "and so is the root served")
+    local res = H.responses(H.raw_request(inst.port, get("/hello.txt", inst.port)) or "")[1]
+    eq(res and res.status, 200, "and the server serves on")
 end)
 
 -- The reload timer's start returns nil and an error on a closing timer,
