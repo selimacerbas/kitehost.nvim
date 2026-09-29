@@ -193,13 +193,14 @@ function start_for_path(path, port)
     local started_here = false
     if s then
         -- By pcall itself, so a refused root is a notice with no position.
-        local retargeted, answer = pcall(server.update_target, s, root, index)
+        local retargeted, answer, cause = pcall(server.update_target, s, root, index)
         if not retargeted then
             return util.notify("LiveServer could not retarget: " .. tostring(answer), M.opts, "ERROR")
         end
         -- The retarget read as done while its live reload went off unsaid.
         if answer == false then
-            util.notify(("LiveServer retargeted to %s; live reload is off"):format(root), M.opts, "WARN")
+            local off = "LiveServer %d retargeted to %s; live reload is off (%s)"
+            util.notify(off:format(port, root, tostring(cause)), M.opts, "WARN")
         else
             util.notify(
                 ("LiveServer %d retargeted → %s%s"):format(

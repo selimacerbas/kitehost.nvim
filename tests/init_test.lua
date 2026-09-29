@@ -480,7 +480,15 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     called, err = pcall(ls.start_picker)
     ok(called, "a retarget whose watcher cannot start raises nothing: " .. tostring(err))
     local said = notes[1] or {}
-    eq(said.msg, ("LiveServer retargeted to %s; live reload is off"):format(third), "and says live reload is off")
+    eq(
+        said.msg,
+        ("LiveServer %d retargeted to %s; live reload is off (could not watch %s (EMFILE: stubbed))"):format(
+            inst.port,
+            third,
+            third
+        ),
+        "and says live reload is off, naming the port and the cause"
+    )
     eq(said.level, vim.log.levels.WARN, "as a warning")
     notes = {}
     called, err = pcall(ls.toggle_livereload)
