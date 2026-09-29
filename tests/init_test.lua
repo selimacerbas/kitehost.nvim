@@ -524,6 +524,7 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
     for _, pair in ipairs({
         { "2001:db8::1", "http://[2001:db8::1]:8123/" },
         { "[::1]", "http://[::1]:8123/" },
+        { "[2001:db8::1]", "http://[2001:db8::1]:8123/" },
     }) do
         package.loaded["live_server"] = nil
         local ls = require("live_server")
