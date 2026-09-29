@@ -977,6 +977,45 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         )
         eq(lan_got.tcp, 0, "and leaves no socket")
     end
+    -- The IPv6 twin: an address other than ::1 shadows a :: listener too,
+    -- and only ::1 was probed. A link-local address binds with its scope.
+    local v6
+    for name, addrs in pairs(vim.uv.interface_addresses()) do
+        for _, a in ipairs(addrs) do
+            if a.family == "inet6" and not a.internal then
+                local spelled = a.ip:lower():match("^fe[89ab]") and (a.ip .. "%" .. name) or a.ip
+                if not v6 or (v6:find("%", 1, true) and not spelled:find("%", 1, true)) then
+                    v6 = spelled
+                end
+            end
+        end
+    end
+    local v6_bindable = false
+    if v6 then
+        local t = assert(vim.uv.new_tcp())
+        local bound, _, bind_name = t:bind(v6, 0)
+        t:close()
+        v6_bindable = bound ~= nil or bind_name ~= "EADDRNOTAVAIL"
+    end
+    local v6_got = v6_bindable and held_by("::", v6)
+    if not v6_got then
+        H.skip("an IPv6 start other than ::1 beside a :: listener raises (this machine binds no such address)")
+    else
+        local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
+            v6_got.port
+        )
+        local refused
+        if vim.uv.os_uname().sysname == "Darwin" then
+            refused = v6_got.res:find(shadow, 1, true) ~= nil
+        else
+            refused = v6_got.res:find("EADDRINUSE", 1, true) ~= nil
+        end
+        ok(
+            not v6_got.started and refused,
+            ("an IPv6 start (%s) beside a :: listener raises: %s"):format(v6, v6_got.res)
+        )
+        eq(v6_got.tcp, 0, "and leaves no socket")
+    end
     -- On port 0 the OS may choose a port a wildcard listener holds; the
     -- probe that finds it held made the start raise, where another port
     -- would serve.
