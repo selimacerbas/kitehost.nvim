@@ -2326,8 +2326,9 @@ end
 -- option, a failed bind or listen, a port in use, a reload timer it cannot
 -- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check, or
--- a loopback bind whose wildcard of its family the same holds for. A
--- caller reads S.features.start_raises before it relies on that.
+-- a loopback bind whose wildcard of its family the same holds for, or live
+-- reload asked for on a root whose watcher cannot start. A caller reads
+-- S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host
