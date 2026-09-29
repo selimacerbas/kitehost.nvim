@@ -990,16 +990,28 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             end
         end
     end
-    local v6_bindable = false
+    -- Bindable only when a probe bind succeeds: luv raises on an address
+    -- it cannot parse and returns nil, err on one it cannot bind.
+    local v6_cause = "this machine has no IPv6 address other than ::1"
     if v6 then
         local t = assert(vim.uv.new_tcp())
-        local bound, _, bind_name = t:bind(v6, 0)
+        local called, bound, bind_err = pcall(t.bind, t, v6, 0)
         t:close()
-        v6_bindable = bound ~= nil or bind_name ~= "EADDRNOTAVAIL"
+        if not called then
+            v6_cause = ("%s does not parse: %s"):format(v6, tostring(bound))
+        elseif not bound then
+            v6_cause = ("%s does not bind: %s"):format(v6, tostring(bind_err))
+        else
+            v6_cause = nil
+        end
     end
-    local v6_got = v6_bindable and held_by("::", v6)
+    local v6_got = not v6_cause and held_by("::", v6)
     if not v6_got then
-        H.skip("an IPv6 start other than ::1 beside a :: listener raises (this machine binds no such address)")
+        H.skip(
+            ("an IPv6 start other than ::1 beside a :: listener raises (%s)"):format(
+                v6_cause or "no :: listener could be made"
+            )
+        )
     else
         local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
             v6_got.port
