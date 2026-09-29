@@ -2034,6 +2034,21 @@ H.case("Section 9: a watcher that cannot start refuses or warns, never reports l
                 == ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(per.port, real_tree .. "/a"),
         "and warns once, naming the directory and the cause: " .. vim.inspect(warned)
     )
+    -- A directory's warning spent the kind the root's used too, so live
+    -- reload turning off later said nothing.
+    mark = #notes
+    server.enable_live(per, false)
+    stub("start")
+    local later = server.enable_live(per, true)
+    unstub()
+    eq(later, false, "the same server whose root then cannot be watched answers false")
+    warned = warnings(mark)
+    ok(
+        #warned == 1
+            and warned[1]:find(("live-server: port %d cannot watch "):format(per.port), 1, true) == 1
+            and warned[1]:find("live reload is off", 1, true) ~= nil,
+        "and warns that live reload is off, after a directory's warning: " .. vim.inspect(warned)
+    )
     -- A directory that cannot be read was dropped with its whole subtree
     -- and no word.
     mark = #notes

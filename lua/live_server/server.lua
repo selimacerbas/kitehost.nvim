@@ -835,7 +835,7 @@ local function scan_dirs(inst)
     local function walk(dir)
         local handle, scan_err = uv.fs_scandir(dir)
         if not handle then
-            warn_once(inst, "watch", ("cannot watch the directories under %s (%s)"):format(dir, tostring(scan_err)))
+            warn_once(inst, "watch-dir", ("cannot watch the directories under %s (%s)"):format(dir, tostring(scan_err)))
             return
         end
         while true do
@@ -882,7 +882,7 @@ local function add_dir_watch(inst, dir)
             if st and st.type == "directory" and not inst._fs_events[full] and dir_watched(inst, full) then
                 local added, add_err = add_dir_watch(inst, full)
                 if not added then
-                    warn_once(inst, "watch", ("cannot watch %s (%s)"):format(full, tostring(add_err)))
+                    warn_once(inst, "watch-dir", ("cannot watch %s (%s)"):format(full, tostring(add_err)))
                 end
             end
         end
@@ -950,7 +950,7 @@ local function start_fs_watch(inst)
                 stop_fs_watch(inst)
                 return nil, add_err
             end
-            warn_once(inst, "watch", ("cannot watch %s (%s)"):format(dir, tostring(add_err)))
+            warn_once(inst, "watch-dir", ("cannot watch %s (%s)"):format(dir, tostring(add_err)))
         end
     end
     return true
