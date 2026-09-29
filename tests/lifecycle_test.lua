@@ -1770,6 +1770,13 @@ H.case("Section 8d: update_target refuses a root that does not resolve", functio
     eq(inst.root_real, was_real, "and so is the root served")
     local res = H.responses(H.raw_request(inst.port, get("/hello.txt", inst.port)) or "")[1]
     eq(res and res.status, 200, "and the server serves on")
+    -- true whenever it serves the root asked, the one it had included.
+    eq(server.update_target(inst, inst.root, nil), true, "a retarget to the root it serves answers true")
+    local other = H.tmpdir()
+    eq(server.update_target(inst, other, nil), true, "and one to another root answers true")
+    local live = serve({ live = { enabled = true, debounce = 20, inject_script = false } })
+    eq(server.update_target(live, live.root, nil), true, "and with live reload on, the same root answers true")
+    eq(server.is_live_enabled(live), true, "with live reload still on")
 end)
 
 -- The reload timer's start returns nil and an error on a closing timer,

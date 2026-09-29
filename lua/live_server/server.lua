@@ -2646,10 +2646,7 @@ local function watch_or_warn(inst)
 end
 
 -- A stopped server's reload timer is closed, so a watcher opened here
--- would reload nothing and nothing would close it, so it answers false, as
--- enable_live does; false too when live reload was on and the new root
--- cannot be watched; a root that does not resolve raises at the caller
--- and changes nothing.
+-- would reload nothing and nothing would close it.
 function S.update_target(inst, new_root, new_index)
     if inst.handle:is_closing() then
         return false
