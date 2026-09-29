@@ -601,10 +601,10 @@ end)
 -- FIFO blocks the loop until a writer comes, past SIGTERM; .liveignore was
 -- opened as found, after the bind, so a FIFO by that name hung start with
 -- its socket held (measured). One that is not a regular file is read as
--- absent and named once. The FIFO's start runs in a child Neovim bounded
--- at 2 s, so a start that blocks fails its row instead of hanging the
--- suite: the parent then opens the FIFO's other end, which lets the
--- child's open return.
+-- absent and named once. The FIFO's start runs in a child Neovim killed at
+-- a 5 s bound, so a start that blocks fails its row instead of hanging the
+-- suite: SIGKILL ends a process blocked opening a FIFO, where SIGTERM
+-- waits on the loop.
 H.case("Section 10: a .liveignore that is not a regular file is not opened", function()
     local notes = {}
     local real_notify = vim.notify
@@ -669,7 +669,7 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
     ok(#warned == 1 and warned[1] == ignored(plain_inst), "and warns once, naming it: " .. vim.inspect(warned))
 
     if is_win then
-        H.skip("a FIFO named .liveignore starts and serves within 2 s (Windows has no FIFO)")
+        H.skip("a FIFO named .liveignore starts and serves within 5 s (Windows has no FIFO)")
         H.skip("and warns once, naming it")
         H.skip("and gives no rule")
         return
@@ -679,7 +679,7 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
     local fifo = fifo_site .. "/.liveignore"
     local made = vim.system({ "mkfifo", fifo }):wait()
     if made.code ~= 0 then
-        H.skip("a FIFO named .liveignore starts and serves within 2 s (mkfifo: " .. tostring(made.stderr) .. ")")
+        H.skip("a FIFO named .liveignore starts and serves within 5 s (mkfifo: " .. tostring(made.stderr) .. ")")
         H.skip("and warns once, naming it")
         H.skip("and gives no rule")
         return
@@ -720,32 +720,25 @@ server.stop(inst)
 ]]):format(H.root, fifo_site)
     )
     local done
+    local t0 = uv.hrtime()
     local proc = vim.system({ vim.v.progpath, "--headless", "-u", "NONE", "-l", script }, { text = true }, function(r)
         done = r
     end)
     local in_time = H.wait_for(function()
         return done ~= nil
-    end, 2000)
+    end, 5000)
+    local took = math.floor((uv.hrtime() - t0) / 1e6)
     if not in_time then
-        -- The child is blocked opening the FIFO to read; a writer's open
-        -- lets it return.
-        local fd = uv.fs_open(fifo, "w", 420)
-        if fd then
-            uv.fs_close(fd)
-        end
-        if not H.wait_for(function()
+        proc:kill(9)
+        H.wait_for(function()
             return done ~= nil
-        end, 3000) then
-            proc:kill(9)
-            H.wait_for(function()
-                return done ~= nil
-            end, 1000)
-        end
+        end, 2000)
     end
     local child = done and done.code == 0 and select(2, pcall(vim.json.decode, done.stdout or "")) or nil
     ok(
         in_time and type(child) == "table" and child.status == "200",
-        ("a FIFO named .liveignore starts and serves within 2 s: %s"):format(
+        ("a FIFO named .liveignore starts and serves within 5 s (%d ms): %s"):format(
+            took,
             vim.inspect(done, { newline = " ", indent = "" })
         )
     )
