@@ -1139,10 +1139,33 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
     local function shown(got)
         return vim.inspect(got, { newline = " ", indent = "" })
     end
-    -- The reload frames act causes on a fresh live server over site.
+    -- The reload frames act causes on a fresh live server over site, how
+    -- long the send took, and every path the window held before it.
     local function frames_after(site, debounce, act)
-        local base = serve(site, { live = { enabled = true, debounce = debounce, inject_script = false } })
-        local port = tonumber(base:match(":(%d+)$"))
+        local inst = server.start({
+            port = 0,
+            root = site,
+            live = { enabled = true, debounce = debounce, inject_script = false },
+            features = { dirlist = { enabled = false } },
+        })
+        H.defer(function()
+            server.stop(inst)
+        end)
+        local port = inst.port
+        -- Each change restarts the reload timer, so its start sees the window.
+        local seen, timer = {}, inst.debounce_timer
+        inst.debounce_timer = setmetatable({}, {
+            __index = function(_, method)
+                return function(_, ...)
+                    if method == "start" then
+                        for path in pairs(inst.reload_window) do
+                            seen[path] = true
+                        end
+                    end
+                    return timer[method](timer, ...)
+                end
+            end,
+        })
         local c = assert(H.raw_connect(port))
         H.defer(function()
             c:close()
@@ -1155,6 +1178,7 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
         -- started after the stream opened (measured), so it settles first.
         vim.wait(600)
         local mark = #table.concat(c.chunks)
+        seen = {}
         act()
         local t0 = uv.hrtime()
         c:read(debounce + 3000, function(b)
@@ -1163,7 +1187,7 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
         local took = math.floor((uv.hrtime() - t0) / 1e6)
         -- A second frame from a late event would land in this wait.
         vim.wait(600)
-        return reloads(table.concat(c.chunks), mark), took
+        return reloads(table.concat(c.chunks), mark), took, seen
     end
     local function sheet_site()
         local site = H.tmpdir()
@@ -1227,6 +1251,28 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
     ok(
         #sheet_frames == 1 and sheet_frames[1].css == false and sheet_frames[1].path == "style.css",
         "a deleted stylesheet alone reloads the page, naming it: " .. shown(sheet_frames)
+    )
+    -- A page under a directory that became a file is gone too (ENOTDIR),
+    -- where it was kept and turned a stylesheet's arrival into a reload.
+    local replaced = H.tmpdir()
+    vim.fn.mkdir(replaced .. "/theme.css", "p")
+    H.write_file(replaced .. "/theme.css/page.html", "<html><body>0</body></html>")
+    -- FSEvents replays a fixture written just before the watcher starts.
+    vim.wait(1000)
+    local replaced_frames, _, replaced_seen = frames_after(replaced, 1500, function()
+        H.write_file(replaced .. "/theme.css/page.html", "<html><body>1</body></html>")
+        -- The page's change is in the window before its directory goes.
+        vim.wait(400)
+        vim.fn.delete(replaced .. "/theme.css", "rf")
+        H.write_file(replaced .. "/theme.css", "body{}")
+    end)
+    ok(
+        #replaced_frames == 1 and replaced_frames[1].css == true and replaced_frames[1].path == "theme.css",
+        "a page under a directory replaced by a stylesheet sends one swap naming it: " .. shown(replaced_frames)
+    )
+    ok(
+        replaced_seen["theme.css/page.html"] == true,
+        "and the page under it was in the window: " .. shown(vim.tbl_keys(replaced_seen))
     )
 
     -- 200 pages written twice, in order: the last written is named, and

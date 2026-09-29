@@ -776,13 +776,14 @@ local function send_reload(inst, rp, css)
 end
 
 -- Whether a window's path still names something at the send; the root
--- ("/") always does, and a stat that fails but for ENOENT keeps it.
+-- ("/") always does; ENOENT or ENOTDIR (a directory on the path became a
+-- file) is gone, and any other failure keeps it.
 local function still_there(inst, path)
     if path == "/" or path == "" then
         return true
     end
     local st, _, st_name = uv.fs_lstat(util.joinpath(inst.root_real, path))
-    return st ~= nil or st_name ~= "ENOENT"
+    return st ~= nil or (st_name ~= "ENOENT" and st_name ~= "ENOTDIR")
 end
 
 -- A page changed beside a stylesheet must reload whole, where a swap left
