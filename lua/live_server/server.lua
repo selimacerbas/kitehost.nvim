@@ -825,6 +825,12 @@ local function schedule_reload(inst, changed_path)
     end
 end
 
+-- A directory under the root the watchers miss, told apart from the root.
+local function cannot_watch(inst, what, cause)
+    local text = ("cannot watch %s (%s)"):format(what, tostring(cause))
+    warn_once(inst, "watch-dir", text)
+end
+
 -- A directory whose changes never reload (a dot path, without
 -- serve_dotfiles) spends no watch; with serve_dotfiles each is watched,
 -- .git included.
@@ -839,7 +845,7 @@ local function scan_dirs(inst)
     local function walk(dir)
         local handle, scan_err = uv.fs_scandir(dir)
         if not handle then
-            warn_once(inst, "watch-dir", ("cannot watch the directories under %s (%s)"):format(dir, tostring(scan_err)))
+            cannot_watch(inst, "the directories under " .. dir, scan_err)
             return
         end
         while true do
@@ -867,7 +873,7 @@ local function supports_recursive_watch()
     return sys == "Darwin" or sys:find("Windows") ~= nil
 end
 
--- Attach a single-directory fs_event watcher with a dir-aware callback
+-- Attach a single-directory fs_event watcher with a dir-aware callback.
 local function add_dir_watch(inst, dir)
     local ev, new_err = uv.new_fs_event()
     if not ev then
@@ -885,7 +891,7 @@ local function add_dir_watch(inst, dir)
             if st and st.type == "directory" and not inst._fs_events[full] and dir_watched(inst, full) then
                 local added, add_err = add_dir_watch(inst, full)
                 if not added then
-                    warn_once(inst, "watch-dir", ("cannot watch %s (%s)"):format(full, tostring(add_err)))
+                    cannot_watch(inst, full, add_err)
                 end
             end
         end
@@ -940,8 +946,8 @@ local function start_fs_watch(inst)
         end
     end
 
-    -- Linux (or recursive failed): per-directory watchers
-    -- The root comes first: a root nothing watches is no live reload at all.
+    -- Linux (or recursive failed): per-directory watchers, the root first,
+    -- since a root nothing watches is no live reload at all.
     inst._fs_events = {}
     for i, dir in ipairs(scan_dirs(inst)) do
         local added, add_err = add_dir_watch(inst, dir)
@@ -950,7 +956,7 @@ local function start_fs_watch(inst)
                 stop_fs_watch(inst)
                 return nil, add_err
             end
-            warn_once(inst, "watch-dir", ("cannot watch %s (%s)"):format(dir, tostring(add_err)))
+            cannot_watch(inst, dir, add_err)
         end
     end
     return true
@@ -1253,7 +1259,9 @@ function S.wildcard_loopback(ip)
 end
 
 -- S.wildcard_loopback's mirror, fixed where a caller may replace that rule.
--- Same family only: a dual-stack probe of :: would meet our own IPv4 socket on Linux.
+-- Each address probes its own family's wildcard: an IPv4 loopback, and the
+-- IPv4-mapped spelling of one, probes 0.0.0.0, and ::1 probes ::, since a
+-- dual-stack probe of :: would meet this server's IPv4 socket on Linux.
 local function wildcard_of(ip)
     -- A dual-stack bind of the mapped spelling answers IPv4 loopback too.
     ip = ip:match("^::[fF][fF][fF][fF]:(%d+%.%d+%.%d+%.%d+)$") or ip
@@ -2404,14 +2412,10 @@ function S.start(cfg)
             close_once(tcp)
             local there = wildcard .. ":" .. tostring(bound.port)
             if why_name == "EADDRINUSE" then
-                error(
-                    ("Failed to bind %s: another socket holds a wildcard on port %d, which this address would shadow (%s)"):format(
-                        here,
-                        bound.port,
-                        tostring(why)
-                    ),
-                    0
-                )
+                local held = "Failed to bind %s: another socket holds"
+                    .. " a wildcard on port %d, which this address would"
+                    .. " shadow (%s)"
+                error(held:format(here, bound.port, tostring(why)), 0)
             end
             error(("Failed to bind %s: cannot check %s: %s"):format(here, there, tostring(why)), 0)
         end
