@@ -856,6 +856,36 @@ H.case("Section 11: a mixed debounce window reloads the page", function()
     vim.wait(600)
     local logs = reloads(table.concat(c.chunks), mark)
     ok(#logs == 1 and logs[1].path == "app.log", "and send one reload naming it: " .. shown(logs))
+    -- Two windows on one server: a send that left its window behind would
+    -- read the second, a lone stylesheet, as a page change.
+    local two = H.tmpdir()
+    H.write_file(two .. "/index.html", "<html><body>0</body></html>")
+    H.write_file(two .. "/style.css", "body{}")
+    local twice = serve(two, { live = { enabled = true, debounce = 300, inject_script = false } })
+    local tport = tonumber(twice:match(":(%d+)$"))
+    local tc = assert(H.raw_connect(tport))
+    assert(tc:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(tport)))
+    tc:read(2000, function(b)
+        return b:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    vim.wait(600)
+    local tmark = #table.concat(tc.chunks)
+    H.write_file(two .. "/index.html", "<html><body>1</body></html>")
+    tc:read(3000, function(b)
+        return #reloads(b, tmark) > 0
+    end)
+    vim.wait(600)
+    local second = #table.concat(tc.chunks)
+    H.write_file(two .. "/style.css", "body{color:red}")
+    tc:read(3000, function(b)
+        return #reloads(b, second) > 0
+    end)
+    vim.wait(600)
+    local frames = reloads(table.concat(tc.chunks), tmark)
+    ok(
+        #frames == 2 and frames[1].path == "index.html" and frames[2].css == true and frames[2].path == "style.css",
+        "a page's window, then a lone stylesheet's, send a reload, then a swap: " .. shown(frames)
+    )
 end)
 
 H.finish()
