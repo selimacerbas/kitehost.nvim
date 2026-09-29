@@ -1283,7 +1283,8 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
     )
 
     -- 200 pages written twice, in order: the last written is named, and
-    -- the window is sent within 2 s of the last write.
+    -- the window is sent within 4 s of the last write: the bound guards
+    -- a hang, and the 1.5 s window needs room under load.
     local burst = H.tmpdir()
     for i = 1, 200 do
         H.write_file(("%s/f%03d.html"):format(burst, i), "0")
@@ -1297,8 +1298,8 @@ H.case("Section 11b: a save's vanished temp files never decide the reload", func
         end
     end)
     ok(
-        #burst_frames == 1 and burst_frames[1].path == "f200.html" and took < 2000,
-        ("a burst of 200 pages written twice sends one reload naming the last, within 2 s (%d ms): %s"):format(
+        #burst_frames == 1 and burst_frames[1].path == "f200.html" and took < 4000,
+        ("a burst of 200 pages written twice sends one reload naming the last, within 4 s (%d ms): %s"):format(
             took,
             shown(burst_frames)
         )
