@@ -148,8 +148,16 @@ function M.setup(opts)
             error(("%s.%s must be true or false, got %s"):format(flag[1], flag[2], type(merged[flag[1]][flag[2]])), 0)
         end
     end
-    if type(merged.notify_on_reload) ~= "boolean" then
-        error("notify_on_reload must be true or false, got " .. type(merged.notify_on_reload), 0)
+    -- A string or a number read as on: open_on_start = "no" opened the
+    -- browser, and serve_dotfiles was refused only when a start read it.
+    for _, key in ipairs({ "notify_on_reload", "open_on_start", "notify", "serve_dotfiles" }) do
+        if type(merged[key]) ~= "boolean" then
+            error(("%s must be true or false, got %s"):format(key, type(merged[key])), 0)
+        end
+    end
+    -- Its fields are read below; a number there raised with a file position.
+    if merged.auto_start ~= nil and type(merged.auto_start) ~= "table" then
+        error("auto_start must be a table", 0)
     end
     M.opts = merged
 

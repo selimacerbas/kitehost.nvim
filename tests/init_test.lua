@@ -391,6 +391,9 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { { directory_listing = { enabled = 1 } }, "directory_listing.enabled", "number" },
         { { directory_listing = { show_hidden = "no" } }, "directory_listing.show_hidden", "string" },
         { { notify_on_reload = 1 }, "notify_on_reload", "number" },
+        { { open_on_start = "no" }, "open_on_start", "string" },
+        { { notify = 0 }, "notify", "number" },
+        { { serve_dotfiles = "yes" }, "serve_dotfiles", "string" },
     }) do
         package.loaded["live_server"] = nil
         local flagged = require("live_server")
@@ -403,11 +406,31 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         )
         eq(flagged.opts.default_port, 8000, ("and a refused %s keeps every option it had"):format(c[2]))
     end
+    -- setup reads auto_start's fields, so a number there raised with a
+    -- file position and no word of the option.
+    for _, value in ipairs({ 5, "html", false }) do
+        package.loaded["live_server"] = nil
+        local configured = require("live_server")
+        local set, err = pcall(configured.setup, { notify = false, default_port = 9000, auto_start = value })
+        eq(
+            not set and tostring(err) or "setup took it",
+            "auto_start must be a table",
+            ("setup refuses auto_start = %s, naming it"):format(vim.inspect(value))
+        )
+        eq(
+            configured.opts.default_port,
+            8000,
+            ("and a refused auto_start = %s keeps every option it had"):format(vim.inspect(value))
+        )
+    end
     package.loaded["live_server"] = nil
     local flags = require("live_server")
     local set, err = pcall(flags.setup, {
         notify = false,
         notify_on_reload = true,
+        open_on_start = false,
+        serve_dotfiles = true,
+        auto_start = { filetypes = {} },
         live_reload = { enabled = false, inject_script = false, css_inject = false },
         directory_listing = { enabled = false, show_hidden = true },
     })
