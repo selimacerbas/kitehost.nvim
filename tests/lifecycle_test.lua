@@ -1871,6 +1871,41 @@ H.case("Section 8c: stop closes each of its timers once", function()
     ok(H.handle_count("timer") <= timers - 2, "and both are closed")
 end)
 
+-- The watchers closed inside a pcall, which hid a second close of a
+-- handle already closing; they close through the same guard as the rest.
+H.case("Section 8e: stop closes a watcher already closing no second time", function()
+    local inst = serve({ live = { enabled = true, debounce = 20, inject_script = false } })
+    local closes = 0
+    local function counted(real)
+        return setmetatable({}, {
+            __index = function(_, method)
+                if method == "close" then
+                    return function()
+                        closes = closes + 1
+                        return real:close()
+                    end
+                end
+                return function(_, ...)
+                    return real[method](real, ...)
+                end
+            end,
+        })
+    end
+    local real
+    if inst.fs_event then
+        real = inst.fs_event
+        inst.fs_event = counted(real)
+    else
+        local dir, ev = next(inst._fs_events)
+        real = ev
+        inst._fs_events[dir] = counted(real)
+    end
+    real:close()
+    local stopped, err = pcall(server.stop, inst)
+    ok(stopped, "stop beside a watcher already closing raises nothing: " .. tostring(err))
+    eq(closes, 0, "and closes it no second time")
+end)
+
 -- A watcher's start was read through a pcall that dropped its tuple, so a
 -- failed start counted as success, a nil handle was kept as the watcher,
 -- the per-directory fallback never ran and is_live_enabled reported live

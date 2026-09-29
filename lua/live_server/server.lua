@@ -896,20 +896,21 @@ local function add_dir_watch(inst, dir)
     return true
 end
 
+-- The guard every handle closes by, where a pcall hid a second close.
+local function close_watcher(ev)
+    if not ev:is_closing() then
+        ev:close()
+    end
+end
+
 local function stop_fs_watch(inst)
     if inst.fs_event then
-        pcall(function()
-            inst.fs_event:stop()
-            inst.fs_event:close()
-        end)
+        close_watcher(inst.fs_event)
         inst.fs_event = nil
     end
     if inst._fs_events then
         for _, ev in pairs(inst._fs_events) do
-            pcall(function()
-                ev:stop()
-                ev:close()
-            end)
+            close_watcher(ev)
         end
         inst._fs_events = nil
     end
