@@ -208,8 +208,8 @@ local function http_400(sock, msg)
     )
 end
 
--- A terminal may act on a C1 control as on a C0 one, raw or encoded, and
--- on the half of a letter a byte cut leaves, so each is one mark.
+-- A terminal may act on a C1 control as on a C0 one, raw or encoded.
+-- The cut falls between sequences, so the line stays well-formed UTF-8.
 local function marked(s, limit)
     local out, i = {}, 1
     while i <= #s do
@@ -234,9 +234,8 @@ end
 -- controls the path up to the head's cap, as it would a cause that quoted
 -- the path. A control in the line is a mark: Neovim shows one as a
 -- caret pair, but a notifier that forwards to a terminal or a desktop
--- would pass an escape a peer wrote, a C1 one (0x9B, CSI) included, raw
--- or encoded. Scheduled: a request runs in a fast event, where
--- vim.notify raises.
+-- would pass an escape a peer wrote. Scheduled: a request runs in a fast
+-- event, where vim.notify raises.
 local function report_raise(path, raised)
     local cause = marked(tostring(raised):match("^[^\n]*"), 300)
     local shown = marked(path:match("^[^?#]*"), 200)
@@ -760,14 +759,11 @@ local function warn_once(inst, kind, text)
     end)
 end
 
--- What S.reload reads as a swap rather than a page reload.
 local function is_stylesheet(path)
     return path:match("%.css$") ~= nil
 end
 
--- The path one debounce window reloads for: its last change that is no
--- stylesheet, else its last. Every change is kept, since a page changed
--- beside a stylesheet must reload whole, where a swap left it stale.
+-- A page changed beside a stylesheet must reload whole, where a swap left it stale.
 local function window_path(window)
     for i = #window, 1, -1 do
         if not is_stylesheet(window[i]) then
@@ -800,8 +796,7 @@ local function schedule_reload(inst, changed_path)
     -- payload says / so no dot name reaches an events client, and a plain
     -- name keeps its path, so a started-on stylesheet still swaps.
     local path = (own and has_dot_segment(rel)) and "/" or rel
-    -- Each path once, so a file written faster than the debounce, which
-    -- restarts the timer at every write, cannot grow the window.
+    -- Each path once: a file written faster than the debounce restarts it at every write.
     if path and not inst.reload_seen[path] then
         inst.reload_seen[path] = true
         table.insert(inst.reload_window, path)
@@ -863,8 +858,7 @@ local function supports_recursive_watch()
     return sys == "Darwin" or sys:find("Windows") ~= nil
 end
 
--- Attach a single-directory fs_event watcher with a dir-aware callback:
--- true, or nil and the cause, with nothing left open.
+-- Attach a single-directory fs_event watcher with a dir-aware callback
 local function add_dir_watch(inst, dir)
     local ev, new_err = uv.new_fs_event()
     if not ev then
@@ -916,9 +910,6 @@ local function stop_fs_watch(inst)
     end
 end
 
--- true, or nil and the cause when the root itself cannot be watched, with
--- nothing left open; a directory under it that cannot be watched is
--- dropped with a warning and the rest kept.
 local function start_fs_watch(inst)
     stop_fs_watch(inst)
 
@@ -940,9 +931,8 @@ local function start_fs_watch(inst)
         end
     end
 
-    -- Linux (or recursive failed): per-directory watchers, whose root's
-    -- cause is the one reported. The root comes first, and a root nothing
-    -- watches is no live reload at all.
+    -- Linux (or recursive failed): per-directory watchers
+    -- The root comes first: a root nothing watches is no live reload at all.
     inst._fs_events = {}
     for i, dir in ipairs(scan_dirs(inst)) do
         local added, add_err = add_dir_watch(inst, dir)
@@ -1253,10 +1243,8 @@ function S.wildcard_loopback(ip)
     return nil
 end
 
--- The wildcard a loopback bind would shadow, or nil: S.wildcard_loopback's
--- rule in the other direction, the two one rule. Same family only, since
--- a dual-stack probe of :: would meet this server's own IPv4 socket on
--- Linux.
+-- S.wildcard_loopback's mirror, fixed where a caller may replace that rule.
+-- Same family only: a dual-stack probe of :: would meet our own IPv4 socket on Linux.
 local function wildcard_of(ip)
     -- A dual-stack bind of the mapped spelling answers IPv4 loopback too.
     ip = ip:match("^::[fF][fF][fF][fF]:(%d+%.%d+%.%d+%.%d+)$") or ip
@@ -2032,8 +2020,7 @@ local function check_start(cfg)
     if token ~= nil and (type(token) ~= "string" or token == "") then
         error("token must be a non-empty string", 0)
     end
-    -- The stream refuses a token that is no UTF-8 in the encoded form the
-    -- start notice prints, so that URL would never connect (measured).
+    -- The stream refuses the encoded URL of a token that is no UTF-8 (measured).
     if token ~= nil then
         local i = 1
         while i <= #token do
@@ -2309,8 +2296,6 @@ local function check_start(cfg)
     }
 end
 
--- The root's .liveignore rules; one that cannot be read as a file gives
--- none and is named once.
 local function read_liveignore(inst)
     local rules, why = util.parse_liveignore(inst.root_real)
     inst.ignore_patterns = rules or {}
@@ -2401,10 +2386,8 @@ function S.start(cfg)
         end
     end
 
-    -- The mirror: macOS lets a loopback bind share the port with another
-    -- program's wildcard listener and take every loopback connection meant
-    -- for it (measured with a node listener). This socket, bound and not
-    -- listening, never conflicts with the probe (measured on macOS).
+    -- macOS lets a loopback bind shadow another program's wildcard listener (measured).
+    -- This socket, bound and not listening, never meets the probe (measured on macOS).
     local wildcard = wildcard_of(bound.ip)
     if wildcard then
         local free, why, why_name = address_free(wildcard, bound.port)
@@ -2578,8 +2561,7 @@ function S.start(cfg)
             )
         end
     end
-    -- The caller asked for live reload, so a start that cannot deliver it
-    -- raises, as a failed listen does.
+    -- Live reload was asked for, so a start that cannot deliver it raises.
     if inst.live_enabled then
         local watching, watch_err = start_fs_watch(inst)
         if not watching then
@@ -2611,7 +2593,6 @@ function S.stop(inst)
     -- A stopped server has no watcher and a closed timer, so it reports
     -- live reload off, as enable_live answers a stopped server.
     inst.live_enabled = false
-    -- Streams first, through the one eviction, which empties the list.
     for _, cl in ipairs(vim.list_slice(inst.sse_clients)) do
         sse_evict(inst, cl)
     end
@@ -2634,9 +2615,7 @@ function S.stop(inst)
     stop_fs_watch(inst)
 end
 
--- A running server asked to watch its root: whether it does. One that
--- cannot turns live reload off and says so, since reporting it on with
--- nothing watching reloads nothing and says nothing.
+-- Live reload reported on with nothing watching reloads nothing and says nothing.
 local function watch_or_warn(inst)
     local watching, watch_err = start_fs_watch(inst)
     if not watching then
@@ -2652,8 +2631,7 @@ function S.update_target(inst, new_root, new_index)
     if inst.handle:is_closing() then
         return false
     end
-    -- One that does not resolve left inst.root naming it while the old one
-    -- was served.
+    -- A root that does not resolve was named while the old one was served.
     local root_real, real_err = uv.fs_realpath(new_root)
     if not root_real then
         error(("update_target: root %s does not resolve (%s)"):format(tostring(new_root), tostring(real_err)), 2)
@@ -2698,8 +2676,7 @@ function S.reload(inst, reason_path)
 end
 
 function S.send_event(inst, event_type, data)
-    -- Any other value passed the line-break check through tostring and
-    -- raised inside the frame, at this file's line.
+    -- Through tostring any other value passed and raised inside the frame.
     if type(event_type) ~= "string" then
         error(("send_event: the event name is not a string (%s)"):format(type(event_type)), 2)
     end

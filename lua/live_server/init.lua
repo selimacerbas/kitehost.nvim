@@ -130,8 +130,7 @@ function M.setup(opts)
             error(section .. " must be a table or a boolean", 0)
         end
     end
-    -- Every start refuses a flag that is no boolean, so it is named here, at
-    -- the config that holds it, not at each start.
+    -- A flag no start accepts is named here, at the config that holds it.
     for _, flag in ipairs({
         { "live_reload", "enabled" },
         { "live_reload", "inject_script" },
@@ -193,9 +192,7 @@ function start_for_path(path, port)
     local active_port = port
     local started_here = false
     if s then
-        -- A root the server cannot serve raises, where a bare call handed the
-        -- user a Lua error. Called by pcall itself, the raise carries no
-        -- position, and the server keeps its root.
+        -- By pcall itself, so a refused root is a notice with no position.
         local retargeted, retarget_err = pcall(server.update_target, s, root, index)
         if not retargeted then
             return util.notify("LiveServer could not retarget: " .. tostring(retarget_err), M.opts, "ERROR")

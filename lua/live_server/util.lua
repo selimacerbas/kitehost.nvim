@@ -394,9 +394,7 @@ function U.pick_port(opts, cb)
     end)
 end
 
--- The length of the valid UTF-8 sequence at byte i of s, or nil (RFC 3629:
--- no overlong form, no surrogate, nothing past U+10FFFF). The one reader
--- of UTF-8, so every caller refuses the same bytes.
+-- The one UTF-8 reader (RFC 3629), so every caller refuses the same bytes.
 function U.utf8_len(s, i)
     local c = s:byte(i)
     if not c then
@@ -432,11 +430,8 @@ function U.utf8_len(s, i)
     return n
 end
 
--- .liveignore parser: its rules, or nil and why when the name holds
--- something other than a regular file, which is read as absent. Opening a
--- FIFO blocks the loop until a writer comes, past SIGTERM, so the type is
--- read first; the window between the stat and the open stays, as the asset
--- route's does.
+-- Opening a FIFO blocks the loop past SIGTERM, so the type is read first;
+-- the window between the stat and the open stays, as the asset route's does.
 function U.parse_liveignore(root)
     local path = U.joinpath(root, ".liveignore")
     local st, st_err, st_name = uv.fs_stat(path)
