@@ -517,7 +517,8 @@ end)
 -- colons read as the port.
 H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
     -- open_existing reads the configured host, so these need no bind: any
-    -- IPv6 host is bracketed, and one given bracketed is bracketed once.
+    -- IPv6 host is bracketed, and one given bracketed is bracketed once;
+    -- an IPv4-mapped one opens as the IPv4 address it answers on.
     H.defer(function()
         picked_port = 0
     end)
@@ -525,6 +526,8 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
         { "2001:db8::1", "http://[2001:db8::1]:8123/" },
         { "[::1]", "http://[::1]:8123/" },
         { "[2001:db8::1]", "http://[2001:db8::1]:8123/" },
+        { "::ffff:127.0.0.1", "http://127.0.0.1:8123/" },
+        { "::FFFF:10.0.0.7", "http://10.0.0.7:8123/" },
     }) do
         package.loaded["live_server"] = nil
         local ls = require("live_server")
