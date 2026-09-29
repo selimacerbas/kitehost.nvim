@@ -2493,7 +2493,8 @@ local function bind_probed(host, port)
     end
     if loopback then
         local free, why, why_name = address_free(loopback, bound.port)
-        if not free then
+        -- An address this machine lacks cannot be held by another listener.
+        if not free and why_name ~= "EADDRNOTAVAIL" then
             close_once(tcp)
             local there = tostring(loopback) .. ":" .. tostring(bound.port)
             if why_name == "EADDRINUSE" then

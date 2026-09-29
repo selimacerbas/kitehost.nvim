@@ -719,8 +719,8 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
             "leaving no socket",
             "a probe that cannot open raises",
             "leaving no socket",
-            "a probe of an address this machine lacks raises",
-            "leaving no socket",
+            "a probe of an address this machine lacks serves",
+            "keeping its one socket",
             "a probe of an address bind cannot read raises",
             "leaving no socket",
             "a loopback rule that raises refuses the start",
@@ -808,12 +808,12 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
         { new_tcp = { "EMFILE: stubbed", "EMFILE" } },
         { "cannot check 127.0.0.1:", "EMFILE: stubbed" }
     )
-    refuses(
-        "a probe of an address this machine lacks raises",
-        names("192.0.2.1"),
-        nil,
-        { "cannot check 192.0.2.1:", "EADDRNOTAVAIL" }
-    )
+    -- No listener can hold an address this machine lacks, so it serves.
+    server.wildcard_loopback = names("192.0.2.1")
+    local absent_started, absent_res, _, absent_open = start_counted({ host = "0.0.0.0", port = 0 })
+    server.wildcard_loopback = real_rule
+    ok(absent_started, "a probe of an address this machine lacks serves: " .. absent_res)
+    eq(absent_open, 1, "keeping its one socket, the probe closed")
     refuses(
         "a probe of an address bind cannot read raises",
         names("[127.0.0.1]"),
@@ -1284,6 +1284,75 @@ H.case("an IPv6 wildcard bind raises unless ::1, its URL's address, is free", fu
         H.skip("a :: start beside a ::1 listener raises (the bind beside it fails: " .. tostring(shares_err) .. ")")
     end
     eq(open, 0, "a :: start beside a ::1 listener leaves no socket")
+end)
+
+-- A "::" bind's URL names ::1, which a host with IPv6 off on its loopback
+-- (a container) lacks, and the probe's EADDRNOTAVAIL refused a start that
+-- served before. No listener can hold an address the machine lacks, so
+-- that answer serves; any other failure of the probe still refuses.
+H.case("a wildcard bind serves where its loopback address is absent", function()
+    local real_new_tcp = vim.uv.new_tcp
+    H.defer(function()
+        vim.uv.new_tcp = real_new_tcp
+    end)
+    local wild = assert(real_new_tcp())
+    local wild_ok, wild_err = wild:bind("::", 0)
+    if wild_ok then
+        wild_ok, wild_err = wild:getsockname()
+    end
+    wild:close()
+    if not wild_ok then
+        H.skip(("a :: start serves without ::1 (this machine refuses a :: bind: %s)"):format(tostring(wild_err)))
+        H.skip("and leaves its one socket (this machine refuses a :: bind)")
+        H.skip("a :: start whose probe finds no descriptor raises (no :: bind)")
+        H.skip("leaving no socket (this machine refuses a :: bind)")
+        return
+    end
+    -- Every socket's bind to ::1 answers as luv does for an absent address.
+    local answer
+    vim.uv.new_tcp = function(...)
+        local handle, err, name = real_new_tcp(...)
+        if not handle then
+            return handle, err, name
+        end
+        return setmetatable({}, {
+            __index = function(_, key)
+                if key == "bind" then
+                    return function(_, ip, ...)
+                        if ip == "::1" then
+                            return nil, answer[1], answer[2]
+                        end
+                        return handle:bind(ip, ...)
+                    end
+                end
+                return function(_, ...)
+                    return handle[key](handle, ...)
+                end
+            end,
+        })
+    end
+    local function start_counted()
+        local before = H.handle_count("tcp")
+        local started, res = pcall(server.start, { root = root, host = "::", port = 0 })
+        local open = H.handle_count("tcp") - before
+        if started then
+            server.stop(res)
+        end
+        return started, tostring(res), open
+    end
+
+    answer = { "EADDRNOTAVAIL: address not available", "EADDRNOTAVAIL" }
+    local started, res, open = start_counted()
+    ok(started, "a :: start serves where ::1 is absent: " .. res)
+    eq(open, 1, "and leaves its one socket, the probe closed")
+
+    answer = { "EMFILE: stubbed", "EMFILE" }
+    started, res, open = start_counted()
+    ok(
+        not started and res:find("cannot check ::1:", 1, true) ~= nil and res:find("EMFILE: stubbed", 1, true) ~= nil,
+        "a :: start whose probe finds no descriptor raises, naming ::1 and the cause: " .. res
+    )
+    eq(open, 0, "leaving no socket open")
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise
