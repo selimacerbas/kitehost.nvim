@@ -1181,6 +1181,48 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     end
     ok(up_linux, "a 127.0.0.1 start read as Linux serves: " .. tostring(up_linux and "" or res_linux))
     eq(linux_made, 1, "with one socket and no probe")
+    -- The BSDs and Windows let a specific bind sit beside a wildcard
+    -- listener as macOS does, so each probes; an allowlist dropped them.
+    for _, sysname in ipairs({ "FreeBSD", "Windows_NT" }) do
+        local made_os, held = 0, false
+        vim.uv.new_tcp = function(...)
+            made_os = made_os + 1
+            local h, h_err, h_name = real_new_tcp(...)
+            if made_os ~= 2 or not held or not h then
+                return h, h_err, h_name
+            end
+            return setmetatable({}, {
+                __index = function(_, method)
+                    if method == "bind" then
+                        return function()
+                            return nil, "EADDRINUSE: stubbed", "EADDRINUSE"
+                        end
+                    end
+                    return function(_, ...)
+                        return h[method](h, ...)
+                    end
+                end,
+            })
+        end
+        as_os(sysname)
+        local up_os, res_os = pcall(server.start, { port = 0, root = root })
+        if up_os then
+            server.stop(res_os)
+        end
+        local free_made = made_os
+        made_os, held = 0, true
+        local up_held, res_held = pcall(server.start, { port = fixed, root = root })
+        vim.uv.new_tcp, vim.uv.os_uname = real_new_tcp, real_uname
+        if up_held then
+            server.stop(res_held)
+        end
+        ok(up_os, ("a 127.0.0.1 start read as %s serves: %s"):format(sysname, tostring(up_os and "" or res_os)))
+        eq(free_made, 2, ("with one socket and its probe, read as %s"):format(sysname))
+        ok(
+            not up_held and tostring(res_held):find("another socket holds a wildcard", 1, true) ~= nil,
+            ("and beside a held wildcard it raises, read as %s: %s"):format(sysname, tostring(res_held))
+        )
+    end
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise
