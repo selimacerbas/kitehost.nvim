@@ -2508,7 +2508,11 @@ local function bind_probed(host, port)
     -- macOS lets a loopback bind shadow another program's wildcard
     -- listener (measured). This socket, bound and not listening, never
     -- meets the probe (measured on macOS).
-    local wildcard = wildcard_of(bound.ip)
+    -- Linux refuses that bind itself; a probe there refuses free ports.
+    local info = uv.os_uname()
+    local sysname = info and info.sysname
+    local shadows = sysname == "Darwin" or sysname == "Windows_NT"
+    local wildcard = shadows and wildcard_of(bound.ip)
     if wildcard then
         local free, why, why_name = address_free(wildcard, bound.port)
         if not free then

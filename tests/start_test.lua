@@ -1019,6 +1019,18 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     -- On port 0 the OS may choose a port a wildcard listener holds; the
     -- probe that finds it held made the start raise, where another port
     -- would serve.
+    -- The specific-bind probe runs where the OS lets that bind shadow a
+    -- wildcard, so these rows read the system as macOS on every leg.
+    local real_uname = vim.uv.os_uname
+    H.defer(function()
+        vim.uv.os_uname = real_uname
+    end)
+    local function as_os(sysname)
+        vim.uv.os_uname = function()
+            return { sysname = sysname }
+        end
+    end
+    as_os("Darwin")
     local real_tcp = vim.uv.new_tcp
     H.defer(function()
         vim.uv.new_tcp = real_tcp
@@ -1045,6 +1057,7 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     end
     local up0, res0 = pcall(server.start, { port = 0, root = root })
     vim.uv.new_tcp = real_tcp
+    vim.uv.os_uname = real_uname
     if up0 then
         server.stop(res0)
     end
@@ -1103,9 +1116,11 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         end
         return real_new_tcp(...)
     end
+    as_os("Darwin")
     local tcps = H.handle_count("tcp")
     local started, res = pcall(server.start, { port = 0, root = root })
     vim.uv.new_tcp = real_new_tcp
+    vim.uv.os_uname = real_uname
     local tcps_after = H.handle_count("tcp")
     if started then
         server.stop(res)
@@ -1118,6 +1133,21 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         "a wildcard probe that cannot open refuses the loopback start, naming it: " .. tostring(res)
     )
     eq(tcps_after, tcps, "leaving no socket")
+    -- Linux refuses a shadowing bind itself, where a probe beside a
+    -- listener on another address of the port refused a free one.
+    local linux_made = 0
+    vim.uv.new_tcp = function(...)
+        linux_made = linux_made + 1
+        return real_new_tcp(...)
+    end
+    as_os("Linux")
+    local up_linux, res_linux = pcall(server.start, { port = 0, root = root })
+    vim.uv.new_tcp, vim.uv.os_uname = real_new_tcp, real_uname
+    if up_linux then
+        server.stop(res_linux)
+    end
+    ok(up_linux, "a 127.0.0.1 start read as Linux serves: " .. tostring(up_linux and "" or res_linux))
+    eq(linux_made, 1, "with one socket and no probe")
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise
