@@ -796,8 +796,17 @@ local function schedule_reload(inst, changed_path)
     -- payload says / so no dot name reaches an events client, and a plain
     -- name keeps its path, so a started-on stylesheet still swaps.
     local path = (own and has_dot_segment(rel)) and "/" or rel
-    -- Each path once: a file written faster than the debounce restarts it at every write.
-    if path and not inst.reload_seen[path] then
+    -- Each path once, at its latest change: a file written faster than the
+    -- debounce restarts it at every write.
+    if path then
+        if inst.reload_seen[path] then
+            for i, seen in ipairs(inst.reload_window) do
+                if seen == path then
+                    table.remove(inst.reload_window, i)
+                    break
+                end
+            end
+        end
         inst.reload_seen[path] = true
         table.insert(inst.reload_window, path)
     end

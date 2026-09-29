@@ -886,6 +886,32 @@ H.case("Section 11: a mixed debounce window reloads the page", function()
         #frames == 2 and frames[1].path == "index.html" and frames[2].css == true and frames[2].path == "style.css",
         "a page's window, then a lone stylesheet's, send a reload, then a swap: " .. shown(frames)
     )
+    -- A repeated path is its latest change: A, B, then A again names A.
+    local again = H.tmpdir()
+    H.write_file(again .. "/a.html", "<html><body>a</body></html>")
+    H.write_file(again .. "/b.html", "<html><body>b</body></html>")
+    local abase = serve(again, { live = { enabled = true, debounce = 1500, inject_script = false } })
+    local aport = tonumber(abase:match(":(%d+)$"))
+    local ac = assert(H.raw_connect(aport))
+    assert(ac:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(aport)))
+    ac:read(2000, function(b)
+        return b:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    vim.wait(600)
+    local amark = #table.concat(ac.chunks)
+    for _, name in ipairs({ "a.html", "b.html", "a.html" }) do
+        H.write_file(again .. "/" .. name, "changed " .. name)
+        vim.wait(200)
+    end
+    ac:read(4000, function(b)
+        return #reloads(b, amark) > 0
+    end)
+    vim.wait(600)
+    local named = reloads(table.concat(ac.chunks), amark)
+    ok(
+        #named == 1 and named[1].path == "a.html",
+        "a.html, b.html, then a.html again in one window send one reload naming a.html: " .. shown(named)
+    )
 end)
 
 H.finish()
