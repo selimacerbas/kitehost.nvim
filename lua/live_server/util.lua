@@ -432,9 +432,23 @@ function U.utf8_len(s, i)
     return n
 end
 
--- .liveignore parser
+-- .liveignore parser: its rules, or nil and why when the name holds
+-- something other than a regular file, which is read as absent. Opening a
+-- FIFO blocks the loop until a writer comes, past SIGTERM, so the type is
+-- read first; the window between the stat and the open stays, as the asset
+-- route's does.
 function U.parse_liveignore(root)
     local path = U.joinpath(root, ".liveignore")
+    local st, st_err, st_name = uv.fs_stat(path)
+    if not st then
+        if st_name == "ENOENT" then
+            return {}
+        end
+        return nil, tostring(st_err)
+    end
+    if st.type ~= "file" then
+        return nil, "not a regular file"
+    end
     local fd = uv.fs_open(path, "r", 438)
     if not fd then
         return {}

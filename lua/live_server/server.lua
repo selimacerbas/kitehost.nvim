@@ -2250,6 +2250,16 @@ local function check_start(cfg)
     }
 end
 
+-- The root's .liveignore rules; one that cannot be read as a file gives
+-- none and is named once.
+local function read_liveignore(inst)
+    local rules, why = util.parse_liveignore(inst.root_real)
+    inst.ignore_patterns = rules or {}
+    if not rules then
+        warn_once(inst, "liveignore", ("ignores %s: %s"):format(util.joinpath(inst.root_real, ".liveignore"), why))
+    end
+end
+
 -- -------- Public server API -----------------------------------------------
 
 -- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms, sse_heartbeat_ms, max_connections }
@@ -2372,7 +2382,8 @@ function S.start(cfg)
         dir_enabled = checked.dir_enabled,
         dir_show_hidden = checked.dir_show_hidden,
         index_names = checked.index_names,
-        ignore_patterns = util.parse_liveignore(checked.root_real),
+        -- read_liveignore fills it once the instance can warn.
+        ignore_patterns = {},
         notify_on_reload = checked.notify_on_reload,
 
         -- auth
@@ -2386,6 +2397,7 @@ function S.start(cfg)
         -- directory as the root. Token-gated whenever token is set.
         asset_root = checked.asset_root,
     }
+    read_liveignore(inst)
 
     -- A connection the server cannot equip with a handle, or whose read
     -- cannot start, is dropped, and the user is told (warn_once). With no
@@ -2561,7 +2573,7 @@ function S.update_target(inst, new_root, new_index)
     inst.root = new_root
     inst.root_real = uv.fs_realpath(new_root) or inst.root_real
     inst.default_index = new_index
-    inst.ignore_patterns = util.parse_liveignore(inst.root_real)
+    read_liveignore(inst)
     if inst.live_enabled then
         return watch_or_warn(inst)
     end

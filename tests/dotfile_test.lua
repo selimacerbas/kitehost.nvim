@@ -3,7 +3,9 @@
 -- to anyone the server answers (measured). The request path is checked, and
 -- the file served by its path under the root, never the root's own path.
 -- Since the rule the listing hides them too, where show_hidden alone named
--- them, and a change to one sends no reload.
+-- them, and a change to one sends no reload. A .liveignore that is not a
+-- regular file (a FIFO, a directory) is never opened, gives no rule and is
+-- named once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/dotfile_test.lua"
 
@@ -592,6 +594,174 @@ H.case("Section 9: an entry the scan leaves untyped is judged as a link", functi
         body:find('href="/page.txt"', 1, true) ~= nil and not body:find('href="/cfg', 1, true),
         "an untyped cfg -> .git is not listed, page.txt is"
     )
+end)
+
+-- Every route reads a file's type before it opens it, since opening a
+-- FIFO blocks the loop until a writer comes, past SIGTERM; .liveignore was
+-- opened as found, after the bind, so a FIFO by that name hung start with
+-- its socket held (measured). One that is not a regular file is read as
+-- absent and named once. The FIFO's start runs in a child Neovim bounded
+-- at 2 s, so a start that blocks fails its row instead of hanging the
+-- suite: the parent then opens the FIFO's other end, which lets the
+-- child's open return.
+H.case("Section 10: a .liveignore that is not a regular file is not opened", function()
+    local notes = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    local function warnings(mark)
+        vim.wait(100)
+        local got = {}
+        for i = mark + 1, #notes do
+            if notes[i].level == vim.log.levels.WARN then
+                table.insert(got, notes[i].msg)
+            end
+        end
+        return got
+    end
+    local function start(site)
+        local inst = server.start({
+            port = 0,
+            root = site,
+            live = { enabled = false, inject_script = false },
+            features = { dirlist = { enabled = false } },
+        })
+        H.defer(function()
+            server.stop(inst)
+        end)
+        return inst
+    end
+    local function ignored(inst)
+        return ("live-server: port %d ignores %s: not a regular file"):format(
+            inst.port,
+            vim.fs.joinpath(inst.root_real, ".liveignore")
+        )
+    end
+
+    local dir_site = H.tmpdir()
+    H.write_file(dir_site .. "/index.html", "<html><body>dir</body></html>")
+    vim.fn.mkdir(dir_site .. "/.liveignore", "p")
+    local mark = #notes
+    local dir_inst = start(dir_site)
+    eq(#dir_inst.ignore_patterns, 0, "a directory named .liveignore gives no rule")
+    local warned = warnings(mark)
+    ok(#warned == 1 and warned[1] == ignored(dir_inst), "and warns once, naming it: " .. vim.inspect(warned))
+    eq(H.http_get(("http://127.0.0.1:%d/"):format(dir_inst.port)).status, 200, "and the server serves")
+
+    local plain = H.tmpdir()
+    H.write_file(plain .. "/.liveignore", "dist\n")
+    mark = #notes
+    local plain_inst = start(plain)
+    ok(
+        vim.deep_equal(plain_inst.ignore_patterns, { "dist" }),
+        "a regular .liveignore is read as before: " .. vim.inspect(plain_inst.ignore_patterns)
+    )
+    eq(#warnings(mark), 0, "and warns nothing")
+    mark = #notes
+    server.update_target(plain_inst, dir_site, nil)
+    eq(#plain_inst.ignore_patterns, 0, "update_target to a root whose .liveignore is a directory gives no rule")
+    warned = warnings(mark)
+    ok(#warned == 1 and warned[1] == ignored(plain_inst), "and warns once, naming it: " .. vim.inspect(warned))
+
+    if is_win then
+        H.skip("a FIFO named .liveignore starts and serves within 2 s (Windows has no FIFO)")
+        H.skip("and warns once, naming it")
+        H.skip("and gives no rule")
+        return
+    end
+    local fifo_site = H.tmpdir()
+    H.write_file(fifo_site .. "/index.html", "<html><body>fifo</body></html>")
+    local fifo = fifo_site .. "/.liveignore"
+    local made = vim.system({ "mkfifo", fifo }):wait()
+    if made.code ~= 0 then
+        H.skip("a FIFO named .liveignore starts and serves within 2 s (mkfifo: " .. tostring(made.stderr) .. ")")
+        H.skip("and warns once, naming it")
+        H.skip("and gives no rule")
+        return
+    end
+    local script = H.tmpdir() .. "/child.lua"
+    H.write_file(
+        script,
+        ([[
+vim.opt.rtp:prepend(%q)
+local server = require("live_server.server")
+local notes = {}
+vim.notify = function(msg, level)
+    table.insert(notes, { msg = msg, level = level })
+end
+local inst = server.start({
+    port = 0,
+    root = %q,
+    live = { enabled = false, inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+local got
+vim.system({ "curl", "-q", "-s", "-o", "/dev/null", "-w", "%%{http_code}", "--noproxy", "*", "--max-time", "2",
+    ("http://127.0.0.1:%%d/"):format(inst.port) }, { text = true }, function(r)
+    got = r.stdout
+end)
+vim.wait(2500, function()
+    return got ~= nil
+end)
+vim.wait(100)
+io.stdout:write(vim.json.encode({
+    status = got,
+    rules = #inst.ignore_patterns,
+    port = inst.port,
+    root_real = inst.root_real,
+    notes = notes,
+}))
+server.stop(inst)
+]]):format(H.root, fifo_site)
+    )
+    local done
+    local proc = vim.system({ vim.v.progpath, "--headless", "-u", "NONE", "-l", script }, { text = true }, function(r)
+        done = r
+    end)
+    local in_time = H.wait_for(function()
+        return done ~= nil
+    end, 2000)
+    if not in_time then
+        -- The child is blocked opening the FIFO to read; a writer's open
+        -- lets it return.
+        local fd = uv.fs_open(fifo, "w", 420)
+        if fd then
+            uv.fs_close(fd)
+        end
+        if not H.wait_for(function()
+            return done ~= nil
+        end, 3000) then
+            proc:kill(9)
+            H.wait_for(function()
+                return done ~= nil
+            end, 1000)
+        end
+    end
+    local child = done and done.code == 0 and select(2, pcall(vim.json.decode, done.stdout or "")) or nil
+    ok(
+        in_time and type(child) == "table" and child.status == "200",
+        ("a FIFO named .liveignore starts and serves within 2 s: %s"):format(
+            vim.inspect(done, { newline = " ", indent = "" })
+        )
+    )
+    local shown = type(child) == "table" and child or {}
+    local want = shown.port
+        and ("live-server: port %d ignores %s: not a regular file"):format(
+            shown.port,
+            vim.fs.joinpath(shown.root_real, ".liveignore")
+        )
+    local child_warned = {}
+    for _, n in ipairs(shown.notes or {}) do
+        if n.level == vim.log.levels.WARN then
+            table.insert(child_warned, n.msg)
+        end
+    end
+    ok(#child_warned == 1 and child_warned[1] == want, "and warns once, naming it: " .. vim.inspect(child_warned))
+    eq(shown.rules, 0, "and gives no rule")
 end)
 
 H.finish()
