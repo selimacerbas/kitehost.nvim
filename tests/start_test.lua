@@ -115,7 +115,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "protected_paths", { 42 } },
         { "protected_paths", { "(" }, "protected_paths pattern is malformed: (" },
         { "protected_paths", { "^/a$", "%" }, "protected_paths pattern is malformed: %" },
-        { "serve_dotfiles", 1 },
+        { "serve_dotfiles", 1, "serve_dotfiles must be true or false, got number" },
         { "protected_paths", { "^/secret" }, "protected_paths needs a token" },
         { "index_names", "index.html" },
         { "index_names", { 42 } },
@@ -244,13 +244,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "default_index", true, "default_index must be a string" },
         { "default_index", { "index.html" }, "default_index must be a string" },
         -- A flag turned off on exactly false, so 0 turned it on.
-        { "notify_on_reload", 0, "notify_on_reload must be true or false" },
-        { "notify_on_reload", "no", "notify_on_reload must be true or false" },
-        { "live", { enabled = 0 }, "live.enabled must be true or false" },
-        { "live", { inject_script = 0 }, "live.inject_script must be true or false" },
-        { "live", { css_inject = "no" }, "live.css_inject must be true or false" },
-        { "features", { dirlist = { enabled = 0 } }, "features.dirlist.enabled must be true or false" },
-        { "features", { dirlist = { show_hidden = 1 } }, "features.dirlist.show_hidden must be true or false" },
+        { "notify_on_reload", 0, "notify_on_reload must be true or false, got number" },
+        { "notify_on_reload", "no", "notify_on_reload must be true or false, got string" },
+        { "live", { enabled = 0 }, "live.enabled must be true or false, got number" },
+        { "live", { inject_script = 0 }, "live.inject_script must be true or false, got number" },
+        { "live", { css_inject = "no" }, "live.css_inject must be true or false, got string" },
+        { "features", { dirlist = { enabled = 0 } }, "features.dirlist.enabled must be true or false, got number" },
+        {
+            "features",
+            { dirlist = { show_hidden = 1 } },
+            "features.dirlist.show_hidden must be true or false, got number",
+        },
         -- The stream refuses a token that is no UTF-8 in the page's encoded
         -- form, so the URL the start prints would never connect.
         { "token", "ab\255cd", "token must be valid UTF-8" },

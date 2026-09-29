@@ -139,11 +139,11 @@ function M.setup(opts)
         { "directory_listing", "show_hidden" },
     }) do
         if type(merged[flag[1]][flag[2]]) ~= "boolean" then
-            error(("%s.%s must be a boolean"):format(flag[1], flag[2]), 0)
+            error(("%s.%s must be true or false, got %s"):format(flag[1], flag[2], type(merged[flag[1]][flag[2]])), 0)
         end
     end
     if type(merged.notify_on_reload) ~= "boolean" then
-        error("notify_on_reload must be a boolean", 0)
+        error("notify_on_reload must be true or false, got " .. type(merged.notify_on_reload), 0)
     end
     M.opts = merged
 

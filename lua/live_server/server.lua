@@ -2230,7 +2230,7 @@ local function check_start(cfg)
     -- dotfile without a word.
     local dotfiles = cfg.serve_dotfiles
     if dotfiles ~= nil and type(dotfiles) ~= "boolean" then
-        error("serve_dotfiles must be true or false", 0)
+        error("serve_dotfiles must be true or false, got " .. type(dotfiles), 0)
     end
     -- A header is written as the table spells it. Chromium trims a name, so
     -- "Access-Control-Allow-Origin " let any site read the event stream
@@ -2326,7 +2326,7 @@ local function check_start(cfg)
     -- A flag turned off on exactly false, so 0 or "no" turned it on.
     local function flag(name, v)
         if v ~= nil and type(v) ~= "boolean" then
-            error(name .. " must be true or false", 0)
+            error(name .. " must be true or false, got " .. type(v), 0)
         end
         return v
     end

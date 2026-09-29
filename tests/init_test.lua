@@ -385,19 +385,20 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     -- each start then failed, far from the config that held it; setup
     -- refuses it, keeping what it had.
     for _, c in ipairs({
-        { { live_reload = { enabled = 1 } }, "live_reload.enabled" },
-        { { live_reload = { inject_script = "yes" } }, "live_reload.inject_script" },
-        { { live_reload = { css_inject = 0 } }, "live_reload.css_inject" },
-        { { directory_listing = { enabled = 1 } }, "directory_listing.enabled" },
-        { { directory_listing = { show_hidden = "no" } }, "directory_listing.show_hidden" },
-        { { notify_on_reload = 1 }, "notify_on_reload" },
+        { { live_reload = { enabled = 1 } }, "live_reload.enabled", "number" },
+        { { live_reload = { inject_script = "yes" } }, "live_reload.inject_script", "string" },
+        { { live_reload = { css_inject = 0 } }, "live_reload.css_inject", "number" },
+        { { directory_listing = { enabled = 1 } }, "directory_listing.enabled", "number" },
+        { { directory_listing = { show_hidden = "no" } }, "directory_listing.show_hidden", "string" },
+        { { notify_on_reload = 1 }, "notify_on_reload", "number" },
     }) do
         package.loaded["live_server"] = nil
         local flagged = require("live_server")
         local set, err = pcall(flagged.setup, vim.tbl_extend("force", { notify = false, default_port = 9000 }, c[1]))
+        -- The wording start uses, where setup said "must be a boolean".
         eq(
             not set and tostring(err) or "setup took it",
-            c[2] .. " must be a boolean",
+            ("%s must be true or false, got %s"):format(c[2], c[3]),
             ("setup refuses %s = %s, naming it"):format(c[2], vim.inspect(c[1], { newline = " ", indent = "" }))
         )
         eq(flagged.opts.default_port, 8000, ("and a refused %s keeps every option it had"):format(c[2]))
