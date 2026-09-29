@@ -701,6 +701,27 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
     ok(escaped, "a raise while the boundary closes the connection reaches the editor")
     ok(reported(5, "deliberate read failure"), "and the handler's raise before it is still reported")
 
+    -- %c marks 0 to 31 and 127 alone, so a raw 0x9B, a C1 CSI a terminal
+    -- may act on, reached the notice, and so did U+009B encoded; the cut
+    -- could split a letter. Each such byte or sequence is one mark, and
+    -- the cut falls between letters.
+    local function notice_for(n, path)
+        stat_raises()
+        ask(port, get(path, port))
+        uv.fs_stat = real_stat
+        return reported(n, "deliberate stat failure") and notes[n].msg:match("^live%-server: (.-) failed: ") or ""
+    end
+    eq(notice_for(6, "/a\155b/../style.css"), "/a?b/../style.css", "a raw 0x9B in the path is one mark")
+    eq(notice_for(7, "/a\194\155b/../style.css"), "/a?b/../style.css", "and U+009B encoded is one mark")
+    eq(
+        notice_for(8, "/a\255\194b/../style.css"),
+        "/a??b/../style.css",
+        "and each byte of a sequence no UTF-8 reader accepts is one mark"
+    )
+    eq(notice_for(9, "/a\195\169b/../style.css"), "/a\195\169b/../style.css", "a letter past ASCII is kept")
+    local long = "/" .. ("./"):rep(99)
+    eq(notice_for(10, long .. "\195\169/../style.css"), long, "a letter the 200-byte cut would split is left out whole")
+
     res = ask(port, get("/style.css", port))
     eq(res[1] and res[1].status, 200, "and the server answers the next request")
 end)

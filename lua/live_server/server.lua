@@ -208,20 +208,39 @@ local function http_400(sock, msg)
     )
 end
 
+-- A terminal may act on a C1 control as on a C0 one, raw or encoded, and
+-- on the half of a letter a byte cut leaves, so each is one mark.
+local function marked(s, limit)
+    local out, i = {}, 1
+    while i <= #s do
+        local seq = util.utf8_len(s, i)
+        local len = seq or 1
+        if i + len - 1 > limit then
+            break
+        end
+        local b1, b2 = s:byte(i, i + 1)
+        local control = not seq or len == 1 and (b1 < 0x20 or b1 == 0x7F) or len == 2 and b1 == 0xC2 and b2 < 0xA0
+        table.insert(out, control and "?" or s:sub(i, i + len - 1))
+        i = i + len
+    end
+    return table.concat(out)
+end
+
 -- Tells the user, once and on one line, that answering path raised. A
 -- traceback ran to 15 lines, a hit-enter prompt per failed request, and
 -- 0.10's v:errmsg kept its last line alone; the raise's first line
 -- already names its file and line. The query is cut, since ?t=<token>
 -- rides there and :messages keeps it, and so is the length, since a peer
 -- controls the path up to the head's cap, as it would a cause that quoted
--- the path. A control byte in the line is a mark: Neovim shows one as a
+-- the path. A control in the line is a mark: Neovim shows one as a
 -- caret pair, but a notifier that forwards to a terminal or a desktop
--- would pass an escape a peer wrote. Scheduled: a request runs in a fast
--- event, where vim.notify raises.
+-- would pass an escape a peer wrote, a C1 one (0x9B, CSI) included, raw
+-- or encoded. Scheduled: a request runs in a fast event, where
+-- vim.notify raises.
 local function report_raise(path, raised)
-    local cause = tostring(raised):match("^[^\n]*"):sub(1, 300)
-    local shown = path:match("^[^?#]*"):sub(1, 200)
-    local line = ("live-server: %s failed: %s"):format(shown, cause):gsub("%c", "?")
+    local cause = marked(tostring(raised):match("^[^\n]*"), 300)
+    local shown = marked(path:match("^[^?#]*"), 200)
+    local line = ("live-server: %s failed: %s"):format(shown, cause)
     vim.schedule(function()
         util.notify(line, { notify = true }, "ERROR")
     end)
