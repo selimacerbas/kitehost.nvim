@@ -142,9 +142,11 @@ H.case("every /__live/ route the server answers is documented", function()
     end
 end)
 
--- setup() takes the keys of its defaults table. A key whose default is nil
--- is no key of opts at run time, so the table is also read from the
--- module's source; each run-time key found there proves that read.
+-- setup() takes the keys of its defaults table and every key the module
+-- reads from M.opts. A key whose default is nil is no key of opts at run
+-- time, so both are read from the module's source; each run-time key
+-- found in the table, and a key found there that opts lacks, prove that
+-- read.
 H.case("Section 2: every setup() option is in README Options", function()
     package.loaded["live_server"] = nil
     local opts = require("live_server").opts
@@ -152,16 +154,27 @@ H.case("Section 2: every setup() option is in README Options", function()
     ok(block ~= "", "the README has the Options section")
     local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n")
     local defaults = "\n" .. (source:match("\nlocal defaults = {\n(.-)\n}\n") or "")
-    local seen, keys = {}, {}
-    for k in defaults:gmatch("\n    ([%a_][%w_]*) = ") do
-        seen[k] = true
-        table.insert(keys, k)
-    end
-    for k in pairs(opts) do
-        ok(seen[k], ("opts.%s is read from the defaults table"):format(k))
+    local declared, seen, keys = {}, {}, {}
+    local function add(k)
         if not seen[k] then
+            seen[k] = true
             table.insert(keys, k)
         end
+    end
+    local unset = 0
+    for k in defaults:gmatch("\n    ([%a_][%w_]*) = ") do
+        declared[k] = true
+        unset = unset + (opts[k] == nil and 1 or 0)
+        add(k)
+    end
+    ok(unset > 0, "the defaults table read names a key opts lacks, a nil default")
+    for k in pairs(opts) do
+        ok(declared[k], ("opts.%s is read from the defaults table"):format(k))
+        add(k)
+    end
+    -- An option forwarded to the server with no default is one too.
+    for k in source:gmatch("M%.opts%.([%a_][%w_]*)") do
+        add(k)
     end
     table.sort(keys)
     for _, k in ipairs(keys) do
