@@ -475,32 +475,40 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     vim.uv.new_fs_event = function()
         return nil, "EMFILE: stubbed", "EMFILE"
     end
-    local third = H.tmpdir()
+    -- A root named with ESC and U+202E reaches both notices marked.
+    local third = H.tmpdir() .. "/d\27[31m\226\128\174e"
+    assert(vim.fn.mkdir(third, "p") == 1)
+    local shown = third:gsub("d\27%[31m\226\128\174e$", "d?[31m?e")
     notes, target = {}, third
     called, err = pcall(ls.start_picker)
     ok(called, "a retarget whose watcher cannot start raises nothing: " .. tostring(err))
+    vim.wait(100)
     local said = notes[1] or {}
     eq(
         said.msg,
-        ("LiveServer %d retargeted to %s; live reload is off (could not watch %s (EMFILE: stubbed))"):format(
-            inst.port,
-            third,
-            third
-        ),
-        "and says live reload is off, naming the port and the cause"
+        ("LiveServer %d retargeted to %s; live reload is off"):format(inst.port, shown),
+        "and says live reload is off, naming the port, the root marked"
     )
     eq(said.level, vim.log.levels.WARN, "as a warning")
+    local server_said = notes[2] or {}
+    ok(
+        #notes == 2 and server_said.msg:find("(EMFILE: stubbed); live reload is off", 1, true) ~= nil,
+        "and the server's own warning, the one naming the cause, is the only other notice: "
+            .. vim.inspect(notes, { newline = " ", indent = "" })
+    )
     notes = {}
     called, err = pcall(ls.toggle_livereload)
     vim.uv.new_fs_event = real_new
     ok(called, "a toggle that cannot watch raises nothing: " .. tostring(err))
+    vim.wait(100)
     said = notes[1] or {}
     eq(
         said.msg,
-        ("Live-reload DISABLED on %d: could not watch %s (EMFILE: stubbed)"):format(inst.port, third),
-        "and its DISABLED line names the cause"
+        ("Live-reload DISABLED on %d: could not watch %s (EMFILE: stubbed)"):format(inst.port, shown),
+        "and its DISABLED line names the cause, the root marked"
     )
     eq(said.level, vim.log.levels.WARN, "as a warning")
+    eq(#notes, 1, "and is the one notice")
 end)
 
 local errors = 0

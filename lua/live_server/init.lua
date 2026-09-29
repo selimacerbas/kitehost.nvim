@@ -193,14 +193,16 @@ function start_for_path(path, port)
     local started_here = false
     if s then
         -- By pcall itself, so a refused root is a notice with no position.
-        local retargeted, answer, cause = pcall(server.update_target, s, root, index)
+        local retargeted, answer = pcall(server.update_target, s, root, index)
         if not retargeted then
             return util.notify("LiveServer could not retarget: " .. tostring(answer), M.opts, "ERROR")
         end
-        -- The retarget read as done while its live reload went off unsaid.
+        -- The retarget read as done while its live reload went off unsaid;
+        -- the server's own warning names the cause, and a root may carry
+        -- a peer's bytes, so the line is marked.
         if answer == false then
-            local off = "LiveServer %d retargeted to %s; live reload is off (%s)"
-            util.notify(off:format(port, root, tostring(cause)), M.opts, "WARN")
+            local off = ("LiveServer %d retargeted to %s; live reload is off"):format(port, root)
+            util.notify(util.marked(off), M.opts, "WARN")
         else
             util.notify(
                 ("LiveServer %d retargeted → %s%s"):format(
@@ -330,7 +332,8 @@ function M.toggle_livereload()
         -- A toggle that failed read as a plain DISABLED, naming no cause.
         if want and not enabled then
             local why = cause and (": " .. cause) or ""
-            return util.notify(("Live-reload DISABLED on %d%s"):format(port, why), M.opts, "WARN")
+            local line = ("Live-reload DISABLED on %d%s"):format(port, why)
+            return util.notify(util.marked(line), M.opts, "WARN")
         end
         util.notify(("Live-reload %s on %d"):format(enabled and "ENABLED" or "DISABLED", port), M.opts)
     end)
