@@ -883,16 +883,27 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             H.skip("and no descriptor")
         else
             local here = ("%s:%d"):format(specific, got.port)
-            -- Linux refuses the bind before the probe, with the bind's own cause.
+            -- macOS binds beside the listener and the probe refuses;
+            -- Linux refuses the bind itself, with its own cause. Any
+            -- EADDRINUSE passed on macOS, leaving the probe unpinned.
             local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
                 got.port
             )
-            local bind_refused = not got.res:find("another socket", 1, true) and got.res:find("EADDRINUSE", 1, true)
+            local darwin = vim.uv.os_uname().sysname == "Darwin"
+            local refused
+            if darwin then
+                refused = got.res:find(shadow, 1, true) ~= nil
+            else
+                refused = not got.res:find("another socket", 1, true) and got.res:find("EADDRINUSE", 1, true) ~= nil
+            end
             ok(
-                not got.started
-                    and got.res:find("Failed to bind " .. here, 1, true) == 1
-                    and (got.res:find(shadow, 1, true) or bind_refused),
-                ("a %s start beside a %s listener raises, naming both: %s"):format(specific, wildcard, got.res)
+                not got.started and got.res:find("Failed to bind " .. here, 1, true) == 1 and refused,
+                ("a %s start beside a %s listener raises, %s: %s"):format(
+                    specific,
+                    wildcard,
+                    darwin and "the probe naming the shadowed wildcard" or "the bind refusing the port",
+                    got.res
+                )
             )
             eq(got.tcp, 0, ("a %s start beside a %s listener leaves no socket"):format(specific, wildcard))
             eq(got.fd, 0, ("a %s start beside a %s listener leaves no descriptor"):format(specific, wildcard))
@@ -908,6 +919,88 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     else
         H.skip("a ::ffff:127.0.0.1 start with nothing beside it serves (this machine binds no ::ffff:127.0.0.1)")
     end
+    -- A dual-stack probe of :: met an IPv4 listener's socket, so a ::1
+    -- start beside a 0.0.0.0 listener, which shadows nothing, was refused.
+    local v4 = assert(vim.uv.new_tcp())
+    H.defer(function()
+        if not v4:is_closing() then
+            v4:close()
+        end
+    end)
+    if binds("::1") and v4:bind("0.0.0.0", 0) and v4:listen(8, function() end) then
+        local v4_port = v4:getsockname().port
+        local up6, res6 = pcall(server.start, { host = "::1", port = v4_port, root = root })
+        if up6 then
+            server.stop(res6)
+        end
+        ok(up6, "a ::1 start beside a 0.0.0.0 listener on its port serves: " .. tostring(up6 and "" or res6))
+    else
+        H.skip("a ::1 start beside a 0.0.0.0 listener on its port serves (this machine binds no ::1)")
+    end
+    v4:close()
+    -- A LAN address shadows a wildcard listener as loopback does, and only
+    -- loopback was probed.
+    local lan
+    for _, addrs in pairs(vim.uv.interface_addresses()) do
+        for _, a in ipairs(addrs) do
+            if a.family == "inet" and not a.internal then
+                lan = lan or a.ip
+            end
+        end
+    end
+    local lan_got = lan and held_by("0.0.0.0", lan)
+    if not lan_got then
+        H.skip("a LAN address start beside a 0.0.0.0 listener raises (this machine has no LAN address)")
+    else
+        local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
+            lan_got.port
+        )
+        local refused
+        if vim.uv.os_uname().sysname == "Darwin" then
+            refused = lan_got.res:find(shadow, 1, true) ~= nil
+        else
+            refused = lan_got.res:find("EADDRINUSE", 1, true) ~= nil
+        end
+        ok(
+            not lan_got.started and refused,
+            ("a LAN address start (%s) beside a 0.0.0.0 listener raises: %s"):format(lan, lan_got.res)
+        )
+        eq(lan_got.tcp, 0, "and leaves no socket")
+    end
+    -- On port 0 the OS may choose a port a wildcard listener holds; the
+    -- probe that finds it held made the start raise, where another port
+    -- would serve.
+    local real_tcp = vim.uv.new_tcp
+    H.defer(function()
+        vim.uv.new_tcp = real_tcp
+    end)
+    local made_tcp = 0
+    vim.uv.new_tcp = function(...)
+        made_tcp = made_tcp + 1
+        local h, h_err, h_name = real_tcp(...)
+        if made_tcp ~= 2 or not h then
+            return h, h_err, h_name
+        end
+        return setmetatable({}, {
+            __index = function(_, method)
+                if method == "bind" then
+                    return function()
+                        return nil, "EADDRINUSE: stubbed", "EADDRINUSE"
+                    end
+                end
+                return function(_, ...)
+                    return h[method](h, ...)
+                end
+            end,
+        })
+    end
+    local up0, res0 = pcall(server.start, { port = 0, root = root })
+    vim.uv.new_tcp = real_tcp
+    if up0 then
+        server.stop(res0)
+    end
+    ok(up0, "a port-0 start whose probe finds the port held binds again and serves: " .. tostring(up0 and "" or res0))
+    eq(made_tcp, 4, "through a second socket and a second probe")
     -- A probe that fails any other way cannot tell, as the wildcard's.
     local real_new_tcp = vim.uv.new_tcp
     H.defer(function()

@@ -1332,17 +1332,17 @@ function S.wildcard_loopback(ip)
 end
 
 -- S.wildcard_loopback's mirror, fixed where a caller may replace that rule.
--- Each address probes its own family's wildcard: an IPv4 loopback, and the
--- IPv4-mapped spelling of one, probes 0.0.0.0, and ::1 probes ::, since a
--- dual-stack probe of :: would meet this server's IPv4 socket on Linux.
+-- Each specific address probes its own family's wildcard: any IPv4 one,
+-- and the IPv4-mapped spelling of one, probes 0.0.0.0, and any IPv6 one
+-- probes ::, since a LAN address shadows a wildcard as loopback does.
 local function wildcard_of(ip)
-    -- A dual-stack bind of the mapped spelling answers IPv4 loopback too.
+    -- A dual-stack bind of the mapped spelling answers IPv4 too.
     ip = ip:match("^::[fF][fF][fF][fF]:(%d+%.%d+%.%d+%.%d+)$") or ip
-    if ip == "::1" then
-        return "::"
+    if is_ipv4(ip) then
+        return ip ~= "0.0.0.0" and "0.0.0.0" or nil
     end
-    if is_ipv4(ip) and ip:match("^127%.") then
-        return "0.0.0.0"
+    if ip:find(":", 1, true) then
+        return ip ~= "::" and "::" or nil
     end
     return nil
 end
@@ -1357,7 +1357,9 @@ local function address_free(ip, port)
     if not probe then
         return nil, err, name
     end
-    local called, bound, bind_err, bind_name = pcall(probe.bind, probe, ip, port)
+    -- ipv6only, so a probe of :: never meets an IPv4 socket (Linux).
+    local flags = ip == "::" and { ipv6only = true } or nil
+    local called, bound, bind_err, bind_name = pcall(probe.bind, probe, ip, port, flags)
     local free
     if not called then
         err = bound
@@ -2440,6 +2442,90 @@ local function watch_or_warn(inst)
     return false, cause
 end
 
+-- One bind and the probes before the listen: the socket and its
+-- address, or nil, the refusal and whether a probe found the port held.
+local function bind_probed(host, port)
+    -- Unread, a nil here was indexed by the bind and raised at this file's
+    -- line, naming nothing a user could act on.
+    local tcp, tcp_err = uv.new_tcp()
+    if not tcp then
+        return nil, "Failed to bind " .. host .. ":" .. tostring(port) .. ": no socket: " .. tostring(tcp_err)
+    end
+    -- luv returns a failed bind as nil, err, which a pcall alone never sees,
+    -- and listen binds an unbound socket to every interface. bind raises
+    -- only on an address it cannot parse, which the pcall catches. The caller
+    -- shows the message to the user, so the raise is at level 0.
+    local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, port)
+    if not called or not bound_ok then
+        close_once(tcp)
+        local reason = called and bind_err or bound_ok
+        return nil, "Failed to bind " .. host .. ":" .. tostring(port) .. ": " .. tostring(reason)
+    end
+
+    -- The bound address, not the configured spelling, decides the Host
+    -- check: 0:0:0:0:0:0:0:1 and ::ffff:127.0.0.1 are loopback binds too.
+    -- It also carries the OS-assigned port when cfg.port is 0. libuv holds
+    -- a bind's EADDRINUSE until here, so a failure reads as the bind's.
+    local bound, sockname_err = tcp:getsockname()
+    if not bound then
+        close_once(tcp)
+        return nil, "Failed to bind " .. host .. ":" .. tostring(port) .. ": " .. tostring(sockname_err)
+    end
+
+    -- macOS and Windows let a listener bound to the loopback address alone
+    -- share the port with a wildcard bind and take every connection to that
+    -- address, where the opened URL, token and all, would go (measured on
+    -- macOS; Linux refuses the bind above). start serves only when a probe
+    -- before the listen finds the address free: a probe that failed any
+    -- other way cannot tell, and a real EMFILE there once let the URL reach
+    -- another program (measured). A caller may replace the rule, and one
+    -- that raised went past start with the server's socket open.
+    local here = host .. ":" .. tostring(bound.port)
+    local ruled, loopback = pcall(S.wildcard_loopback, bound.ip)
+    if not ruled then
+        close_once(tcp)
+        return nil, ("Failed to bind %s: the loopback rule raised: %s"):format(here, tostring(loopback))
+    end
+    if loopback then
+        local free, why, why_name = address_free(loopback, bound.port)
+        if not free then
+            close_once(tcp)
+            local there = tostring(loopback) .. ":" .. tostring(bound.port)
+            if why_name == "EADDRINUSE" then
+                return nil,
+                    ("Failed to bind %s: another socket holds %s, the address the URL names (%s)"):format(
+                        here,
+                        there,
+                        tostring(why)
+                    ),
+                    true
+            end
+            return nil,
+                ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(here, there, tostring(why))
+        end
+    end
+
+    -- macOS lets a loopback bind shadow another program's wildcard listener (measured).
+    -- This socket, bound and not listening, never meets the probe (measured on macOS).
+    local wildcard = wildcard_of(bound.ip)
+    if wildcard then
+        local free, why, why_name = address_free(wildcard, bound.port)
+        if not free then
+            close_once(tcp)
+            local there = wildcard .. ":" .. tostring(bound.port)
+            if why_name == "EADDRINUSE" then
+                local held = "Failed to bind %s: another socket holds"
+                    .. " a wildcard on port %d, which this address would"
+                    .. " shadow (%s)"
+                return nil, held:format(here, bound.port, tostring(why)), true
+            end
+            return nil, ("Failed to bind %s: cannot check %s: %s"):format(here, there, tostring(why))
+        end
+    end
+
+    return tcp, bound
+end
+
 -- -------- Public server API -----------------------------------------------
 
 -- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms, sse_heartbeat_ms, max_connections }
@@ -2459,87 +2545,19 @@ end
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host
-    -- Unread, a nil here was indexed by the bind and raised at this file's
-    -- line, naming nothing a user could act on.
-    local tcp, tcp_err = uv.new_tcp()
+    -- On port 0 the OS may choose a port a wildcard listener holds, which a
+    -- probe refuses (measured 0 in 2000 on macOS), so it binds again, at
+    -- most three times.
+    local tcp, bound, held
+    for _ = 1, checked.port == 0 and 4 or 1 do
+        tcp, bound, held = bind_probed(host, checked.port)
+        if tcp or not held then
+            break
+        end
+    end
     if not tcp then
-        error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": no socket: " .. tostring(tcp_err), 0)
+        error(bound, 0)
     end
-    -- luv returns a failed bind as nil, err, which a pcall alone never sees,
-    -- and listen binds an unbound socket to every interface. bind raises
-    -- only on an address it cannot parse, which the pcall catches. The caller
-    -- shows the message to the user, so the raise is at level 0.
-    local called, bound_ok, bind_err = pcall(tcp.bind, tcp, host, checked.port)
-    if not called or not bound_ok then
-        close_once(tcp)
-        local reason = called and bind_err or bound_ok
-        error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(reason), 0)
-    end
-
-    -- The bound address, not the configured spelling, decides the Host
-    -- check: 0:0:0:0:0:0:0:1 and ::ffff:127.0.0.1 are loopback binds too.
-    -- It also carries the OS-assigned port when cfg.port is 0. libuv holds
-    -- a bind's EADDRINUSE until here, so a failure reads as the bind's.
-    local bound, sockname_err = tcp:getsockname()
-    if not bound then
-        close_once(tcp)
-        error("Failed to bind " .. host .. ":" .. tostring(checked.port) .. ": " .. tostring(sockname_err), 0)
-    end
-
-    -- macOS and Windows let a listener bound to the loopback address alone
-    -- share the port with a wildcard bind and take every connection to that
-    -- address, where the opened URL, token and all, would go (measured on
-    -- macOS; Linux refuses the bind above). start serves only when a probe
-    -- before the listen finds the address free: a probe that failed any
-    -- other way cannot tell, and a real EMFILE there once let the URL reach
-    -- another program (measured). A caller may replace the rule, and one
-    -- that raised went past start with the server's socket open.
-    local here = host .. ":" .. tostring(bound.port)
-    local ruled, loopback = pcall(S.wildcard_loopback, bound.ip)
-    if not ruled then
-        close_once(tcp)
-        error(("Failed to bind %s: the loopback rule raised: %s"):format(here, tostring(loopback)), 0)
-    end
-    if loopback then
-        local free, why, why_name = address_free(loopback, bound.port)
-        if not free then
-            close_once(tcp)
-            local there = tostring(loopback) .. ":" .. tostring(bound.port)
-            if why_name == "EADDRINUSE" then
-                error(
-                    ("Failed to bind %s: another socket holds %s, the address the URL names (%s)"):format(
-                        here,
-                        there,
-                        tostring(why)
-                    ),
-                    0
-                )
-            end
-            error(
-                ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(here, there, tostring(why)),
-                0
-            )
-        end
-    end
-
-    -- macOS lets a loopback bind shadow another program's wildcard listener (measured).
-    -- This socket, bound and not listening, never meets the probe (measured on macOS).
-    local wildcard = wildcard_of(bound.ip)
-    if wildcard then
-        local free, why, why_name = address_free(wildcard, bound.port)
-        if not free then
-            close_once(tcp)
-            local there = wildcard .. ":" .. tostring(bound.port)
-            if why_name == "EADDRINUSE" then
-                local held = "Failed to bind %s: another socket holds"
-                    .. " a wildcard on port %d, which this address would"
-                    .. " shadow (%s)"
-                error(held:format(here, bound.port, tostring(why)), 0)
-            end
-            error(("Failed to bind %s: cannot check %s: %s"):format(here, there, tostring(why)), 0)
-        end
-    end
-
     local actual_port = bound.port
 
     local inst = {
