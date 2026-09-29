@@ -853,15 +853,24 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             fd = (fds_after or 0) - (fds or 0),
         }
     end
-    for _, pair in ipairs({ { "0.0.0.0", "127.0.0.1" }, { "::", "::1" } }) do
+    -- Whether this machine binds the address at all: the v4-mapped spelling
+    -- needs a dual-stack socket.
+    local function binds(ip)
+        local t = assert(vim.uv.new_tcp())
+        local bound = t:bind(ip, 0) and t:getsockname()
+        t:close()
+        return bound ~= nil and bound ~= false
+    end
+    for _, pair in ipairs({ { "0.0.0.0", "127.0.0.1" }, { "::", "::1" }, { "0.0.0.0", "::ffff:127.0.0.1" } }) do
         local wildcard, specific = pair[1], pair[2]
-        local got = held_by(wildcard, specific)
+        local got = binds(specific) and held_by(wildcard, specific)
         if not got then
             H.skip(
-                ("a %s start beside a %s listener raises (this machine binds no %s)"):format(
+                ("a %s start beside a %s listener raises (this machine binds no %s or no %s)"):format(
                     specific,
                     wildcard,
-                    wildcard
+                    wildcard,
+                    specific
                 )
             )
             H.skip("leaving no socket")
@@ -884,6 +893,16 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             eq(got.tcp, 0, ("a %s start beside a %s listener leaves no socket"):format(specific, wildcard))
             eq(got.fd, 0, ("a %s start beside a %s listener leaves no descriptor"):format(specific, wildcard))
         end
+    end
+    -- Its own mapped socket, bound and not listening, never meets the probe.
+    if binds("::ffff:127.0.0.1") then
+        local up, up_res = pcall(server.start, { host = "::ffff:127.0.0.1", port = 0, root = root })
+        if up then
+            server.stop(up_res)
+        end
+        ok(up, "a ::ffff:127.0.0.1 start with nothing beside it serves: " .. tostring(up and "" or up_res))
+    else
+        H.skip("a ::ffff:127.0.0.1 start with nothing beside it serves (this machine binds no ::ffff:127.0.0.1)")
     end
     -- A probe that fails any other way cannot tell, as the wildcard's.
     local real_new_tcp = vim.uv.new_tcp

@@ -1254,6 +1254,8 @@ end
 -- a dual-stack probe of :: would meet this server's own IPv4 socket on
 -- Linux.
 local function wildcard_of(ip)
+    -- A dual-stack bind of the mapped spelling answers IPv4 loopback too.
+    ip = ip:match("^::[fF][fF][fF][fF]:(%d+%.%d+%.%d+%.%d+)$") or ip
     if ip == "::1" then
         return "::"
     end
