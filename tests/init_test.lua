@@ -516,9 +516,7 @@ end)
 -- host = "::1" opened http://::1:<port>/, which no browser parses: the
 -- colons read as the port.
 H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
-    -- open_existing reads the configured host, so these need no bind: any
-    -- IPv6 host is bracketed, and one given bracketed is bracketed once;
-    -- an IPv4-mapped one opens as the IPv4 address it answers on.
+    -- open_existing reads the configured host, so these rows need no bind.
     H.defer(function()
         picked_port = 0
     end)

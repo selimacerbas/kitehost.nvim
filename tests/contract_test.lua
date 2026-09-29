@@ -234,14 +234,10 @@ H.case("Section 3: the capability flags a caller reads", function()
     end
 end)
 
--- markdown-preview names a taken port by finding luv's text inside this
--- server's refusal, so each shape a held port refuses in carries it: the
--- bind's own, the specific bind's probe of its wildcard and the wildcard
--- bind's probe of its URL's address.
+-- markdown-preview names a taken port by luv's text inside the refusal.
 H.case("Section 4: a taken port's refusal carries luv's text", function()
     local taken = "EADDRINUSE: address already in use"
-    -- Listens on ip, starts on host at that port and returns the refusal,
-    -- or nil and why the row cannot run here.
+    -- A start's refusal beside a listener, or nil and why it cannot run.
     local function refusal(ip, host)
         local hold = assert(vim.uv.new_tcp())
         local bound, bind_err = hold:bind(ip, 0)
@@ -263,7 +259,7 @@ H.case("Section 4: a taken port's refusal carries luv's text", function()
     local rows = {
         { "127.0.0.1", "127.0.0.1", "a fixed port held on 127.0.0.1 refuses a 127.0.0.1 start" },
         { "0.0.0.0", "127.0.0.1", "0.0.0.0 held refuses a 127.0.0.1 start, the probe of its wildcard" },
-        { "127.0.0.1", "0.0.0.0", "127.0.0.1 held refuses a 0.0.0.0 start, the probe of its URL's address" },
+        { "127.0.0.1", "0.0.0.0", "127.0.0.1 held refuses a 0.0.0.0 start" },
     }
     local info = vim.uv.os_uname()
     for i, row in ipairs(rows) do
