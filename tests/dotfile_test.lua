@@ -819,6 +819,106 @@ server.stop(inst)
     )
 end)
 
+-- A .liveignore the stat reads and the open refuses was an empty rule
+-- list with no word, and one over 64 KiB, a link to a large system file
+-- among them, was read and parsed on the loop at every start and
+-- retarget (measured: past 20 s). Each is read as absent and named once,
+-- as is one whose stat fails other than ENOENT.
+H.case("Section 10b: a .liveignore that cannot be read, or is too large, is named", function()
+    local notes = {}
+    local real_notify = vim.notify
+    local real_stat = uv.fs_stat
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        vim.notify = real_notify
+        uv.fs_stat = real_stat
+    end)
+    local function warnings(mark)
+        vim.wait(100)
+        local got = {}
+        for i = mark + 1, #notes do
+            if notes[i].level == vim.log.levels.WARN then
+                table.insert(got, notes[i].msg)
+            end
+        end
+        return got
+    end
+    -- The start, then a stub undone, then a GET, so the stub sees the
+    -- start's read alone.
+    local function check(label, site, why, undo)
+        local mark = #notes
+        local inst = server.start({
+            port = 0,
+            root = site,
+            live = { enabled = false, inject_script = false },
+            features = { dirlist = { enabled = false } },
+        })
+        H.defer(function()
+            server.stop(inst)
+        end)
+        if undo then
+            undo()
+        end
+        eq(#inst.ignore_patterns, 0, label .. " gives no rule")
+        local want = ("live-server: port %d ignores %s: %s"):format(
+            inst.port,
+            vim.fs.joinpath(inst.root_real, ".liveignore"),
+            why
+        )
+        local warned = warnings(mark)
+        ok(#warned == 1 and warned[1] == want, label .. " warns once, naming it and the cause: " .. vim.inspect(warned))
+        eq(H.http_get(("http://127.0.0.1:%d/"):format(inst.port)).status, 200, label .. " serves")
+    end
+    local function site_with(content)
+        local site = H.tmpdir()
+        H.write_file(site .. "/index.html", "<html><body>ok</body></html>")
+        if content then
+            H.write_file(site .. "/.liveignore", content)
+        end
+        return site
+    end
+    local big = string.rep("dist\n", 14336)
+    local over = ".liveignore is 71680 bytes, over the 65536-byte limit"
+    check("a 70 KiB .liveignore", site_with(big), over)
+    local target = H.tmpdir() .. "/big-ignore"
+    H.write_file(target, big)
+    local linked = site_with(nil)
+    assert(uv.fs_symlink(target, linked .. "/.liveignore"))
+    check("a link to a 70 KiB file named .liveignore", linked, over)
+
+    local locked = site_with("dist\n")
+    local locked_file = locked .. "/.liveignore"
+    assert(uv.fs_chmod(locked_file, 0))
+    H.defer(function()
+        uv.fs_chmod(locked_file, 420)
+    end)
+    local probe, probe_err = uv.fs_open(locked_file, "r", 438)
+    if probe then
+        uv.fs_close(probe)
+        H.skip("a mode-000 .liveignore gives no rule (this account reads it anyway)")
+        H.skip("a mode-000 .liveignore warns once, naming it and the cause")
+        H.skip("a mode-000 .liveignore serves")
+    else
+        -- The cause names the path luv opened, the root as start resolves it.
+        local real_file = vim.fs.joinpath(assert(uv.fs_realpath(locked)), ".liveignore")
+        check("a mode-000 .liveignore", locked, (tostring(probe_err):gsub(vim.pesc(locked_file), real_file)))
+    end
+
+    local failing = site_with("dist\n")
+    local failing_file = vim.fs.joinpath(assert(uv.fs_realpath(failing)), ".liveignore")
+    uv.fs_stat = function(path, ...)
+        if path == failing_file then
+            return nil, "EIO: stubbed", "EIO"
+        end
+        return real_stat(path, ...)
+    end
+    check("a .liveignore whose stat fails", failing, "EIO: stubbed", function()
+        uv.fs_stat = real_stat
+    end)
+end)
+
 -- Two changes inside one debounce window kept the last path alone, so
 -- index.html then style.css sent one reload marked as a stylesheet: the
 -- injected client swapped the stylesheets and the page stayed stale

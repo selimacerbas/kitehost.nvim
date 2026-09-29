@@ -466,6 +466,8 @@ function U.marked(s, limit)
     return table.concat(out)
 end
 
+local LIVEIGNORE_MAX = 65536
+
 -- Opening a FIFO blocks the loop past SIGTERM, so the type is read first;
 -- the window between the stat and the open stays, as the asset route's does.
 function U.parse_liveignore(root)
@@ -480,19 +482,32 @@ function U.parse_liveignore(root)
     if st.type ~= "file" then
         return nil, "not a regular file"
     end
-    local fd = uv.fs_open(path, "r", 438)
-    if not fd then
-        return {}
+    -- A link to a large file was read and parsed on the loop at every start
+    -- and retarget (measured: past 20 s); the open descriptor is measured
+    -- again, since the name may change between the stat and the open.
+    local too_big = ".liveignore is %d bytes, over the " .. LIVEIGNORE_MAX .. "-byte limit"
+    if st.size > LIVEIGNORE_MAX then
+        return nil, too_big:format(st.size)
     end
-    local stat = uv.fs_fstat(fd)
+    -- A file the stat reads and the open or the read refuses was an empty
+    -- rule list with no word.
+    local fd, open_err = uv.fs_open(path, "r", 438)
+    if not fd then
+        return nil, tostring(open_err)
+    end
+    local stat, fstat_err = uv.fs_fstat(fd)
     if not stat then
         uv.fs_close(fd)
-        return {}
+        return nil, tostring(fstat_err)
     end
-    local content = uv.fs_read(fd, stat.size, 0)
+    if stat.size > LIVEIGNORE_MAX then
+        uv.fs_close(fd)
+        return nil, too_big:format(stat.size)
+    end
+    local content, read_err = uv.fs_read(fd, stat.size, 0)
     uv.fs_close(fd)
     if not content then
-        return {}
+        return nil, tostring(read_err)
     end
     local patterns = {}
     for line in content:gmatch("[^\r\n]+") do
