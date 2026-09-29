@@ -72,7 +72,8 @@ M.state = { servers = {}, opened_ports = {} } -- [port] = inst; opened_ports[por
 local start_for_path -- forward declaration (used by auto_start and start_picker)
 
 -- The URL a browser opens for a server: a wildcard bind is reached on the
--- loopback address the server's rule gives, the one its start found free,
+-- loopback address the server's rule gives, the one its start found free;
+-- for a port this plugin does not serve (open_existing) nothing probed it,
 -- and a server's token rides in the query, so the page's first request
 -- and its injected client carry it. token is a started server's, which
 -- start keeps non-empty, or nil.

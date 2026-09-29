@@ -18,7 +18,10 @@
 -- up stays through a large frame or a burst that stays within 8 MiB; a
 -- stream whose head or retry line fails is never kept. A reload's data
 -- is JSON a decoder reads whatever the path holds, its keys in one order
--- on every process.
+-- on every process. Each event goes out as one frame, whatever its
+-- payload holds (Section 10), and send_event refuses at its caller a name
+-- that is no string or holds a line break and a payload that is no
+-- string, as reload does a path that is no string.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/sse_test.lua"
 
