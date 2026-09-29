@@ -394,6 +394,44 @@ function U.pick_port(opts, cb)
     end)
 end
 
+-- The length of the valid UTF-8 sequence at byte i of s, or nil (RFC 3629:
+-- no overlong form, no surrogate, nothing past U+10FFFF). The one reader
+-- of UTF-8, so every caller refuses the same bytes.
+function U.utf8_len(s, i)
+    local c = s:byte(i)
+    if not c then
+        return nil
+    end
+    if c < 0x80 then
+        return 1
+    end
+    local n, lo, hi = nil, 0x80, 0xBF
+    if c >= 0xC2 and c <= 0xDF then
+        n = 2
+    elseif c >= 0xE0 and c <= 0xEF then
+        n = 3
+        lo = c == 0xE0 and 0xA0 or lo
+        hi = c == 0xED and 0x9F or hi
+    elseif c >= 0xF0 and c <= 0xF4 then
+        n = 4
+        lo = c == 0xF0 and 0x90 or lo
+        hi = c == 0xF4 and 0x8F or hi
+    else
+        return nil
+    end
+    local second = s:byte(i + 1)
+    if not second or second < lo or second > hi then
+        return nil
+    end
+    for k = i + 2, i + n - 1 do
+        local b = s:byte(k)
+        if not b or b < 0x80 or b > 0xBF then
+            return nil
+        end
+    end
+    return n
+end
+
 -- .liveignore parser
 function U.parse_liveignore(root)
     local path = U.joinpath(root, ".liveignore")

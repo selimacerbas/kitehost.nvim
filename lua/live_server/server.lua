@@ -1949,10 +1949,25 @@ end
 -- with one value and hand the server another. The caller shows a refusal
 -- to the user, so each raises at level 0.
 local function check_start(cfg)
+    if type(cfg) ~= "table" then
+        error("start takes a table of options", 0)
+    end
     -- An empty token is truthy and would pass the gate with no t= at all.
     local token = cfg.token
     if token ~= nil and (type(token) ~= "string" or token == "") then
         error("token must be a non-empty string", 0)
+    end
+    -- The stream refuses a token that is no UTF-8 in the encoded form the
+    -- start notice prints, so that URL would never connect (measured).
+    if token ~= nil then
+        local i = 1
+        while i <= #token do
+            local n = util.utf8_len(token, i)
+            if not n then
+                error("token must be valid UTF-8", 0)
+            end
+            i = i + n
+        end
     end
     -- luv truncates a port it cannot hold and listens on another one.
     local p = cfg.port
@@ -2133,6 +2148,24 @@ local function check_start(cfg)
     if dirlist ~= nil and type(dirlist) ~= "table" then
         error("features.dirlist must be a table", 0)
     end
+    -- A flag turned off on exactly false, so 0 or "no" turned it on.
+    local function flag(name, v)
+        if v ~= nil and type(v) ~= "boolean" then
+            error(name .. " must be true or false", 0)
+        end
+        return v
+    end
+    local live_on = flag("live.enabled", live and live.enabled)
+    local inject = flag("live.inject_script", live and live.inject_script)
+    local css_inject = flag("live.css_inject", live and live.css_inject)
+    local dir_on = flag("features.dirlist.enabled", dirlist and dirlist.enabled)
+    local show_hidden = flag("features.dirlist.show_hidden", dirlist and dirlist.show_hidden)
+    local notify_on_reload = flag("notify_on_reload", cfg.notify_on_reload)
+    -- Every GET / reads it as a path, where any other type answered 500.
+    local default_index = cfg.default_index
+    if default_index ~= nil and type(default_index) ~= "string" then
+        error("default_index must be a string", 0)
+    end
     -- A debounce that is no number raised in the watcher's callback at
     -- every file change (measured).
     local debounce = check_ms("live.debounce", live and live.debounce)
@@ -2186,14 +2219,14 @@ local function check_start(cfg)
         cors_list = type(cors) == "table" and vim.list_extend({}, cors) or nil,
         root = root,
         root_real = root_real,
-        default_index = cfg.default_index,
-        live_enabled = live and live.enabled ~= false,
-        inject_script = live and live.inject_script ~= false,
+        default_index = default_index,
+        live_enabled = live and live_on ~= false,
+        inject_script = live and inject ~= false,
         live_debounce = debounce or 120,
-        css_inject = live and live.css_inject ~= false,
-        dir_enabled = not (dirlist and dirlist.enabled == false),
-        dir_show_hidden = dirlist and dirlist.show_hidden or false,
-        notify_on_reload = cfg.notify_on_reload or false,
+        css_inject = live and css_inject ~= false,
+        dir_enabled = dir_on ~= false,
+        dir_show_hidden = show_hidden == true,
+        notify_on_reload = notify_on_reload == true,
         asset_root = cfg.asset_root,
         header_timeout = header_timeout or 10000,
         heartbeat_ms = heartbeat or 20000,

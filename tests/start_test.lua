@@ -1,6 +1,8 @@
 -- tests/start_test.lua
 -- What start refuses, each before any socket opens,
--- naming what it refused, at level 0: a bad token, protected_paths
+-- naming what it refused, at level 0: options that are no table, a bad
+-- token (one that is no UTF-8 among them), default_index, a live, dirlist
+-- or notify_on_reload flag that is no boolean, protected_paths
 -- (patterns with no token among them), serve_dotfiles, index_names, headers
 -- (a control byte in a value, two spellings of one name and the server's
 -- own fields among them), cors, allowed_hosts (a string, a map, a hole, a
@@ -233,6 +235,29 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "features", { dirlist = 1 }, "features.dirlist must be a table" },
         { "host", 1, "host must be a string" },
         { "host", { "127.0.0.1" }, "host must be a string" },
+        { "live", false, "live must be a table" },
+        { "features", false, "features must be a table" },
+        -- A default_index that is no string started, and every GET / then
+        -- answered 500.
+        { "default_index", true, "default_index must be a string" },
+        { "default_index", { "index.html" }, "default_index must be a string" },
+        -- A flag turned off on exactly false, so 0 turned it on.
+        { "notify_on_reload", 0, "notify_on_reload must be true or false" },
+        { "notify_on_reload", "no", "notify_on_reload must be true or false" },
+        { "live", { enabled = 0 }, "live.enabled must be true or false" },
+        { "live", { inject_script = 0 }, "live.inject_script must be true or false" },
+        { "live", { css_inject = "no" }, "live.css_inject must be true or false" },
+        { "features", { dirlist = { enabled = 0 } }, "features.dirlist.enabled must be true or false" },
+        { "features", { dirlist = { show_hidden = 1 } }, "features.dirlist.show_hidden must be true or false" },
+        -- The stream refuses a token that is no UTF-8 in the page's encoded
+        -- form, so the URL the start prints would never connect.
+        { "token", "ab\255cd", "token must be valid UTF-8" },
+        { "token", "ab\195", "token must be valid UTF-8" },
+        { "token", "\192\175", "token must be valid UTF-8" },
+        { "token", "\224\128\175", "token must be valid UTF-8" },
+        { "token", "\237\160\128", "token must be valid UTF-8" },
+        { "token", "\244\144\128\128", "token must be valid UTF-8" },
+        { "token", "\195\40", "token must be valid UTF-8" },
     }
     -- Each millisecond option is refused the same values the same way.
     for _, v in ipairs({ "soon", true, -1, 1.5, 0 / 0, math.huge, 2 ^ 31 }) do
@@ -247,9 +272,9 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     for _, c in ipairs(bad) do
         local name, value, says = c[1], c[2], c[3] or c[1]
         local shown = ("%s = %s"):format(name, vim.inspect(value, { newline = " ", indent = "" }))
-        local tcps = H.handle_count("tcp")
+        local tcps, fds = H.handle_count("tcp"), H.fd_count()
         local started, res = pcall(server.start, { port = 0, root = root, [name] = value })
-        local after = H.handle_count("tcp")
+        local after, fds_after = H.handle_count("tcp"), H.fd_count()
         if started then
             server.stop(res)
         end
@@ -258,6 +283,23 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             ("%s is refused, naming %s: %s"):format(shown, says, tostring(res))
         )
         eq(after, tcps, ("%s opens no socket"):format(shown))
+        eq(fds_after, fds, ("%s opens no descriptor"):format(shown))
+    end
+    -- A cfg that is no table raised at the server's own line, naming
+    -- nothing a user could act on.
+    for _, cfg in ipairs({ { "nil", nil }, { "5", 5 }, { '"x"', "x" } }) do
+        local tcps, fds = H.handle_count("tcp"), H.fd_count()
+        local started, res = pcall(server.start, cfg[2])
+        local after, fds_after = H.handle_count("tcp"), H.fd_count()
+        if started then
+            server.stop(res)
+        end
+        ok(
+            not started and tostring(res) == "start takes a table of options",
+            ("start(%s) is refused, naming its options: %s"):format(cfg[1], tostring(res))
+        )
+        eq(after, tcps, ("start(%s) opens no socket"):format(cfg[1]))
+        eq(fds_after, fds, ("start(%s) opens no descriptor"):format(cfg[1]))
     end
     local started, res = pcall(server.start, {
         port = 0,
@@ -266,6 +308,28 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         protected_paths = { "^/content%.md$", "[%w_]+%.key$", "^/a/(b)$" },
     })
     ok(started, "a list of well-formed patterns starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    -- UTF-8 up to U+10FFFF, each sequence length among it.
+    started, res = pcall(server.start, {
+        port = 0,
+        root = root,
+        token = "a\195\182\226\130\172\240\157\132\158\244\143\191\191",
+    })
+    ok(started, "a token in valid UTF-8 starts: " .. tostring(started and "" or res))
+    if started then
+        server.stop(res)
+    end
+    started, res = pcall(server.start, {
+        port = 0,
+        root = root,
+        default_index = vim.fs.joinpath(root, "index.html"),
+        notify_on_reload = true,
+        live = { enabled = true, inject_script = true, css_inject = true },
+        features = { dirlist = { enabled = true, show_hidden = true } },
+    })
+    ok(started, "a string default_index and every flag true start: " .. tostring(started and "" or res))
     if started then
         server.stop(res)
     end
@@ -530,6 +594,16 @@ H.case("a bind that fails and a port start cannot hold raise, leaving no socket"
         )
         eq(after, before, ("port = %s opens no socket"):format(tostring(bad)))
     end
+    -- The top of the range is a port: a bind may still find it taken, but
+    -- the check passes it.
+    local top_started, top_res = pcall(server.start, { port = 65535, root = root })
+    if top_started then
+        server.stop(top_res)
+    end
+    ok(
+        top_started or not tostring(top_res):find("port must be", 1, true),
+        "port = 65535 passes the port check: " .. tostring(top_started and "" or top_res)
+    )
     local text_started, text_err = pcall(server.start, { port = "8765", root = root })
     if text_started then
         server.stop(text_err)
@@ -921,12 +995,32 @@ H.case("start reads each option from the caller's table once", function()
         max_connections = 64,
     }
     local reads = {}
-    local computed = setmetatable({}, {
-        __index = function(_, key)
-            reads[key] = (reads[key] or 0) + 1
-            return given[key]
-        end,
-    })
+    -- A nested table is counted too, each read under its dotted name.
+    local function counted(tbl, prefix)
+        return setmetatable({}, {
+            __index = function(_, key)
+                local name = prefix .. key
+                reads[name] = (reads[name] or 0) + 1
+                local v = tbl[key]
+                if type(v) == "table" and (name == "live" or name == "features" or name == "features.dirlist") then
+                    return counted(v, name .. ".")
+                end
+                return v
+            end,
+        })
+    end
+    for _, name in ipairs({
+        "live.enabled",
+        "live.inject_script",
+        "live.debounce",
+        "live.css_inject",
+        "features.dirlist",
+        "features.dirlist.enabled",
+        "features.dirlist.show_hidden",
+    }) do
+        reads[name] = 0
+    end
+    local computed = counted(given, "")
     local inst = server.start(computed)
     H.defer(function()
         server.stop(inst)
