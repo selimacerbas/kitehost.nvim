@@ -2387,7 +2387,9 @@ local function check_start(cfg)
     return {
         token = token,
         port = p,
-        host = host or "127.0.0.1",
+        -- libuv binds IP literals only; "localhost" is what users write for
+        -- loopback. The loopback set is not widened past it.
+        host = (host == nil or host == "localhost") and "127.0.0.1" or host,
         -- true turns the Host check off; the set holds the listed names as
         -- host_name reads a Host.
         any_host = allowed == true,

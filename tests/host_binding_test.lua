@@ -183,5 +183,29 @@ else
     server.stop(inst)
 end
 
+-- ─── Section 4: host = 'localhost' binds 127.0.0.1 ───────────────────────────
+H.section("Section 4: host = 'localhost' binds 127.0.0.1")
+-- libuv binds IP literals only, so "localhost" raised "Invalid IP address
+-- or port" (measured) although users write it for loopback.
+local ok_local, local_inst = pcall(server.start, {
+    port = 0,
+    host = "localhost",
+    root = tmpdir,
+    default_index = idx,
+    live = { inject_script = false },
+    features = { dirlist = { enabled = false } },
+})
+eq(ok_local and local_inst.host, "127.0.0.1", "host = 'localhost' starts, bound as 127.0.0.1")
+eq(ok_local and local_inst.handle:getsockname().ip, "127.0.0.1", "the socket is on loopback")
+eq(
+    ok_local
+        and http_get(("http://127.0.0.1:%d/"):format(local_inst.port), { "Host: localhost:" .. local_inst.port }).status,
+    200,
+    "and serves a localhost Host"
+)
+if ok_local then
+    server.stop(local_inst)
+end
+
 -- ─── Summary ─────────────────────────────────────────────────────────────────
 H.finish()
