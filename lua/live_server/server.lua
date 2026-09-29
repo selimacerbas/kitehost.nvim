@@ -825,10 +825,36 @@ local function schedule_reload(inst, changed_path)
     end
 end
 
--- A directory under the root the watchers miss, told apart from the root.
-local function cannot_watch(inst, what, cause)
-    local text = ("cannot watch %s (%s)"):format(what, tostring(cause))
-    warn_once(inst, "watch-dir", text)
+-- A pending window would reload after live reload is reported off.
+local function drop_window(inst)
+    inst.reload_window, inst.reload_seen = {}, {}
+    local timer = inst.debounce_timer
+    if timer and not timer:is_closing() then
+        local stopped, stop_err = timer:stop()
+        if not stopped then
+            warn_once(inst, "reload", ("could not cancel a reload (%s)"):format(tostring(stop_err)))
+        end
+    end
+end
+
+-- A directory under the root the watchers miss; one gone since the scan
+-- (ENOENT) is a race, not a fault.
+local function cannot_watch(misses, what, cause, cause_name)
+    if cause_name ~= "ENOENT" then
+        misses[#misses + 1] = { what = what, cause = cause }
+    end
+end
+
+-- One notice per scan, sent after the walk, naming the first miss and the
+-- count, so each scan that misses a directory is heard.
+local function report_misses(inst, misses)
+    local first = misses[1]
+    if not first then
+        return
+    end
+    inst.warned["watch-dir"] = nil
+    local more = #misses > 1 and (" and %d more under %s"):format(#misses - 1, inst.root_real) or ""
+    warn_once(inst, "watch-dir", ("cannot watch %s%s (%s)"):format(first.what, more, tostring(first.cause)))
 end
 
 -- A directory whose changes never reload (a dot path, without
@@ -840,12 +866,12 @@ local function dir_watched(inst, dir)
 end
 
 -- Recursively scan all subdirectories under root (for Linux fallback watchers)
-local function scan_dirs(inst)
+local function scan_dirs(inst, misses)
     local dirs = { inst.root_real }
     local function walk(dir)
-        local handle, scan_err = uv.fs_scandir(dir)
+        local handle, scan_err, scan_name = uv.fs_scandir(dir)
         if not handle then
-            cannot_watch(inst, "the directories under " .. dir, scan_err)
+            cannot_watch(misses, "the directories under " .. dir, scan_err, scan_name)
             return
         end
         while true do
@@ -854,6 +880,15 @@ local function scan_dirs(inst)
                 break
             end
             local full = util.joinpath(dir, name)
+            -- An untyped entry left its whole subtree unwatched.
+            if typ == nil then
+                local st, st_err, st_name = uv.fs_lstat(full)
+                if st then
+                    typ = st.type
+                else
+                    cannot_watch(misses, full, st_err, st_name)
+                end
+            end
             if typ == "directory" and name ~= "node_modules" and dir_watched(inst, full) then
                 dirs[#dirs + 1] = full
                 walk(full)
@@ -875,9 +910,9 @@ end
 
 -- Attach a single-directory fs_event watcher with a dir-aware callback.
 local function add_dir_watch(inst, dir)
-    local ev, new_err = uv.new_fs_event()
+    local ev, new_err, new_name = uv.new_fs_event()
     if not ev then
-        return nil, new_err
+        return nil, new_err, new_name
     end
     local cb = function(err, fname, _status)
         if err then
@@ -889,17 +924,17 @@ local function add_dir_watch(inst, dir)
         if fname and fname ~= "" then
             local st = uv.fs_stat(full)
             if st and st.type == "directory" and not inst._fs_events[full] and dir_watched(inst, full) then
-                local added, add_err = add_dir_watch(inst, full)
-                if not added then
-                    cannot_watch(inst, full, add_err)
+                local added, add_err, add_name = add_dir_watch(inst, full)
+                if not added and add_name ~= "ENOENT" then
+                    warn_once(inst, "watch-dir", ("cannot watch %s (%s)"):format(full, tostring(add_err)))
                 end
             end
         end
     end
-    local started, start_err = ev:start(dir, {}, cb)
+    local started, start_err, start_name = ev:start(dir, {}, cb)
     if not started then
         ev:close()
-        return nil, start_err
+        return nil, start_err, start_name
     end
     inst._fs_events[dir] = ev
     return true
@@ -949,16 +984,18 @@ local function start_fs_watch(inst)
     -- Linux (or recursive failed): per-directory watchers, the root first,
     -- since a root nothing watches is no live reload at all.
     inst._fs_events = {}
-    for i, dir in ipairs(scan_dirs(inst)) do
-        local added, add_err = add_dir_watch(inst, dir)
+    local misses = {}
+    for i, dir in ipairs(scan_dirs(inst, misses)) do
+        local added, add_err, add_name = add_dir_watch(inst, dir)
         if not added then
             if i == 1 then
                 stop_fs_watch(inst)
                 return nil, add_err
             end
-            cannot_watch(inst, dir, add_err)
+            cannot_watch(misses, dir, add_err, add_name)
         end
     end
+    report_misses(inst, misses)
     return true
 end
 
@@ -2351,6 +2388,22 @@ local function read_liveignore(inst)
     end
 end
 
+-- Live reload reported on with nothing watching reloads nothing and says
+-- nothing. A watcher that starts re-arms the warning, so a later failure
+-- is heard; the cause is returned for a caller that reports the toggle.
+local function watch_or_warn(inst)
+    local watching, watch_err = start_fs_watch(inst)
+    if watching then
+        inst.warned.watch = nil
+        return true
+    end
+    inst.live_enabled = false
+    drop_window(inst)
+    local cause = ("could not watch %s (%s)"):format(inst.root, tostring(watch_err))
+    warn_once(inst, "watch", cause .. "; live reload is off")
+    return false, cause
+end
+
 -- -------- Public server API -----------------------------------------------
 
 -- cfg: { port, root, default_index|nil, headers, cors, live={enabled,inject_script,debounce,css_inject}, features={dirlist={enabled,show_hidden}}, host, token, protected_paths, serve_dotfiles, index_names, notify_on_reload, asset_root, allowed_hosts, header_timeout_ms, sse_heartbeat_ms, max_connections }
@@ -2364,9 +2417,9 @@ end
 -- option, a failed bind or listen, a port in use, a reload timer it cannot
 -- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check, or
--- a loopback bind whose wildcard of its family the same holds for, or live
--- reload asked for on a root whose watcher cannot start. A caller reads
--- S.features.start_raises before it relies on that.
+-- a loopback bind whose wildcard of its family the same holds for. A root
+-- whose watcher cannot start is served with live reload off and one
+-- warning. A caller reads S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host
@@ -2604,13 +2657,10 @@ function S.start(cfg)
             )
         end
     end
-    -- Live reload was asked for, so a start that cannot deliver it raises.
+    -- A caller may reload through S.reload alone, so an inotify limit
+    -- (ENOSPC) costs live reload, never the server.
     if inst.live_enabled then
-        local watching, watch_err = start_fs_watch(inst)
-        if not watching then
-            S.stop(inst)
-            error(("Failed to start live reload on %s: %s"):format(checked.root, tostring(watch_err)), 0)
-        end
+        watch_or_warn(inst)
     end
 
     -- Scheduled, so a start from a fast event (a luv callback) cannot raise
@@ -2656,16 +2706,6 @@ function S.stop(inst)
         end
     end
     stop_fs_watch(inst)
-end
-
--- Live reload reported on with nothing watching reloads nothing and says nothing.
-local function watch_or_warn(inst)
-    local watching, watch_err = start_fs_watch(inst)
-    if not watching then
-        inst.live_enabled = false
-        warn_once(inst, "watch", ("cannot watch %s (%s); live reload is off"):format(inst.root, tostring(watch_err)))
-    end
-    return watching == true
 end
 
 -- A stopped server's reload timer is closed, so a watcher opened here
@@ -2756,10 +2796,13 @@ function S.send_event(inst, event_type, data)
 end
 
 function S.enable_live(inst, enable)
+    -- not not read 0 as on, where start refuses 0.
+    if type(enable) ~= "boolean" then
+        error(("enable_live: the flag is not a boolean (%s)"):format(type(enable)), 2)
+    end
     if inst.handle:is_closing() then
         return false
     end
-    enable = not not enable
     if inst.live_enabled == enable then
         return enable
     end
@@ -2768,6 +2811,7 @@ function S.enable_live(inst, enable)
         return watch_or_warn(inst)
     end
     stop_fs_watch(inst)
+    drop_window(inst)
     return false
 end
 

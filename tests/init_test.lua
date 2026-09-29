@@ -465,6 +465,33 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
         notes[1] ~= nil and notes[1].msg:find("retargeted", 1, true) ~= nil,
         "and says so: " .. vim.inspect(notes, { newline = " ", indent = "" })
     )
+    -- A retarget whose watcher could not start read as done, its live
+    -- reload off unsaid, and a toggle that then failed said DISABLED alone.
+    local real_new = vim.uv.new_fs_event
+    H.defer(function()
+        vim.uv.new_fs_event = real_new
+    end)
+    vim.uv.new_fs_event = function()
+        return nil, "EMFILE: stubbed", "EMFILE"
+    end
+    local third = H.tmpdir()
+    notes, target = {}, third
+    called, err = pcall(ls.start_picker)
+    ok(called, "a retarget whose watcher cannot start raises nothing: " .. tostring(err))
+    local said = notes[1] or {}
+    eq(said.msg, ("LiveServer retargeted to %s; live reload is off"):format(third), "and says live reload is off")
+    eq(said.level, vim.log.levels.WARN, "as a warning")
+    notes = {}
+    called, err = pcall(ls.toggle_livereload)
+    vim.uv.new_fs_event = real_new
+    ok(called, "a toggle that cannot watch raises nothing: " .. tostring(err))
+    said = notes[1] or {}
+    eq(
+        said.msg,
+        ("Live-reload DISABLED on %d: could not watch %s (EMFILE: stubbed)"):format(inst.port, third),
+        "and its DISABLED line names the cause"
+    )
+    eq(said.level, vim.log.levels.WARN, "as a warning")
 end)
 
 local errors = 0

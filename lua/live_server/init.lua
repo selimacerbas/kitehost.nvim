@@ -193,18 +193,23 @@ function start_for_path(path, port)
     local started_here = false
     if s then
         -- By pcall itself, so a refused root is a notice with no position.
-        local retargeted, retarget_err = pcall(server.update_target, s, root, index)
+        local retargeted, answer = pcall(server.update_target, s, root, index)
         if not retargeted then
-            return util.notify("LiveServer could not retarget: " .. tostring(retarget_err), M.opts, "ERROR")
+            return util.notify("LiveServer could not retarget: " .. tostring(answer), M.opts, "ERROR")
         end
-        util.notify(
-            ("LiveServer %d retargeted → %s%s"):format(
-                port,
-                root,
-                index and (" (index " .. util.basename(index) .. ")") or ""
-            ),
-            M.opts
-        )
+        -- The retarget read as done while its live reload went off unsaid.
+        if answer == false then
+            util.notify(("LiveServer retargeted to %s; live reload is off"):format(root), M.opts, "WARN")
+        else
+            util.notify(
+                ("LiveServer %d retargeted → %s%s"):format(
+                    port,
+                    root,
+                    index and (" (index " .. util.basename(index) .. ")") or ""
+                ),
+                M.opts
+            )
+        end
     else
         local ok, inst_or_err = pcall(server.start, {
             port = port,
@@ -319,7 +324,13 @@ function M.toggle_livereload()
         if not s then
             return util.notify("No live-server instance on that port.", M.opts, "WARN")
         end
-        local enabled = server.enable_live(s, not server.is_live_enabled(s))
+        local want = not server.is_live_enabled(s)
+        local enabled, cause = server.enable_live(s, want)
+        -- A toggle that failed read as a plain DISABLED, naming no cause.
+        if want and not enabled then
+            local why = cause and (": " .. cause) or ""
+            return util.notify(("Live-reload DISABLED on %d%s"):format(port, why), M.opts, "WARN")
+        end
         util.notify(("Live-reload %s on %d"):format(enabled and "ENABLED" or "DISABLED", port), M.opts)
     end)
 end
