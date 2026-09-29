@@ -1779,6 +1779,61 @@ H.case("Section 8d: update_target refuses a root that does not resolve", functio
     eq(server.is_live_enabled(live), true, "with live reload still on")
 end)
 
+-- update_target took a file or a FIFO as the root, a FIFO blocking the
+-- loop in the watcher's start as at start; a nil root raised inside luv, a
+-- table index answered every GET / with 500, and a relative index followed
+-- a later :cd. Each argument is checked as start checks it, at the caller.
+H.case("Section 8f: update_target checks its root and its index as start does", function()
+    local inst = serve()
+    local was_root, was_real, was_index = inst.root, inst.root_real, inst.default_index
+    local function refused(want, ...)
+        local args = { ... }
+        local raised, err = pcall(function()
+            server.update_target(inst, unpack(args, 1, 2))
+        end)
+        return not raised and tostring(err):find("lifecycle_test%.lua:%d+: " .. vim.pesc(want) .. "$") ~= nil,
+            tostring(err)
+    end
+    local file = root .. "/hello.txt"
+    local got, err = refused(("update_target: root %s is not a directory"):format(file), file, nil)
+    ok(got, "a file root raises at the caller, naming it: " .. err)
+    local fifo = H.tmpdir() .. "/pipe"
+    if vim.system({ "mkfifo", fifo }):wait().code == 0 then
+        got, err = refused(("update_target: root %s is not a directory"):format(fifo), fifo, nil)
+        ok(got, "a FIFO root raises at the caller, naming it: " .. err)
+    else
+        H.skip("a FIFO root raises at the caller, naming it (mkfifo failed)")
+    end
+    got, err = refused("update_target: root is not a string (nil)", nil, nil)
+    ok(got, "a nil root raises at the caller: " .. err)
+    got, err = refused("update_target: index is not a string (table)", root, { "index.html" })
+    ok(got, "a table index raises at the caller: " .. err)
+    got, err = refused("update_target: index is not a string (boolean)", root, true)
+    ok(got, "a boolean index raises at the caller: " .. err)
+    ok(
+        inst.root == was_root and inst.root_real == was_real and inst.default_index == was_index,
+        "and none of them changes the target"
+    )
+    local res = H.responses(H.raw_request(inst.port, get("/hello.txt", inst.port)) or "")[1]
+    eq(res and res.status, 200, "and the server serves on")
+
+    local cwd = assert(uv.cwd())
+    H.defer(function()
+        vim.cmd.cd(cwd)
+    end)
+    local here, there = H.tmpdir(), H.tmpdir()
+    H.write_file(here .. "/page.html", "FIRST-DIR-PAGE")
+    H.write_file(there .. "/page.html", "SECOND-DIR-PAGE")
+    vim.cmd.cd(here)
+    eq(server.update_target(inst, here, "page.html"), true, "a retarget with a relative index answers true")
+    vim.cmd.cd(there)
+    local page = H.responses(H.raw_request(inst.port, get("/", inst.port)) or "")[1]
+    ok(
+        page and page.status == 200 and page.body:find("FIRST-DIR-PAGE", 1, true) ~= nil,
+        "and after a :cd / serves the file the index named at the retarget: " .. vim.inspect(page and page.body)
+    )
+end)
+
 -- The reload timer's start returns nil and an error on a closing timer,
 -- which no guard above can see from a watcher's callback, and the reload
 -- was then dropped unreported. The first failure tells the user, once.

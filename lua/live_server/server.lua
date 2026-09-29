@@ -2023,6 +2023,27 @@ local function check_ms(name, v)
     return v
 end
 
+-- A FIFO root blocked the loop in the watcher's start, a file root 404ed.
+local function root_directory(real)
+    local st, st_err = uv.fs_stat(real)
+    if not st then
+        return nil, st_err
+    end
+    return st.type == "directory"
+end
+
+-- Read per request, a relative index followed a later :cd to another file.
+local function absolute_index(index)
+    if index == nil or index == "" or index:match("^[/\\]") or index:match("^%a:[/\\]") then
+        return index
+    end
+    local cwd, cwd_err = uv.cwd()
+    if not cwd then
+        return nil, cwd_err
+    end
+    return util.joinpath(cwd, index)
+end
+
 -- Start's options, each read from the caller's table once and checked
 -- before any handle opens, so a refusal leaks nothing; start reads only the
 -- copy returned. A table that computes a field could otherwise pass a check
@@ -2245,6 +2266,11 @@ local function check_start(cfg)
     if default_index ~= nil and type(default_index) ~= "string" then
         error("default_index must be a string", 0)
     end
+    local index_err
+    default_index, index_err = absolute_index(default_index)
+    if index_err then
+        error("default_index is relative and the working directory is unknown: " .. tostring(index_err), 0)
+    end
     -- A debounce that is no number raised in the watcher's callback at
     -- every file change (measured).
     local debounce = check_ms("live.debounce", live and live.debounce)
@@ -2276,6 +2302,10 @@ local function check_start(cfg)
     local root_real = uv.fs_realpath(root)
     if not root_real then
         error("Invalid root: " .. root, 0)
+    end
+    local is_dir, dir_err = root_directory(root_real)
+    if not is_dir then
+        error("root must be a directory: " .. root .. (dir_err and (" (" .. tostring(dir_err) .. ")") or ""), 0)
     end
 
     return {
@@ -2641,17 +2671,39 @@ end
 -- A stopped server's reload timer is closed, so a watcher opened here
 -- would reload nothing and nothing would close it.
 function S.update_target(inst, new_root, new_index)
+    -- A nil root raised inside luv; a table index answered every GET / 500.
+    if type(new_root) ~= "string" then
+        error(("update_target: root is not a string (%s)"):format(type(new_root)), 2)
+    end
+    if new_index ~= nil and type(new_index) ~= "string" then
+        error(("update_target: index is not a string (%s)"):format(type(new_index)), 2)
+    end
     if inst.handle:is_closing() then
         return false
     end
     -- A root that does not resolve was named while the old one was served.
     local root_real, real_err = uv.fs_realpath(new_root)
     if not root_real then
-        error(("update_target: root %s does not resolve (%s)"):format(tostring(new_root), tostring(real_err)), 2)
+        error(("update_target: root %s does not resolve (%s)"):format(new_root, tostring(real_err)), 2)
+    end
+    local is_dir, dir_err = root_directory(root_real)
+    if not is_dir then
+        local cause = dir_err and (" (" .. tostring(dir_err) .. ")") or ""
+        error(("update_target: root %s is not a directory%s"):format(new_root, cause), 2)
+    end
+    local index, index_err = absolute_index(new_index)
+    if index_err then
+        error(
+            ("update_target: index %s is relative and the working directory is unknown (%s)"):format(
+                new_index,
+                tostring(index_err)
+            ),
+            2
+        )
     end
     inst.root = new_root
     inst.root_real = root_real
-    inst.default_index = new_index
+    inst.default_index = index
     read_liveignore(inst)
     if inst.live_enabled then
         return watch_or_warn(inst)

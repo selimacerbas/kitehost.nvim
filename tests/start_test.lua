@@ -8,7 +8,8 @@
 -- own fields among them), cors, allowed_hosts (a string, a map, a hole, a
 -- wildcard, an entry no Host can match), live and its debounce, features,
 -- host, header_timeout_ms, sse_heartbeat_ms, max_connections, a port it
--- cannot hold or a root that is no string or does not resolve; a bind to an
+-- cannot hold or a root that is no string, does not resolve or is no
+-- directory (a relative default_index is fixed at start); a bind to an
 -- address this machine lacks or to a port in use raises naming it and
 -- leaves no socket, a socket that cannot be made raises naming it, and a
 -- failed listen or a reload timer that cannot be made leaves no socket,
@@ -967,6 +968,98 @@ H.case("a root that does not resolve is refused before any socket opens", functi
         )
         eq(bad_after, before, ("root = %s opens no socket"):format(case[1]))
     end
+end)
+
+-- A file root started and answered 404 to every request; a FIFO root
+-- blocked the loop in the watcher's start (measured), so its start runs
+-- in a child Neovim bounded at 5 s.
+H.case("a root that is no directory is refused before any socket opens", function()
+    local file = vim.fs.joinpath(root, "index.html")
+    local tcps = H.handle_count("tcp")
+    local started, res = pcall(server.start, { port = 0, root = file })
+    local after = H.handle_count("tcp")
+    if started then
+        server.stop(res)
+    end
+    eq(
+        started and "started" or tostring(res),
+        "root must be a directory: " .. file,
+        "a file root is refused, naming it"
+    )
+    eq(after, tcps, "and opens no socket")
+    local site = H.tmpdir()
+    local fifo = vim.fs.joinpath(site, "pipe")
+    local made = vim.system({ "mkfifo", fifo }):wait()
+    if made.code ~= 0 then
+        H.skip("a FIFO root is refused within 5 s (mkfifo: " .. tostring(made.stderr) .. ")")
+        return
+    end
+    local script = vim.fs.joinpath(H.tmpdir(), "child.lua")
+    H.write_file(
+        script,
+        ([[
+vim.opt.rtp:prepend(%q)
+local server = require("live_server.server")
+local started, res = pcall(server.start, {
+    port = 0,
+    root = %q,
+    live = { enabled = true, inject_script = false },
+})
+if started then
+    server.stop(res)
+end
+io.stdout:write(vim.json.encode({ started = started, res = started and "started" or tostring(res) }))
+]]):format(H.root, fifo)
+    )
+    local done
+    local t0 = vim.uv.hrtime()
+    local proc = vim.system({ vim.v.progpath, "--headless", "-u", "NONE", "-l", script }, { text = true }, function(r)
+        done = r
+    end)
+    local in_time = H.wait_for(function()
+        return done ~= nil
+    end, 5000)
+    local took = math.floor((vim.uv.hrtime() - t0) / 1e6)
+    if not in_time then
+        proc:kill(9)
+        H.wait_for(function()
+            return done ~= nil
+        end, 2000)
+    end
+    local child = done and done.code == 0 and select(2, pcall(vim.json.decode, done.stdout or "")) or nil
+    ok(
+        in_time and type(child) == "table" and child.res == "root must be a directory: " .. fifo,
+        ("a FIFO root with live reload on is refused within 5 s (%d ms): %s"):format(
+            took,
+            vim.inspect(done, { newline = " ", indent = "" })
+        )
+    )
+end)
+
+-- default_index was read against the working directory at every GET /,
+-- so after a :cd a relative one served another directory's file
+-- (measured through the picker, which hands a relative path).
+H.case("a relative default_index names the file it named at start", function()
+    local cwd = assert(vim.uv.cwd())
+    H.defer(function()
+        vim.cmd.cd(cwd)
+    end)
+    local here, there = H.tmpdir(), H.tmpdir()
+    H.write_file(vim.fs.joinpath(here, "page.html"), "FIRST-DIR-PAGE")
+    H.write_file(vim.fs.joinpath(there, "page.html"), "SECOND-DIR-PAGE")
+    vim.cmd.cd(here)
+    local inst = serve({ root = here, default_index = "page.html" })
+    vim.cmd.cd(there)
+    local r = http_get(("http://127.0.0.1:%d/"):format(inst.port))
+    ok(
+        r.status == 200 and r.body:find("FIRST-DIR-PAGE", 1, true) ~= nil,
+        ("a relative default_index serves the file it named at start after a :cd (%d): %s"):format(r.status, r.body)
+    )
+    ok(H.same_path(inst.default_index, vim.fs.joinpath(here, "page.html")), "and is held as that file's absolute path")
+    -- An empty index is none: the directory's own index answers.
+    local none = serve({ default_index = "" })
+    eq(none.default_index, "", "an empty default_index is kept as it is")
+    eq(http_get(("http://127.0.0.1:%d/"):format(none.port)).status, 200, "and / serves the root's index.html")
 end)
 
 -- new_tcp's nil went unread, so the bind indexed it and raised at the
