@@ -260,26 +260,64 @@ ls.stop_all()                    -- stop everything
 
 ### Server-level API (for plugin authors)
 
+Everything this section names is the public API that SemVer covers: the calls and what they answer, the `start` keys, the capability flags, the HTTP routes and the event framing. A release that breaks any of it is a major release. Anything not named here is internal and may change in any release, including every field of the instance table except `port` (`inst.sse_clients` among them: read `server.connected_client_count(inst)`), and the wording of a message, except the `EADDRINUSE` text below.
+
 Below Neovim 0.10, `require("live_server.server")` and `require("live_server.util")` raise the floor message, on every `require`, so a plugin that also runs on an older Neovim loads them under `pcall`.
 
 ```lua
 local server = require("live_server.server")
 local util   = require("live_server.util")
 
-local inst = server.start({
-  port = 0,                                   -- port 0 = OS-assigned
-  root = "/path",
-  token = util.random_token(16),              -- optional, see "Token auth" below
-  protected_paths = { "^/content%.md$" },     -- Lua patterns; require ?t=<token>, never on /__live/script.js
+local ok, inst = pcall(server.start, {
+  root = "/path",                         -- the served directory
+  port = 0,                               -- 0 = OS-assigned; the bound port is inst.port
+  host = "127.0.0.1",                     -- an IP address; "localhost" binds 127.0.0.1
+  default_index = nil,                    -- file served for "/"; a relative path is made absolute at start
+  index_names = { "index.html", "index.htm" }, -- file names tried in a directory, in order
+  headers = {},                           -- extra response headers, each value a string
+  cors = false,                           -- true (any origin), an origin, or a list of origins; root route only
+  token = util.random_token(16),          -- optional, a non-empty UTF-8 string; see "Token auth"
+  protected_paths = { "^/content%.md$" }, -- Lua patterns that also need ?t=<token>; a token is required
+  asset_root = nil,                       -- a directory, or a function returning one, for /__live/asset
+  allowed_hosts = nil,                    -- more Host names a loopback bind answers; true turns the check off
+  serve_dotfiles = false,                 -- serve dot-segment paths (.env, .git/) on the root route
+  notify_on_reload = false,               -- a notice on every reload
+  header_timeout_ms = 10000,              -- close a connection whose request head has not arrived by then; 0 = off
+  max_connections = 64,                   -- close a connection accepted while this many are open
+  sse_heartbeat_ms = 20000,               -- ": ping" on every event stream; 0 = off
+  live = { enabled = true, inject_script = true, debounce = 120, css_inject = true }, -- omitted: no watcher, no script
+  features = { dirlist = { enabled = true, show_hidden = false } }, -- show_hidden needs serve_dotfiles
 })
-server.send_event(inst, "scroll", '{"line":42}')               -- broadcast custom SSE event
-server.reload(inst, "file.html")                                -- broadcast reload event
-server.update_target(inst, new_root, new_index)                 -- retarget without restart
-server.connected_client_count(inst)                             -- number of SSE clients
-server.stop(inst)                                               -- shut down
 ```
 
-`update_target` returns true when the server serves the root asked, whether it moved or was already that root; it returns false when it could not, on a stopped server or when live reload is on and the new root cannot be watched (the root moves and live reload turns off); and it raises on a root it cannot serve (one that does not resolve or is no directory), or a root or index that is no string, changing nothing; `server.enable_live(inst, true)` returns false, and live reload stays off, when the watcher cannot start, and `enable_live` raises on a flag that is no boolean. A watcher that cannot start warns once per server until a watcher starts again, when the next failure warns anew; a watch that misses some directories under the root keeps live reload on, with a notice naming the first it missed and, when more than one, the count.
+`server.start(cfg)` checks every option before it opens a socket and returns the instance, or raises at level 0 (a message for the user, with no file position) and leaves no socket, timer or watcher behind, when it cannot serve: an option it refuses, named in the message; a root that does not resolve or is not a directory; a host that is not an address of this machine (`EADDRNOTAVAIL`); a port another socket holds; a failed listen; a reload or heartbeat timer it cannot make. A refusal for a taken port carries luv's text `EADDRINUSE: address already in use` in each of its shapes (the bind's own refusal, a specific bind beside a listener on the wildcard address of its family, a wildcard bind beside a socket on the loopback address its URL names), and a plugin may match that text to name the port. `inst.port` is the port the socket holds. A root whose watcher cannot start is served with live reload off and a warning.
+
+```lua
+server.stop(inst)                                  -- close the listener, every connection, stream, timer and watcher; a second stop does nothing
+server.update_target(inst, new_root, new_index)    -- retarget without a restart
+server.reload(inst, "file.html")                   -- broadcast a reload event; the path is a string or nil
+server.send_event(inst, "scroll", '{"line":42}')   -- broadcast an event; the payload is a string or nil ("{}")
+server.enable_live(inst, true)                     -- start or stop watching files
+server.is_live_enabled(inst)                       -- true while files are watched
+server.connected_client_count(inst)                -- open event streams
+server.wildcard_loopback(ip)                       -- the loopback address a wildcard bind's URL shows, or nil
+util.random_token(16)                              -- hex token of 1 to 1024 bytes from the OS random source; raises with none
+util.secure_compare(a, b)                          -- string compare whose time does not depend on where two strings differ
+```
+
+A call made wrongly raises at level 2, so the message names the calling line: `reload` with a path that is not a string, `send_event` with a name or payload that is not a string or a name holding a line break, `enable_live` with a flag that is not a boolean, `update_target` with a root or index that is not a string or a root it cannot serve (one that does not resolve or is not a directory), changing nothing, and `util.random_token` with a length outside 1 to 1024.
+
+`update_target` returns true when the server serves the root asked, whether it moved or was already that root; it returns false on a stopped server, and false with the cause when live reload is on and the new root cannot be watched (the root moves and live reload turns off). `enable_live(inst, true)` returns true, or false with the cause when the watcher cannot start, and live reload stays off; `enable_live(inst, false)` returns false, as does `enable_live` on a stopped server. A watch that misses some directories under the root keeps live reload on, with a notice naming the first it missed and, when more than one, the count.
+
+`server.wildcard_loopback(ip)` answers `"127.0.0.1"` for `"0.0.0.0"`, `"::1"` for `"::"` and nil for any other address. A plugin may replace it: `start` reads it through the module to probe the address the URL names, as the plugin's own URL does, so a replaced rule moves the probe and the URL together.
+
+A server warns once for each kind of fault, as a `vim.notify` warning naming its port: a listener that stopped accepting connections, a connection it could not serve, a connection it could not read, a reload it could not schedule or cancel, a root it could not watch (heard again after a watcher starts), a directory under the root it could not watch, a `.liveignore` it ignores, and a `protected_paths` pattern it could not read.
+
+`server.features` holds the flags a plugin checks before it relies on a capability: `token_auth` (the `token` option and the gated routes), `host_binding` (the `host` option), `asset_route` (`asset_root` and `/__live/asset`), `host_check` (a loopback bind answers only loopback Host names, 421 otherwise), `cors_list` (`cors` takes a list of origins; an install without it reads a list as `"*"`) and `start_raises` (`start` raises at level 0 when it cannot serve).
+
+The HTTP surface is part of the same promise: `/__live/events` (a `text/event-stream` that starts with `retry: 1000`, then one frame per event, `event: <name>` and one `data:` line per payload line, and a `: ping` comment line as a heartbeat), `/__live/inject?event=<name>[&data=<url-encoded>][&t=<token>]` (GET; `data` defaults to `{}`), `/__live/asset?p=<relative path>[&t=<token>]`, `/__live/script.js` (never gated), and the query token `t`, which a gated route without it answers with 401. A reader of the stream joins a frame's `data:` lines with line breaks, as the browser's `EventSource` does; one that reads a single `data:` line reads only the first line of a payload.
+
+The `reload` event's data is JSON, `{"ts":<seconds>,"path":<string>,"css":<boolean>}`, its keys always in that order. `path` is `""` for `server.reload(inst)`, the string a caller passed to `server.reload`, or, for a watched change, the changed file's path relative to the root, slash-separated with no leading slash (`/` for the root itself, and for the file the server was started on when it sits on a dot path); a debounce window that held several changes names its latest page, or its latest stylesheet when it held no page. `css` is true only when `css_inject` is on and the path names a stylesheet, which the page swaps in place of a reload. Neovim 0.10 writes a slash as `\/`, so a reader decodes the JSON and never compares its bytes.
 
 ### HTTP event injection
 
