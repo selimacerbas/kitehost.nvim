@@ -2372,6 +2372,12 @@ local function check_start(cfg)
     then
         error("max_connections must be an integer at or above 1", 0)
     end
+    -- Read per request, where a number started and then answered every
+    -- asset request 404 without a word (measured).
+    local asset_root = cfg.asset_root
+    if asset_root ~= nil and type(asset_root) ~= "string" and type(asset_root) ~= "function" then
+        error("asset_root must be a directory or a function returning one, got " .. type(asset_root), 0)
+    end
     -- fs_realpath raised its own argument error for a nil root and read a
     -- number as a path under the working directory.
     local root = cfg.root
@@ -2416,7 +2422,7 @@ local function check_start(cfg)
         dir_enabled = dir_on ~= false,
         dir_show_hidden = show_hidden == true,
         notify_on_reload = notify_on_reload == true,
-        asset_root = cfg.asset_root,
+        asset_root = asset_root,
         header_timeout = header_timeout or 10000,
         heartbeat_ms = heartbeat or 20000,
         max_connections = max_conns or 64,

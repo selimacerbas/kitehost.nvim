@@ -7,8 +7,8 @@
 -- (a control byte in a value, two spellings of one name and the server's
 -- own fields among them), cors, allowed_hosts (a string, a map, a hole, a
 -- wildcard, an entry no Host can match), live and its debounce, features,
--- host, header_timeout_ms, sse_heartbeat_ms, max_connections, a port it
--- cannot hold or a root that is no string, does not resolve or is no
+-- host, header_timeout_ms, sse_heartbeat_ms, max_connections, asset_root,
+-- a port it cannot hold or a root that is no string, does not resolve or is no
 -- directory (a relative default_index is fixed at start); a bind to an
 -- address this machine lacks or to a port in use raises naming it and
 -- leaves no socket, a socket that cannot be made raises naming it, and a
@@ -100,7 +100,8 @@ end
 -- the rest alike. Each accept compares its open count with
 -- max_connections, where text raised at every connection and left its
 -- socket open, 0 closed them all and NaN or math.huge capped nothing
--- (measured).
+-- (measured). An asset_root that is no path or function started and
+-- answered every asset request 404.
 H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
@@ -243,6 +244,10 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         -- answered 500.
         { "default_index", true, "default_index must be a string" },
         { "default_index", { "index.html" }, "default_index must be a string" },
+        -- An asset_root that is no path or function started, and every
+        -- asset request then answered 404 without a word.
+        { "asset_root", 42, "asset_root must be a directory or a function returning one, got number" },
+        { "asset_root", true, "asset_root must be a directory or a function returning one, got boolean" },
         -- A flag turned off on exactly false, so 0 turned it on.
         { "notify_on_reload", 0, "notify_on_reload must be true or false, got number" },
         { "notify_on_reload", "no", "notify_on_reload must be true or false, got string" },
