@@ -1366,7 +1366,7 @@ end
 -- match no token satisfies, since the gate cannot tell what it protects.
 -- Every pattern is read, so the answer does not hang on the list's order.
 -- A 401 alone reads like a bad token, so the first pattern that raises is
--- named once per instance, scheduled, as a request runs in a fast event.
+-- named once per instance (warn_once).
 local function needs_auth(inst, p)
     if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
         return true
@@ -1375,16 +1375,11 @@ local function needs_auth(inst, p)
     for _, pat in ipairs(inst.protected_paths) do
         local read, hit = pcall(string.find, p, pat)
         if not read then
-            if not inst._unreadable_warned then
-                inst._unreadable_warned = true
-                vim.schedule(function()
-                    util.notify(
-                        "live-server: protected_paths pattern cannot be read, refusing what it gates: " .. pat,
-                        { notify = true },
-                        "WARN"
-                    )
-                end)
-            end
+            warn_once(
+                inst,
+                "pattern",
+                ("cannot read protected_paths pattern %s (%s); the request was refused"):format(pat, tostring(hit))
+            )
             return true, true
         end
         needed = needed or hit ~= nil

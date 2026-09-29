@@ -442,7 +442,12 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     H.defer(function()
         vim.notify = real_notify
     end)
-    local warning = "live-server: protected_paths pattern cannot be read, refusing what it gates: /["
+    local function warning(url)
+        return ("live-server: port %d cannot read protected_paths pattern /[ (%s); the request was refused"):format(
+            tonumber(url:match(":(%d+)/")),
+            "malformed pattern (missing ']')"
+        )
+    end
     local function settled(count)
         H.wait_for(function()
             return #notes >= count
@@ -460,7 +465,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         )
         local count = settled(1)
         ok(
-            count == 1 and notes[1].level == vim.log.levels.WARN and notes[1].msg == warning,
+            count == 1 and notes[1].level == vim.log.levels.WARN and notes[1].msg == warning(alone),
             ("two requests warn once, naming the pattern: %s"):format(
                 vim.inspect(notes, { newline = " ", indent = "" })
             )
@@ -473,7 +478,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         answers_401(after .. "?t=" .. TOKEN, "an unreadable pattern after a matching one refuses the token too")
         local count = settled(2)
         ok(
-            count == 2 and notes[2].msg == warning,
+            count == 2 and notes[2].msg == warning(after),
             ("another instance warns once of its own: %s"):format(vim.inspect(notes, { newline = " ", indent = "" }))
         )
     end
