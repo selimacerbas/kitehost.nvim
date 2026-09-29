@@ -2481,8 +2481,9 @@ local function bind_probed(host, port)
     -- share the port with a wildcard bind and take every connection to that
     -- address, where the opened URL, token and all, would go (measured on
     -- macOS; Linux refuses the bind above). start serves only when a probe
-    -- before the listen finds the address free: a probe that failed any
-    -- other way cannot tell, and a real EMFILE there once let the URL reach
+    -- before the listen finds the address free, or absent from this
+    -- machine, which no listener can hold: a probe that failed any other
+    -- way cannot tell, and a real EMFILE there once let the URL reach
     -- another program (measured). A caller may replace the rule, and one
     -- that raised went past start with the server's socket open.
     local here = host .. ":" .. tostring(bound.port)
@@ -2493,7 +2494,6 @@ local function bind_probed(host, port)
     end
     if loopback then
         local free, why, why_name = address_free(loopback, bound.port)
-        -- An address this machine lacks cannot be held by another listener.
         if not free and why_name ~= "EADDRNOTAVAIL" then
             close_once(tcp)
             local there = tostring(loopback) .. ":" .. tostring(bound.port)
