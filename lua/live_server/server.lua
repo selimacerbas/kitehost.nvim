@@ -786,8 +786,9 @@ end
 local function scan_dirs(inst)
     local dirs = { inst.root_real }
     local function walk(dir)
-        local handle = uv.fs_scandir(dir)
+        local handle, scan_err = uv.fs_scandir(dir)
         if not handle then
+            warn_once(inst, "watch", ("cannot watch the directories under %s (%s)"):format(dir, tostring(scan_err)))
             return
         end
         while true do
@@ -815,9 +816,13 @@ local function supports_recursive_watch()
     return sys == "Darwin" or sys:find("Windows") ~= nil
 end
 
--- Attach a single-directory fs_event watcher with a dir-aware callback
+-- Attach a single-directory fs_event watcher with a dir-aware callback:
+-- true, or nil and the cause, with nothing left open.
 local function add_dir_watch(inst, dir)
-    local ev = uv.new_fs_event()
+    local ev, new_err = uv.new_fs_event()
+    if not ev then
+        return nil, new_err
+    end
     local cb = function(err, fname, _status)
         if err then
             return
@@ -828,19 +833,20 @@ local function add_dir_watch(inst, dir)
         if fname and fname ~= "" then
             local st = uv.fs_stat(full)
             if st and st.type == "directory" and not inst._fs_events[full] and dir_watched(inst, full) then
-                add_dir_watch(inst, full)
+                local added, add_err = add_dir_watch(inst, full)
+                if not added then
+                    warn_once(inst, "watch", ("cannot watch %s (%s)"):format(full, tostring(add_err)))
+                end
             end
         end
     end
-    local ok = pcall(function()
-        ev:start(dir, {}, cb)
-    end)
-    if not ok then
-        pcall(function()
-            ev:start(dir, cb)
-        end)
+    local started, start_err = ev:start(dir, {}, cb)
+    if not started then
+        ev:close()
+        return nil, start_err
     end
     inst._fs_events[dir] = ev
+    return true
 end
 
 local function stop_fs_watch(inst)
@@ -862,35 +868,45 @@ local function stop_fs_watch(inst)
     end
 end
 
+-- true, or nil and the cause when the root itself cannot be watched, with
+-- nothing left open; a directory under it that cannot be watched is
+-- dropped with a warning and the rest kept.
 local function start_fs_watch(inst)
     stop_fs_watch(inst)
 
     if supports_recursive_watch() then
         -- macOS / Windows: single recursive watcher
         local single = uv.new_fs_event()
-        local cb = function(err, fname, _status)
-            if err then
-                return
+        if single then
+            local cb = function(err, fname, _status)
+                if err then
+                    return
+                end
+                schedule_reload(inst, fname or "")
             end
-            schedule_reload(inst, fname or "")
-        end
-        local ok = pcall(function()
-            single:start(inst.root_real, { recursive = true }, cb)
-        end)
-        if ok then
-            inst.fs_event = single
-            return
-        end
-        pcall(function()
+            if single:start(inst.root_real, { recursive = true }, cb) then
+                inst.fs_event = single
+                return true
+            end
             single:close()
-        end)
+        end
     end
 
-    -- Linux (or recursive failed): per-directory watchers
+    -- Linux (or recursive failed): per-directory watchers, whose root's
+    -- cause is the one reported. The root comes first, and a root nothing
+    -- watches is no live reload at all.
     inst._fs_events = {}
-    for _, dir in ipairs(scan_dirs(inst)) do
-        add_dir_watch(inst, dir)
+    for i, dir in ipairs(scan_dirs(inst)) do
+        local added, add_err = add_dir_watch(inst, dir)
+        if not added then
+            if i == 1 then
+                stop_fs_watch(inst)
+                return nil, add_err
+            end
+            warn_once(inst, "watch", ("cannot watch %s (%s)"):format(dir, tostring(add_err)))
+        end
     end
+    return true
 end
 
 -- -------- HTML helpers (injection + templating) ---------------------------
@@ -2463,8 +2479,14 @@ function S.start(cfg)
             )
         end
     end
+    -- The caller asked for live reload, so a start that cannot deliver it
+    -- raises, as a failed listen does.
     if inst.live_enabled then
-        start_fs_watch(inst)
+        local watching, watch_err = start_fs_watch(inst)
+        if not watching then
+            S.stop(inst)
+            error(("Failed to start live reload on %s: %s"):format(checked.root, tostring(watch_err)), 0)
+        end
     end
 
     -- Scheduled, so a start from a fast event (a luv callback) cannot raise
@@ -2517,8 +2539,21 @@ function S.stop(inst)
     close_once(inst.handle)
 end
 
+-- A running server asked to watch its root: whether it does. One that
+-- cannot turns live reload off and says so, since reporting it on with
+-- nothing watching reloads nothing and says nothing.
+local function watch_or_warn(inst)
+    local watching, watch_err = start_fs_watch(inst)
+    if not watching then
+        inst.live_enabled = false
+        warn_once(inst, "watch", ("cannot watch %s (%s); live reload is off"):format(inst.root, tostring(watch_err)))
+    end
+    return watching == true
+end
+
 -- A stopped server's reload timer is closed, so a watcher opened here
--- would reload nothing and nothing would close it.
+-- would reload nothing and nothing would close it. false when live reload
+-- was on and the new root cannot be watched.
 function S.update_target(inst, new_root, new_index)
     if inst.handle:is_closing() then
         return
@@ -2528,8 +2563,9 @@ function S.update_target(inst, new_root, new_index)
     inst.default_index = new_index
     inst.ignore_patterns = util.parse_liveignore(inst.root_real)
     if inst.live_enabled then
-        start_fs_watch(inst)
+        return watch_or_warn(inst)
     end
+    return true
 end
 
 -- Live-reload controls
@@ -2578,11 +2614,10 @@ function S.enable_live(inst, enable)
     end
     inst.live_enabled = enable
     if enable then
-        start_fs_watch(inst)
-    else
-        stop_fs_watch(inst)
+        return watch_or_warn(inst)
     end
-    return enable
+    stop_fs_watch(inst)
+    return false
 end
 
 function S.is_live_enabled(inst)

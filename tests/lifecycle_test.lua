@@ -17,7 +17,11 @@
 -- (its bytes in big) are the small and the 2 MiB file the transfer rows
 -- serve, and serve's cfg and get's extra are what those rows pass. A
 -- stopped server opens no watcher when its target or live reload
--- changes, and a reload timer that cannot start is reported once.
+-- changes, and a reload timer that cannot start is reported once. A
+-- watcher that cannot start refuses a live start and turns live reload
+-- off at enable_live and update_target, with one warning, and a
+-- directory under the root that cannot be watched or read is dropped
+-- with one warning.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -1721,6 +1725,193 @@ H.case("Section 8b: a reload timer that cannot start is reported once", function
         "as a warning naming the error"
     )
     eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- A watcher's start was read through a pcall that dropped its tuple, so a
+-- failed start counted as success, a nil handle was kept as the watcher,
+-- the per-directory fallback never ran and is_live_enabled reported live
+-- reload on with nothing watching. A start asked for live reload raises
+-- when the root cannot be watched; enable_live and update_target turn it
+-- off and warn; a per-directory watch that fails for one directory warns
+-- and keeps the rest.
+H.case("Section 9: a watcher that cannot start refuses or warns, never reports live", function()
+    local real_new = uv.new_fs_event
+    local real_uname = uv.os_uname
+    local real_scandir = uv.fs_scandir
+    local real_notify = vim.notify
+    local notes = {}
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    H.defer(function()
+        uv.new_fs_event = real_new
+        uv.os_uname = real_uname
+        uv.fs_scandir = real_scandir
+        vim.notify = real_notify
+    end)
+    -- "make" fails every new_fs_event; "start" hands back watchers whose
+    -- start fails on dir, or on every path when dir is nil.
+    local function stub(mode, dir)
+        uv.new_fs_event = function()
+            if mode == "make" then
+                return nil, "EMFILE: stubbed", "EMFILE"
+            end
+            local h, err = real_new()
+            if not h then
+                return h, err
+            end
+            return setmetatable({}, {
+                __index = function(_, name)
+                    if name == "start" then
+                        return function(_, path, ...)
+                            if dir == nil or path == dir then
+                                return nil, "ENOSPC: stubbed", "ENOSPC"
+                            end
+                            return h:start(path, ...)
+                        end
+                    end
+                    return function(_, ...)
+                        return h[name](h, ...)
+                    end
+                end,
+            })
+        end
+    end
+    local function unstub()
+        uv.new_fs_event = real_new
+    end
+    local function counts()
+        return { tcp = H.handle_count("tcp"), timer = H.handle_count("timer"), fs_event = H.handle_count("fs_event") }
+    end
+    -- The warnings scheduled since mark.
+    local function warnings(mark)
+        vim.wait(100)
+        local got = {}
+        for i = mark + 1, #notes do
+            if notes[i].level == vim.log.levels.WARN then
+                table.insert(got, notes[i].msg)
+            end
+        end
+        return got
+    end
+    local site = H.tmpdir()
+    H.write_file(site .. "/index.html", "<html><body>watched</body></html>")
+    local live = { enabled = true, inject_script = false, debounce = 20 }
+
+    for _, case in ipairs({ { "make", "EMFILE: stubbed" }, { "start", "ENOSPC: stubbed" } }) do
+        local label = ("a root watcher that cannot %s"):format(case[1])
+        local before = counts()
+        stub(case[1])
+        local started, res = pcall(server.start, { port = 0, root = site, live = live })
+        unstub()
+        local after = counts()
+        if started then
+            server.stop(res)
+        end
+        eq(
+            not started and tostring(res) or "started",
+            ("Failed to start live reload on %s: %s"):format(site, case[2]),
+            label .. " refuses the start at level 0, naming the root and the cause"
+        )
+        ok(
+            vim.deep_equal(after, before),
+            ("%s leaves no socket, timer or watcher: %s against %s"):format(
+                label,
+                vim.inspect(after, { newline = " ", indent = "" }),
+                vim.inspect(before, { newline = " ", indent = "" })
+            )
+        )
+    end
+
+    local mark = #notes
+    local off = serve({ root = site, live = { enabled = false, inject_script = false } })
+    local before = counts()
+    stub("start")
+    local enabled = server.enable_live(off, true)
+    unstub()
+    eq(enabled, false, "enable_live whose watcher cannot start returns false")
+    eq(server.is_live_enabled(off), false, "and reports live reload off")
+    ok(
+        vim.deep_equal(counts(), before),
+        "and holds no watcher: " .. vim.inspect(counts(), { newline = " ", indent = "" })
+    )
+    local warned = warnings(mark)
+    ok(
+        #warned == 1
+            and warned[1]:find(("live-server: port %d cannot watch "):format(off.port), 1, true) == 1
+            and warned[1]:find("ENOSPC: stubbed", 1, true) ~= nil,
+        "and warns once, naming the port and the cause: " .. vim.inspect(warned)
+    )
+    eq(server.enable_live(off, true), true, "a later enable_live that can watch turns it on")
+    eq(server.is_live_enabled(off), true, "and reports it on")
+
+    mark = #notes
+    before = counts()
+    local on = serve({ root = site, live = live })
+    ok(counts().fs_event > before.fs_event, "a live start on a plain root watches it")
+    eq(server.is_live_enabled(on), true, "and reports live reload on")
+    eq(#warnings(mark), 0, "and warns nothing")
+    stub("start")
+    local retargeted = server.update_target(on, site, nil)
+    unstub()
+    eq(retargeted, false, "update_target whose watcher cannot start returns false")
+    eq(server.is_live_enabled(on), false, "and reports live reload off")
+    eq(counts().fs_event, before.fs_event, "and holds no watcher")
+    warned = warnings(mark)
+    ok(
+        #warned == 1
+            and warned[1]:find(("live-server: port %d cannot watch "):format(on.port), 1, true) == 1
+            and warned[1]:find("ENOSPC: stubbed", 1, true) ~= nil,
+        "and warns once, naming the port and the cause: " .. vim.inspect(warned)
+    )
+
+    -- The per-directory watchers inotify needs, run here by reading the
+    -- system as Linux.
+    uv.os_uname = function()
+        return { sysname = "Linux" }
+    end
+    local tree = H.tmpdir()
+    vim.fn.mkdir(tree .. "/a", "p")
+    vim.fn.mkdir(tree .. "/b", "p")
+    H.write_file(tree .. "/a/x.html", "a")
+    H.write_file(tree .. "/b/y.html", "b")
+    local real_tree = assert(uv.fs_realpath(tree))
+    mark = #notes
+    before = counts()
+    stub("start", real_tree .. "/a")
+    local per = serve({ root = tree, live = live })
+    unstub()
+    eq(counts().fs_event - before.fs_event, 2, "a directory that cannot be watched is dropped, the rest kept")
+    eq(server.is_live_enabled(per), true, "and live reload stays on")
+    warned = warnings(mark)
+    ok(
+        #warned == 1
+            and warned[1]
+                == ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(per.port, real_tree .. "/a"),
+        "and warns once, naming the directory and the cause: " .. vim.inspect(warned)
+    )
+    -- A directory that cannot be read was dropped with its whole subtree
+    -- and no word.
+    mark = #notes
+    uv.fs_scandir = function(dir, ...)
+        if dir == real_tree .. "/b" then
+            return nil, "EACCES: stubbed", "EACCES"
+        end
+        return real_scandir(dir, ...)
+    end
+    local unread = serve({ root = tree, live = live })
+    uv.fs_scandir = real_scandir
+    warned = warnings(mark)
+    ok(
+        #warned == 1
+            and warned[1]
+                == ("live-server: port %d cannot watch the directories under %s (EACCES: stubbed)"):format(
+                    unread.port,
+                    real_tree .. "/b"
+                ),
+        "a directory that cannot be read warns once, naming it and the cause: " .. vim.inspect(warned)
+    )
+    eq(server.is_live_enabled(unread), true, "and live reload stays on")
 end)
 
 H.finish()
