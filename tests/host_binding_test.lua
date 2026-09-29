@@ -2,6 +2,7 @@
 -- Verify that cfg.host controls the bind address:
 --   - "127.0.0.1" (default) is reachable on loopback and refuses the LAN IP
 --   - "0.0.0.0" is reachable on both
+--   - "localhost" binds 127.0.0.1
 -- The socket's own address is asserted for both; the LAN probes are skipped,
 -- counted, where a host firewall intercepts them, which a control listener
 -- of this process tells apart from a server that does not answer.
