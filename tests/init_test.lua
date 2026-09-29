@@ -381,6 +381,36 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
             vim.inspect(ls.opts.live_reload, { newline = " ", indent = "" })
         )
     )
+    -- Every start refuses a flag that is no boolean, so setup took one and
+    -- each start then failed, far from the config that held it; setup
+    -- refuses it, keeping what it had.
+    for _, c in ipairs({
+        { { live_reload = { enabled = 1 } }, "live_reload.enabled" },
+        { { live_reload = { inject_script = "yes" } }, "live_reload.inject_script" },
+        { { live_reload = { css_inject = 0 } }, "live_reload.css_inject" },
+        { { directory_listing = { enabled = 1 } }, "directory_listing.enabled" },
+        { { directory_listing = { show_hidden = "no" } }, "directory_listing.show_hidden" },
+        { { notify_on_reload = 1 }, "notify_on_reload" },
+    }) do
+        package.loaded["live_server"] = nil
+        local flagged = require("live_server")
+        local set, err = pcall(flagged.setup, vim.tbl_extend("force", { notify = false, default_port = 9000 }, c[1]))
+        eq(
+            not set and tostring(err) or "setup took it",
+            c[2] .. " must be a boolean",
+            ("setup refuses %s = %s, naming it"):format(c[2], vim.inspect(c[1], { newline = " ", indent = "" }))
+        )
+        eq(flagged.opts.default_port, 8000, ("and a refused %s keeps every option it had"):format(c[2]))
+    end
+    package.loaded["live_server"] = nil
+    local flags = require("live_server")
+    local set, err = pcall(flags.setup, {
+        notify = false,
+        notify_on_reload = true,
+        live_reload = { enabled = false, inject_script = false, css_inject = false },
+        directory_listing = { enabled = false, show_hidden = true },
+    })
+    ok(set, "every flag given as a boolean is taken: " .. tostring(err))
 end)
 
 -- update_target raises on a root it cannot serve, and the retarget called

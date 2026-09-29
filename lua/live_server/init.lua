@@ -130,6 +130,22 @@ function M.setup(opts)
             error(section .. " must be a table or a boolean", 0)
         end
     end
+    -- Every start refuses a flag that is no boolean, so it is named here, at
+    -- the config that holds it, not at each start.
+    for _, flag in ipairs({
+        { "live_reload", "enabled" },
+        { "live_reload", "inject_script" },
+        { "live_reload", "css_inject" },
+        { "directory_listing", "enabled" },
+        { "directory_listing", "show_hidden" },
+    }) do
+        if type(merged[flag[1]][flag[2]]) ~= "boolean" then
+            error(("%s.%s must be a boolean"):format(flag[1], flag[2]), 0)
+        end
+    end
+    if type(merged.notify_on_reload) ~= "boolean" then
+        error("notify_on_reload must be a boolean", 0)
+    end
     M.opts = merged
 
     if M.opts.auto_start and M.opts.auto_start.filetypes then
