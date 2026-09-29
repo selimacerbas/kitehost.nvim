@@ -740,6 +740,23 @@ local function warn_once(inst, kind, text)
     end)
 end
 
+-- What S.reload reads as a swap rather than a page reload.
+local function is_stylesheet(path)
+    return path:match("%.css$") ~= nil
+end
+
+-- The path one debounce window reloads for: its last change that is no
+-- stylesheet, else its last. Every change is kept, since a page changed
+-- beside a stylesheet must reload whole, where a swap left it stale.
+local function window_path(window)
+    for i = #window, 1, -1 do
+        if not is_stylesheet(window[i]) then
+            return window[i]
+        end
+    end
+    return window[#window] or ""
+end
+
 local function schedule_reload(inst, changed_path)
     if not inst.live_enabled then
         return
@@ -762,14 +779,21 @@ local function schedule_reload(inst, changed_path)
     -- a dot path (its own name, or the target of a plain-named link) the
     -- payload says / so no dot name reaches an events client, and a plain
     -- name keeps its path, so a started-on stylesheet still swaps.
-    inst._last_change = (own and has_dot_segment(rel)) and "/" or rel or inst._last_change
+    local path = (own and has_dot_segment(rel)) and "/" or rel
+    if path then
+        table.insert(inst.reload_window, path)
+    end
     inst.debounce_timer:stop()
     -- start refuses a closing timer, and the change was then dropped with
     -- no word (measured through a stub).
     local armed, arm_err = inst.debounce_timer:start(inst.live_debounce, 0, function()
-        S.reload(inst, inst._last_change or "")
+        local window = inst.reload_window
+        inst.reload_window = {}
+        S.reload(inst, window_path(window))
     end)
     if not armed then
+        -- A window no timer will send is dropped, or it grows at every change.
+        inst.reload_window = {}
         warn_once(inst, "reload", ("could not schedule a reload (%s); restart the server"):format(tostring(arm_err)))
     end
 end
@@ -2413,6 +2437,8 @@ function S.start(cfg)
         live_debounce = checked.live_debounce,
         css_inject = checked.css_inject,
         sse_clients = {},
+        -- Every change of the pending debounce window, in order.
+        reload_window = {},
         heartbeat_ms = checked.heartbeat_ms,
         -- The kinds of fault the user was told of (warn_once).
         warned = {},
@@ -2622,7 +2648,7 @@ end
 -- Live-reload controls
 function S.reload(inst, reason_path)
     local rp = tostring(reason_path or "")
-    local is_css = inst.css_inject and rp:match("%.css$") ~= nil or false
+    local is_css = inst.css_inject and is_stylesheet(rp) or false
     -- JSON, where %q wrote a tab as \9 and a newline as a line break, which
     -- JSON.parse refused. Each value is encoded on its own: an encoded
     -- table's key order is the hash's, which differs between processes

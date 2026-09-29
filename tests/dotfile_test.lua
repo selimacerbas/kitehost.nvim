@@ -5,7 +5,8 @@
 -- Since the rule the listing hides them too, where show_hidden alone named
 -- them, and a change to one sends no reload. A .liveignore that is not a
 -- regular file (a FIFO, a directory) is never opened, gives no rule and is
--- named once.
+-- named once. One debounce window reloads the page when any change in it
+-- is not a stylesheet.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/dotfile_test.lua"
 
@@ -762,6 +763,60 @@ server.stop(inst)
     end
     ok(#child_warned == 1 and child_warned[1] == want, "and warns once, naming it: " .. vim.inspect(child_warned))
     eq(shown.rules, 0, "and gives no rule")
+end)
+
+-- Two changes inside one debounce window kept the last path alone, so
+-- index.html then style.css sent one reload marked as a stylesheet: the
+-- injected client swapped the stylesheets and the page stayed stale
+-- (measured). The window keeps every path, and it is a swap only when
+-- every one of them is a stylesheet.
+H.case("Section 11: a mixed debounce window reloads the page", function()
+    -- The reload frames after the stream opens, decoded, once the window
+    -- has closed.
+    local function window(writes)
+        local site = H.tmpdir()
+        H.write_file(site .. "/index.html", "<html><body>0</body></html>")
+        H.write_file(site .. "/style.css", "body{}")
+        H.write_file(site .. "/print.css", "body{}")
+        local base = serve(site, { live = { enabled = true, debounce = 300, inject_script = false } })
+        local port = tonumber(base:match(":(%d+)$"))
+        local c = assert(H.raw_connect(port))
+        assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port)))
+        c:read(2000, function(b)
+            return b:find("retry: 1000\n\n", 1, true) ~= nil
+        end)
+        -- FSEvents delivered a fixture written just before the watcher
+        -- started after the stream opened (measured), so it settles first.
+        vim.wait(600)
+        local mark = #table.concat(c.chunks)
+        for _, name in ipairs(writes) do
+            H.write_file(site .. "/" .. name, "changed " .. name)
+        end
+        c:read(2000, function(b)
+            return #reloads(b, mark) > 0
+        end)
+        -- A second frame from a late event would land in this wait.
+        vim.wait(600)
+        return reloads(table.concat(c.chunks), mark)
+    end
+    local function shown(got)
+        return vim.inspect(got, { newline = " ", indent = "" })
+    end
+    local mixed = window({ "index.html", "style.css" })
+    ok(
+        #mixed == 1 and mixed[1].css == false and mixed[1].path == "index.html",
+        "index.html then style.css in one window send one reload of the page, naming index.html: " .. shown(mixed)
+    )
+    local sheets = window({ "style.css", "print.css" })
+    ok(
+        #sheets == 1 and sheets[1].css == true and sheets[1].path == "print.css",
+        "style.css then print.css send one stylesheet swap, naming the last: " .. shown(sheets)
+    )
+    local one = window({ "style.css" })
+    ok(
+        #one == 1 and one[1].css == true and one[1].path == "style.css",
+        "style.css alone sends one stylesheet swap: " .. shown(one)
+    )
 end)
 
 H.finish()
