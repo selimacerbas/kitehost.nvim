@@ -1,8 +1,10 @@
 -- tests/api_doc_test.lua
 -- The README's plugin-author section is the public API SemVer covers:
--- every export and capability flag of the server module and every option
--- start reads is named there, so a new one cannot ship undeclared. Each
--- list is read from the modules as they run, never restated here.
+-- every export and capability flag of the server module, every option
+-- start reads and every /__live/ route the server answers is named there,
+-- and of the instance's fields only the two it promises, so a new one
+-- cannot ship undeclared. Each list is read from the code as it runs,
+-- never restated here.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
 
@@ -32,10 +34,14 @@ H.case("every export of live_server.server is documented", function()
     ok(section:find("SemVer", 1, true) ~= nil, "the section says SemVer covers it")
 end)
 
+-- Read in the flags' own paragraph, where a flag named like an option
+-- would otherwise pass on that option's line.
 H.case("every capability flag is documented", function()
     ok(type(server.features) == "table" and next(server.features) ~= nil, "server.features holds flags")
+    local flags = section:match("\n(`server%.features` holds[^\n]*)") or ""
+    ok(flags ~= "", "the section has the flags' paragraph")
     for _, flag in ipairs(sorted_keys(server.features)) do
-        ok(section:find("`" .. flag .. "`", 1, true) ~= nil, ("features.%s is documented"):format(flag))
+        ok(flags:find("`" .. flag .. "`", 1, true) ~= nil, ("features.%s is documented"):format(flag))
     end
 end)
 
@@ -84,6 +90,46 @@ H.case("every option start reads is documented", function()
             named = named and line:find(parts[i] .. " = ", 1, true) ~= nil
         end
         ok(named, ("start's %s is documented"):format(key))
+    end
+end)
+
+-- The instance table holds the server's own state; two fields are
+-- promised, and naming any other as inst.<field> would promise it too.
+H.case("the instance's two public fields, and no other, are documented", function()
+    local inst = server.start({ port = 0, root = H.tmpdir() })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    for _, field in ipairs({ "host", "port" }) do
+        ok(inst[field] ~= nil, ("a started instance holds %s"):format(field))
+        ok(section:find("inst%." .. field .. "%f[^%w_]") ~= nil, ("inst.%s is documented"):format(field))
+    end
+    local named = {}
+    for _, field in ipairs(sorted_keys(inst)) do
+        if field ~= "host" and field ~= "port" and section:find("inst%." .. vim.pesc(field) .. "%f[^%w_]") then
+            table.insert(named, field)
+        end
+    end
+    ok(#named == 0, "no other field is named: " .. table.concat(named, ", "))
+end)
+
+-- The routes are the /__live/ literals in the server's source, so a route
+-- added there reds this row until the section names it.
+H.case("every /__live/ route the server answers is documented", function()
+    local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n")
+    local seen, routes = {}, {}
+    for found in source:gmatch("/__live/[%w._-]+") do
+        -- A comment's sentence ends a literal with its full stop.
+        local route = found:gsub("%.+$", "")
+        if not seen[route] then
+            seen[route] = true
+            table.insert(routes, route)
+        end
+    end
+    table.sort(routes)
+    ok(#routes > 0, "the server's source names its routes")
+    for _, route in ipairs(routes) do
+        ok(section:find(vim.pesc(route) .. "%f[^%w_-]") ~= nil, route .. " is documented")
     end
 end)
 
