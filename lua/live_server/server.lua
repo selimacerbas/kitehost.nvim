@@ -1205,6 +1205,20 @@ function S.wildcard_loopback(ip)
     return nil
 end
 
+-- The wildcard a loopback bind would shadow, or nil: S.wildcard_loopback's
+-- rule in the other direction, the two one rule. Same family only, since
+-- a dual-stack probe of :: would meet this server's own IPv4 socket on
+-- Linux.
+local function wildcard_of(ip)
+    if ip == "::1" then
+        return "::"
+    end
+    if is_ipv4(ip) and ip:match("^127%.") then
+        return "0.0.0.0"
+    end
+    return nil
+end
+
 -- Whether ip:port is free, by binding a socket that never listens and
 -- closing it: true, or nil, the cause and its name. libuv holds a bind's
 -- EADDRINUSE until getsockname and opens the descriptor at the bind, so an
@@ -2272,7 +2286,8 @@ end
 -- Raises at level 0, returning nothing, when it cannot serve: a refused
 -- option, a failed bind or listen, a port in use, a reload timer it cannot
 -- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
--- URL's loopback address another socket holds or start cannot check. A
+-- URL's loopback address another socket holds or start cannot check, or
+-- a loopback bind whose wildcard of its family the same holds for. A
 -- caller reads S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
@@ -2337,6 +2352,30 @@ function S.start(cfg)
                 ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(here, there, tostring(why)),
                 0
             )
+        end
+    end
+
+    -- The mirror: macOS lets a loopback bind share the port with another
+    -- program's wildcard listener and take every loopback connection meant
+    -- for it (measured with a node listener). This socket, bound and not
+    -- listening, never conflicts with the probe (measured on macOS).
+    local wildcard = wildcard_of(bound.ip)
+    if wildcard then
+        local free, why, why_name = address_free(wildcard, bound.port)
+        if not free then
+            close_once(tcp)
+            local there = wildcard .. ":" .. tostring(bound.port)
+            if why_name == "EADDRINUSE" then
+                error(
+                    ("Failed to bind %s: another socket holds %s, which this address would shadow (%s)"):format(
+                        here,
+                        there,
+                        tostring(why)
+                    ),
+                    0
+                )
+            end
+            error(("Failed to bind %s: cannot check %s: %s"):format(here, there, tostring(why)), 0)
         end
     end
 

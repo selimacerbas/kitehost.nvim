@@ -14,7 +14,8 @@
 -- failed listen or a reload timer that cannot be made leaves no socket,
 -- timer or watcher, the timer's raise naming it. A wildcard bind raises
 -- unless the loopback address its URL names is free, and its probe of that
--- address is never left open. A pattern the check cannot read past its
+-- address is never left open; a loopback bind raises when a wildcard
+-- listener holds its port. A pattern the check cannot read past its
 -- literal starts and gates every path it is asked about, and each option is
 -- read from the caller's table once.
 --
@@ -677,7 +678,7 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     end
 
     local _, _, loop_made, loop_open = start_counted({ port = 0 })
-    eq(loop_made, 1, "a loopback start makes its own socket alone, no probe")
+    eq(loop_made, 2, "a loopback start makes its own socket and the probe of its wildcard")
     eq(loop_open, 1, "and leaves that one open")
 
     -- One skip per row below, so a machine that refuses a wildcard bind
@@ -808,6 +809,105 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     refuses("a loopback rule that raises refuses the start", function()
         error("rule stubbed to raise", 0)
     end, nil, { "Failed to bind 0.0.0.0:", "the loopback rule raised: rule stubbed to raise" })
+end)
+
+-- The mirror of the case above: macOS lets a bind to 127.0.0.1 alone
+-- share the port with another program's wildcard listener, and the server
+-- then answered every loopback request meant for that program (measured
+-- with a node listener on 0.0.0.0); Linux refuses the bind itself. A
+-- loopback start probes the wildcard of its own family, and its own
+-- socket, bound and not listening, never conflicts with the probe
+-- (measured on macOS).
+H.case("a loopback bind raises when a wildcard listener holds its port", function()
+    local function held_by(wildcard, specific)
+        local w = assert(vim.uv.new_tcp())
+        H.defer(function()
+            if not w:is_closing() then
+                w:close()
+            end
+        end)
+        local bound = w:bind(wildcard, 0)
+        if not bound or not w:getsockname() then
+            w:close()
+            return nil
+        end
+        assert(w:listen(8, function() end))
+        local port = w:getsockname().port
+        local tcps, fds = H.handle_count("tcp"), H.fd_count()
+        local started, res = pcall(server.start, { host = specific, port = port, root = root })
+        local tcps_after, fds_after = H.handle_count("tcp"), H.fd_count()
+        if started then
+            server.stop(res)
+        end
+        w:close()
+        return {
+            started = started,
+            res = tostring(res),
+            port = port,
+            tcp = tcps_after - tcps,
+            fd = (fds_after or 0) - (fds or 0),
+        }
+    end
+    for _, pair in ipairs({ { "0.0.0.0", "127.0.0.1" }, { "::", "::1" } }) do
+        local wildcard, specific = pair[1], pair[2]
+        local got = held_by(wildcard, specific)
+        if not got then
+            H.skip(
+                ("a %s start beside a %s listener raises (this machine binds no %s)"):format(
+                    specific,
+                    wildcard,
+                    wildcard
+                )
+            )
+            H.skip("leaving no socket")
+            H.skip("and no descriptor")
+        else
+            local here, there = ("%s:%d"):format(specific, got.port), ("%s:%d"):format(wildcard, got.port)
+            -- Linux refuses the bind before the probe, naming the address.
+            ok(
+                not got.started
+                    and got.res:find("Failed to bind " .. here, 1, true) == 1
+                    and (
+                        got.res:find(
+                            ("another socket holds %s, which this address would shadow"):format(there),
+                            1,
+                            true
+                        ) or got.res:find("EADDRINUSE", 1, true)
+                    ),
+                ("a %s start beside a %s listener raises, naming both: %s"):format(specific, wildcard, got.res)
+            )
+            eq(got.tcp, 0, ("a %s start beside a %s listener leaves no socket"):format(specific, wildcard))
+            eq(got.fd, 0, ("a %s start beside a %s listener leaves no descriptor"):format(specific, wildcard))
+        end
+    end
+    -- A probe that fails any other way cannot tell, as the wildcard's.
+    local real_new_tcp = vim.uv.new_tcp
+    H.defer(function()
+        vim.uv.new_tcp = real_new_tcp
+    end)
+    local made = 0
+    vim.uv.new_tcp = function(...)
+        made = made + 1
+        if made == 2 then
+            return nil, "EMFILE: stubbed", "EMFILE"
+        end
+        return real_new_tcp(...)
+    end
+    local tcps = H.handle_count("tcp")
+    local started, res = pcall(server.start, { port = 0, root = root })
+    vim.uv.new_tcp = real_new_tcp
+    local tcps_after = H.handle_count("tcp")
+    if started then
+        server.stop(res)
+    end
+    ok(
+        not started
+            and tostring(res):find("Failed to bind 127.0.0.1:", 1, true) == 1
+            and tostring(res):find("cannot check 0.0.0.0:", 1, true) ~= nil
+            and tostring(res):find("EMFILE: stubbed", 1, true) ~= nil,
+        "a wildcard probe that cannot open refuses the loopback start, naming it: " .. tostring(res)
+    )
+    eq(tcps_after, tcps, "leaving no socket")
 end)
 
 -- The root was resolved after the server's socket was bound, and its raise
