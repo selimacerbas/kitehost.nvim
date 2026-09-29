@@ -17,11 +17,11 @@
 -- (its bytes in big) are the small and the 2 MiB file the transfer rows
 -- serve, and serve's cfg and get's extra are what those rows pass. A
 -- stopped server opens no watcher when its target or live reload
--- changes, and a reload timer that cannot start is reported once. A
--- watcher that cannot start refuses a live start and turns live reload
--- off at enable_live and update_target, with one warning, and a
--- directory under the root that cannot be watched or read is dropped
--- with one warning.
+-- changes, and a reload timer that cannot start is reported once. stop
+-- closes each timer once, however often it runs. A watcher that cannot
+-- start refuses a live start and turns live reload off at enable_live
+-- and update_target, with one warning, and a directory under the root
+-- that cannot be watched or read is dropped with one warning.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -1725,6 +1725,37 @@ H.case("Section 8b: a reload timer that cannot start is reported once", function
         "as a warning naming the error"
     )
     eq(#H.errors(), errs, "and nothing raises")
+end)
+
+-- The reload timer's close sat in a pcall that hid "handle is already
+-- closing" on every second stop. Each timer is closed once, through the
+-- same guard as every other handle, however many times stop runs.
+H.case("Section 8c: stop closes each of its timers once", function()
+    local inst = serve({ live = { enabled = true, debounce = 20, inject_script = false }, sse_heartbeat_ms = 1000 })
+    local closes = { debounce_timer = 0, heartbeat_timer = 0 }
+    for name in pairs(closes) do
+        local real = inst[name]
+        inst[name] = setmetatable({}, {
+            __index = function(_, method)
+                if method == "close" then
+                    return function()
+                        closes[name] = closes[name] + 1
+                        return real:close()
+                    end
+                end
+                return function(_, ...)
+                    return real[method](real, ...)
+                end
+            end,
+        })
+    end
+    local timers = H.handle_count("timer")
+    local first, first_err = pcall(server.stop, inst)
+    local second, second_err = pcall(server.stop, inst)
+    ok(first and second, ("two stops raise nothing: %s %s"):format(tostring(first_err), tostring(second_err)))
+    eq(closes.debounce_timer, 1, "the reload timer is closed once")
+    eq(closes.heartbeat_timer, 1, "and the heartbeat's once")
+    ok(H.handle_count("timer") <= timers - 2, "and both are closed")
 end)
 
 -- A watcher's start was read through a pcall that dropped its tuple, so a

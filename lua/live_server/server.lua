@@ -566,8 +566,8 @@ local CLIENT_JS_TOKEN = table.concat({
 })
 
 -- A stream leaves the client list here when its socket reports its end,
--- or through sse_evict when a write to it fails or it falls too far
--- behind (SSE_MAX_QUEUE); stop empties the list itself.
+-- or through sse_evict when a write to it fails, it falls too far behind
+-- (SSE_MAX_QUEUE) or the server stops.
 local function sse_drop(inst, sock)
     for i, cl in ipairs(inst.sse_clients) do
         if cl == sock then
@@ -577,11 +577,17 @@ local function sse_drop(inst, sock)
     end
 end
 
+-- The loop time of the first send that found a stream over SSE_MAX_QUEUE,
+-- cleared by a send that finds it at or under, and by the stream's
+-- eviction; weak, so an entry leaves with its socket, as started's does.
+local over_since = setmetatable({}, { __mode = "k" })
+
 -- A write's callback can report after the stream left (ECANCELED once
 -- stop or the read path closed it), and then finds nothing to drop and
 -- nothing left to close.
 local function sse_evict(inst, sock)
     sse_drop(inst, sock)
+    over_since[sock] = nil
     close_once(sock)
 end
 
@@ -631,11 +637,6 @@ end
 local SSE_MAX_QUEUE = 1024 * 1024
 local SSE_STALL_MS = 1000
 local SSE_HARD_QUEUE = 8 * 1024 * 1024
-
--- The loop time of the first send that found a stream over SSE_MAX_QUEUE,
--- cleared by a send that finds it at or under; weak, so an entry leaves
--- with its socket, as started's does.
-local over_since = setmetatable({}, { __mode = "k" })
 
 -- Writes one frame to every stream, the only writer after a stream's
 -- preamble: an event and the heartbeat both. luv reports a dead stream
@@ -2589,20 +2590,10 @@ function S.stop(inst)
     -- A stopped server has no watcher and a closed timer, so it reports
     -- live reload off, as enable_live answers a stopped server.
     inst.live_enabled = false
-    if inst.debounce_timer then
-        pcall(function()
-            inst.debounce_timer:stop()
-            inst.debounce_timer:close()
-        end)
+    -- Streams first, through the one eviction, which empties the list.
+    for _, cl in ipairs(vim.list_slice(inst.sse_clients)) do
+        sse_evict(inst, cl)
     end
-    if inst.heartbeat_timer and not inst.heartbeat_timer:is_closing() then
-        inst.heartbeat_timer:stop()
-        inst.heartbeat_timer:close()
-    end
-    for _, cl in ipairs(inst.sse_clients) do
-        close_once(cl)
-    end
-    inst.sse_clients = {}
     -- Of its sockets, stop reached the listener and the event streams
     -- alone, so an idle client, a head half sent, a stalled download with
     -- its file open and a page mid-write outlived it (measured). A
@@ -2612,8 +2603,14 @@ function S.stop(inst)
     for conn in pairs(inst.conns) do
         close_once(conn.sock)
     end
-    stop_fs_watch(inst)
     close_once(inst.handle)
+    -- A close stops a timer; the guard makes a second stop close nothing.
+    for _, timer in ipairs({ inst.debounce_timer or false, inst.heartbeat_timer or false }) do
+        if timer and not timer:is_closing() then
+            timer:close()
+        end
+    end
+    stop_fs_watch(inst)
 end
 
 -- A running server asked to watch its root: whether it does. One that

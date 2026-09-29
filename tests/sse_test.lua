@@ -5,8 +5,8 @@
 -- stayed listed, holding its place, for good. A comment line (": ping"
 -- and a blank line, which EventSource and both pages ignore) now goes to
 -- every stream at sse_heartbeat_ms, and to nothing else; 0 turns it off,
--- stop closes its timer, and a start that cannot arm it raises and
--- leaves nothing open.
+-- stop closes its timer and empties the stream list, and a start that
+-- cannot arm it raises and leaves nothing open.
 -- TCP gives up on a beat such a peer never acknowledges, and a stream
 -- whose write then fails, a beat's or an event's, by write's return or
 -- its callback, leaves the list and its socket closes, where the pcall
@@ -1003,6 +1003,22 @@ H.case("Section 10: one frame per event, whatever the payload holds", function()
         not raised and err:match("sse_test%.lua:%d+: send_event: the payload is not a string %(number%)$") ~= nil,
         "a number payload raises at the caller: " .. err
     )
+end)
+
+-- stop closed each stream's socket and replaced the list, a second closer
+-- beside the connection loop, and no row read the list after it. The
+-- streams now leave through the one eviction, the list emptied by it.
+H.case("Section 11: stop empties the stream list", function()
+    local inst = serve()
+    local a, b = open_stream(inst), open_stream(inst)
+    assert(listed(inst, 2), "both streams were listed within 2 s")
+    local list = inst.sse_clients
+    server.stop(inst)
+    eq(#list, 0, "the list the streams were on is empty after stop")
+    eq(server.connected_client_count(inst), 0, "and the server counts no client")
+    local _, a_eof = a:read(2000)
+    local _, b_eof = b:read(2000)
+    ok(a_eof and b_eof, "and each stream's socket is closed")
 end)
 
 H.finish()
