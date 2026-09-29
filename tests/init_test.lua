@@ -383,6 +383,60 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     )
 end)
 
+-- update_target raises on a root it cannot serve, and the retarget called
+-- it bare, so the raise reached the user as a Lua error with a position
+-- and no word of what failed. It is a notice now, in the shape of a
+-- refused start's, and the server keeps serving its root. realpath is
+-- stubbed for one directory that stats: no real directory both stats and
+-- fails to resolve on demand.
+H.case("Section 8: a retarget the server refuses is a notice, not a raise", function()
+    local _, _, inst = start_with({ notify = true })
+    assert(inst, "a server started to retarget")
+    local served = inst.root
+    local notes = {}
+    local suite_notify = vim.notify
+    local real_realpath = vim.uv.fs_realpath
+    H.defer(function()
+        vim.notify, vim.uv.fs_realpath, util.pick_path, picked_port = suite_notify, real_realpath, real_pick_path, 0
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    local unresolved, other = H.tmpdir(), H.tmpdir()
+    vim.uv.fs_realpath = function(path, ...)
+        if path == unresolved then
+            return nil, "ENOENT: stubbed", "ENOENT"
+        end
+        return real_realpath(path, ...)
+    end
+    local target = unresolved
+    util.pick_path = function(cb)
+        cb(target)
+    end
+    picked_port = inst.port
+    local ls = require("live_server")
+    local called, err = pcall(ls.start_picker)
+    vim.uv.fs_realpath = real_realpath
+    ok(called, "a retarget the server refuses raises nothing to the caller: " .. tostring(err))
+    eq(#notes, 1, "and prints one notice: " .. vim.inspect(notes, { newline = " ", indent = "" }))
+    local note = notes[1] or {}
+    eq(
+        note.msg,
+        ("LiveServer could not retarget: update_target: root %s does not resolve (ENOENT: stubbed)"):format(unresolved),
+        "naming what failed, then the server's cause"
+    )
+    eq(note.level, vim.log.levels.ERROR, "as an error")
+    eq(inst.root, served, "and the server keeps its root")
+    notes, target = {}, other
+    called, err = pcall(ls.start_picker)
+    ok(called, "a retarget to a real directory raises nothing: " .. tostring(err))
+    eq(inst.root, other, "and moves the root")
+    ok(
+        notes[1] ~= nil and notes[1].msg:find("retargeted", 1, true) ~= nil,
+        "and says so: " .. vim.inspect(notes, { newline = " ", indent = "" })
+    )
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

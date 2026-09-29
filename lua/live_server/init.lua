@@ -177,7 +177,13 @@ function start_for_path(path, port)
     local active_port = port
     local started_here = false
     if s then
-        server.update_target(s, root, index)
+        -- A root the server cannot serve raises, where a bare call handed the
+        -- user a Lua error. Called by pcall itself, the raise carries no
+        -- position, and the server keeps its root.
+        local retargeted, retarget_err = pcall(server.update_target, s, root, index)
+        if not retargeted then
+            return util.notify("LiveServer could not retarget: " .. tostring(retarget_err), M.opts, "ERROR")
+        end
         util.notify(
             ("LiveServer %d retargeted → %s%s"):format(
                 port,
