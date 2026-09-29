@@ -1730,8 +1730,9 @@ H.case("Section 8: a stopped server's update_target and enable_live open nothing
         made = made + 1
         return real_new_fs_event(...)
     end
+    -- Another root, so a retarget past the guard shows in live.root.
     local live_root = live.root
-    local updated, update_err = pcall(server.update_target, live, root, nil)
+    local updated, update_err = pcall(server.update_target, live, H.tmpdir(), nil)
     ok(updated, "update_target on a stopped server raises nothing: " .. tostring(update_err))
     eq(H.handle_count("fs_event"), watchers, "and opens no watcher")
     local enabled, got = pcall(server.enable_live, off, true)
