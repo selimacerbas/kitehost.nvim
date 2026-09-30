@@ -178,9 +178,10 @@ function M.setup(opts)
     end
     M.opts = merged
 
-    -- Cleared on every call: a later setup that arms nothing (false, no
-    -- filetypes, an empty list) must also disarm the earlier autocmd, which
-    -- otherwise kept starting servers and raised on a false auto_start.
+    -- Cleared on every call: a later auto_start = false or an empty
+    -- filetypes list must disarm the earlier autocmd, which otherwise kept
+    -- starting servers and raised on a false auto_start. A later call that
+    -- names no filetypes keeps the earlier list through the merge above.
     local group = vim.api.nvim_create_augroup("LiveServerAutoStart", { clear = true })
     if M.opts.auto_start and M.opts.auto_start.filetypes then
         local fts = M.opts.auto_start.filetypes
