@@ -1,10 +1,25 @@
 -- tests/api_doc_test.lua
--- The README's plugin-author section is the public API SemVer covers:
--- every export and capability flag of the server module, every option
--- start reads and every /__live/ route the server answers is named there,
--- and of the instance's fields only the two it promises, so a new one
--- cannot ship undeclared. Each list is read from the code as it runs,
--- never restated here.
+-- The documents a user and a plugin author read name what the code holds.
+-- Each list is read from the code as it runs, never restated here, so a
+-- new export, flag, option or route cannot ship undeclared.
+--
+-- Sections 1 to 6: the README's plugin-author section names every export
+--   and capability flag of the server module, the two util functions,
+--   every option start reads under several configurations, every
+--   /__live/ route and, of the instance's fields, only the two it
+--   promises. A route built by concatenation is no literal Section 6
+--   reads, and an option start reads under a configuration none of
+--   Section 4's gives is not recorded.
+-- Sections 7 and 8: every setup() option, and each field of a section,
+--   is in the README's Options block and has an entry in :help's
+--   options. The keys come from the defaults table and every M.opts.<key>
+--   the module's source spells, so a key read through an alias of M.opts
+--   or rawget is not seen.
+-- Section 9: every function of require("live_server") is named in the
+--   README's "API (for lua configs)" and in :help's API section. Its
+--   tables (opts, state) are the module's state and are not read.
+-- Section 10: :help's server API names the surface the README does, and
+--   SECURITY.md states the Host check the code holds.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
 
@@ -65,7 +80,7 @@ local function other_inst_fields(text)
     return named
 end
 
-H.case("every export of live_server.server is documented", function()
+H.case("Section 1: every export of live_server.server is documented", function()
     ok(section ~= "", "the README has the plugin-author section")
     for _, name in ipairs(sorted_keys(server)) do
         ok(section:find(export_shown(name), 1, true) ~= nil, ("server.%s is documented"):format(name))
@@ -74,7 +89,7 @@ H.case("every export of live_server.server is documented", function()
     ok(notices == 1, "the notices' paragraph is set outside the promise")
 end)
 
-H.case("every capability flag is documented", function()
+H.case("Section 2: every capability flag is documented", function()
     ok(type(server.features) == "table" and next(server.features) ~= nil, "server.features holds flags")
     local flags = flags_paragraph(section)
     ok(flags ~= "", "the section has the flags' paragraph")
@@ -83,7 +98,7 @@ H.case("every capability flag is documented", function()
     end
 end)
 
-H.case("the two util functions a plugin calls are documented", function()
+H.case("Section 3: the two util functions a plugin calls are documented", function()
     for _, name in ipairs(UTIL_NAMES) do
         ok(type(util[name]) == "function", ("util.%s exists"):format(name))
         ok(section:find("util." .. name .. "(", 1, true) ~= nil, ("util.%s is documented"):format(name))
@@ -91,16 +106,22 @@ H.case("the two util functions a plugin calls are documented", function()
 end)
 
 -- The options are the keys start reads from its table, recorded through a
--- proxy, so a key start begins to read is a key this section must name. The
--- two nested tables are given so their own keys are read too.
-H.case("every option start reads is documented", function()
-    local root = H.tmpdir()
+-- proxy, so a key start begins to read is a key this section must name.
+-- start reads some keys only when another is set (a section's fields
+-- when the section is a table), so the keys are the union over several
+-- configurations: none but the two required, the sections given empty or
+-- off, and every option set, a function asset_root and a cors list among
+-- them. A map or an empty table is read through a proxy of its own, so
+-- its keys are recorded too; a list is handed over as it is, since start
+-- walks it with ipairs, which reads no proxy.
+H.case("Section 4: every option start reads is documented", function()
+    local root, assets = H.tmpdir(), H.tmpdir()
     local read = {}
     local function proxy(backing, prefix)
         return setmetatable({}, {
             __index = function(_, key)
                 local value = backing[key]
-                if type(value) == "table" then
+                if type(value) == "table" and #value == 0 then
                     return proxy(value, prefix .. key .. ".")
                 end
                 read[prefix .. key] = true
@@ -108,15 +129,48 @@ H.case("every option start reads is documented", function()
             end,
         })
     end
-    local inst = server.start(proxy({
-        port = 0,
-        root = root,
-        live = { enabled = false },
-        features = { dirlist = {} },
-    }, ""))
-    H.defer(function()
-        server.stop(inst)
-    end)
+    local configs = {
+        { port = 0, root = root },
+        { port = 0, root = root, live = {}, features = { dirlist = {} } },
+        { port = 0, root = root, live = { enabled = false }, features = {} },
+        {
+            port = 0,
+            root = root,
+            host = "127.0.0.1",
+            default_index = root .. "/page.html",
+            index_names = { "main.html" },
+            headers = { ["X-Test"] = "1" },
+            cors = true,
+            token = "tok",
+            protected_paths = { "^/private/" },
+            asset_root = assets,
+            allowed_hosts = { "dev.test" },
+            serve_dotfiles = true,
+            notify_on_reload = false,
+            header_timeout_ms = 5000,
+            max_connections = 8,
+            sse_heartbeat_ms = 1000,
+            live = { enabled = true, inject_script = true, debounce = 50, css_inject = true },
+            features = { dirlist = { enabled = true, show_hidden = true } },
+        },
+        {
+            port = 0,
+            root = root,
+            cors = { "http://app.test" },
+            token = "other",
+            asset_root = function()
+                return assets
+            end,
+            live = { enabled = true, inject_script = false, css_inject = false },
+            features = { dirlist = { enabled = false } },
+        },
+    }
+    for _, cfg in ipairs(configs) do
+        local inst = server.start(proxy(cfg, ""))
+        H.defer(function()
+            server.stop(inst)
+        end)
+    end
     local keys = sorted_keys(read)
     ok(#keys > 0, "start reads its options through the table given")
     for _, key in ipairs(keys) do
@@ -135,7 +189,7 @@ end)
 -- promised, and naming any other as inst.<field> would promise it too,
 -- whether or not a given instance carries it (token is set only with a
 -- token), so every inst.<name> the section writes is read.
-H.case("the instance's two public fields, and no other, are documented", function()
+H.case("Section 5: the instance's two public fields, and no other, are documented", function()
     local inst = server.start({ port = 0, root = H.tmpdir() })
     H.defer(function()
         server.stop(inst)
@@ -150,7 +204,7 @@ end)
 
 -- The routes are the /__live/ literals in the server's source, so a route
 -- added there reds this row until the section names it.
-H.case("every /__live/ route the server answers is documented", function()
+H.case("Section 6: every /__live/ route the server answers is documented", function()
     local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n")
     local seen, routes = {}, {}
     for found in source:gmatch("/__live/[%w._-]+") do
@@ -216,7 +270,7 @@ local function setup_options()
     return keys, fields
 end
 
-H.case("Section 2: every setup() option is in README Options", function()
+H.case("Section 7: every setup() option is in README Options", function()
     local block = readme:match("\n## Options\n(.-)\n## ") or ""
     ok(block ~= "", "the README has the Options section")
     local keys, fields = setup_options()
@@ -234,7 +288,7 @@ end)
 
 -- :help's option list is the other place a user reads the options, so
 -- each one, and each field of a section, has its own entry there.
-H.case("Section 4: every setup() option has an entry in :help's options", function()
+H.case("Section 8: every setup() option has an entry in :help's options", function()
     local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
     local block = help:match("%*live%-server%-options%*\n(.-)\n=====") or ""
     ok(block ~= "", "doc/live-server.txt has the live-server-options section")
@@ -248,11 +302,37 @@ H.case("Section 4: every setup() option has an entry in :help's options", functi
     end
 end)
 
+-- A user's config calls the functions require("live_server") returns,
+-- and the README's "API (for lua configs)" and :help's API section are
+-- where SemVer names them, so a function added to the module is named in
+-- both. Its tables, opts and state, hold the module's state.
+H.case("Section 9: every function of live_server is in README's and :help's API", function()
+    package.loaded["live_server"] = nil
+    local ls = require("live_server")
+    local api = readme:match("\n## API %(for lua configs%)\n(.-)\n### ") or ""
+    ok(api ~= "", "the README has the API (for lua configs) section")
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
+    local help_api = help:match("%*live%-server%-api%*\n(.-)\n=====") or ""
+    ok(help_api ~= "", "doc/live-server.txt has the live-server-api section")
+    local names = 0
+    for _, name in ipairs(sorted_keys(ls)) do
+        if type(ls[name]) == "function" then
+            names = names + 1
+            ok(api:find("ls." .. name .. "(", 1, true) ~= nil, ("README's API names ls.%s()"):format(name))
+            ok(
+                help_api:find("live_server." .. name .. "(", 1, true) ~= nil,
+                (":help's API names live_server.%s()"):format(name)
+            )
+        end
+    end
+    ok(names > 0, 'require("live_server") returns functions')
+end)
+
 -- :help is the other place a plugin author reads the API, so its section
 -- holds the surface the README does. SECURITY.md's exposure section states
 -- the Host check this release holds, so the flag must be on and each claim
 -- has its own row, and dropping either reds.
-H.case("Section 3: :help names the same surface, SECURITY.md the Host check", function()
+H.case("Section 10: :help names the same surface, SECURITY.md the Host check", function()
     local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
     local api = help:match("%*live%-server%-server%-api%*\n(.-)\n=====") or ""
     ok(api ~= "", "doc/live-server.txt has the live-server-server-api section")
