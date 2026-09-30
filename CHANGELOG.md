@@ -7,7 +7,7 @@ All notable changes to this project; versions follow SemVer, which covers what a
 ### Upgrading from v1.5.0 (users)
 
 - Neovim 0.10 or newer is required. On Neovim 0.8 or 0.9, pin v1.5.0, which keeps every hole the Security entries below close.
-- A dot path (`/.env`, `/.git/config`, `/.vitepress/theme.js`) is `404`, a listing leaves it out and a change under one pushes no reload; `serve_dotfiles = true` serves them again, and `/.well-known/` at the root is served either way.
+- A dot path (`/.env`, `/.git/config`, `/.config/app.json`) is `404`, a listing leaves it out and a change under one pushes no reload; `serve_dotfiles = true` serves them again, and `/.well-known/` at the root is served either way.
 - On a loopback bind, a request under a name other than `localhost`, a `*.localhost` name or a loopback address is `421`: a name of your own that points at this machine goes in `allowed_hosts` (`allowed_hosts = { "myapp.test" }`).
 - `setup()` refuses a flag that is not `true` or `false` (`open_on_start = "no"` once opened the browser), a `live_reload` or `directory_listing` that is neither a table nor a boolean, and an `auto_start` that is neither a table nor `false`, naming the key and keeping the options it had.
 - `auto_start.filetypes` takes filetype names alone: `"*"`, which armed every filetype, is refused, as are an empty string, a comma, a brace or a line break; list the filetypes you want (`{ "html", "css" }`).

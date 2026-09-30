@@ -26,7 +26,7 @@ The config is `.stylua.toml`. The one-time format commit is listed in `.git-blam
 
 ## Commits
 
-The log's subjects name the area a commit touches and what now holds (`server: a /__live/ name that is no route is 404`), in at most 72 characters; the body, wrapped at 72 columns, says why. A commit names its author alone. No tool checks a commit's subject or wrapping; a pull request's title, which becomes the squash commit's subject, is checked for length below.
+A subject names the area a commit touches and what now holds (`server: a /__live/ name that is no route is 404`), in at most 72 characters; the body, wrapped at 72 columns, says why. A commit names its author alone. No tool checks a commit's subject or wrapping; a pull request's title, which becomes the squash commit's subject, is checked for length below.
 
 `.githooks/message-policy` checks three rules and refuses a message that carries any of:
 

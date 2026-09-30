@@ -137,14 +137,15 @@ gates `/__live/asset` too.
     them it answers only `localhost`, a `*.localhost` name and a loopback
     address, and any other Host gets `421 Misdirected Request`, which
     keeps out a page that reaches the port through DNS rebinding. Each
-    entry is a bare host name, with no port, brackets or wildcard; a start
-    refuses any other. `true` turns the check off, with a warning at each
-    start. A network bind (`0.0.0.0`, a LAN address) has no Host check.
+    entry is a host name or an IPv6 address without brackets, with no
+    port or wildcard; a start refuses any other. `true` turns the check
+    off, with a warning at each start on a loopback bind. A network bind
+    (`0.0.0.0`, a LAN address) has no Host check.
 
 `serve_dotfiles` (boolean, default false)
     Serve dot paths: while false, a request whose path, or the file it
     reaches, has a segment starting with `.` (`.env`, `.git/config`,
-    `node_modules/.pnpm`) is 404 and is left out of listings, and a change
+    `.cache/data.json`) is 404 and is left out of listings, and a change
     under one pushes no reload. `/.well-known/` at the root is served
     either way, and so is the file you started on, at `/`.
 
@@ -197,7 +198,8 @@ gates `/__live/asset` too.
     Fields:
     - `filetypes` (string[]): filetype names to trigger on, each made of
       letters, digits, `_`, `.`, `+` and `-`; `"*"`, an empty string or a
-      comma is refused.
+      comma is refused. A later `filetypes` list replaces the earlier one
+      whole, and a later call that names none keeps it.
     - `port` (number, optional): Port to use. Falls back to `default_port`.
 
 `live_reload` (table|boolean, default the fields below)
