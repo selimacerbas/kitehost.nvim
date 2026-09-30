@@ -9,8 +9,10 @@
 -- a preflight or any other method included (Section 8). Of the directory
 -- behind /__live/: a listing names nothing in it (Section 9), an index
 -- that resolves into it is not its directory's (Section 10), its name is
--- matched in any letter case (Section 11), and the rule reaches the
--- root's own entry alone, the started-on file served at / (Section 12).
+-- matched in any letter case (Section 11), the rule reaches the root's
+-- own entry alone, the started-on file served at / (Section 12), and a
+-- link so named at the root is refused whatever it resolves to (Section
+-- 13).
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -814,6 +816,52 @@ H.case("Section 12: the rule reaches the root's own __live entry alone", functio
         ("the asset route serves __live/pic.png under asset_root with the token (got %d)"):format(r.status)
     )
     eq(raw(inst.port, get("/__live/asset?p=__live/pic.png", inst.port)).status, 401, "and wants the token for it")
+end)
+
+-- A link named __Live at the root was read by the name it resolves to, so
+-- one pointing at an ordinary directory of the root served that
+-- directory's files under the reserved name, with the root route's
+-- origin line. The request's first segment is read in any case too, so
+-- the entry is refused whatever it resolves to; the directory it points
+-- at is served by its own name.
+H.case("Section 13: a link named __live at the root is refused whatever it resolves to", function()
+    local outside = H.tmpdir()
+    H.write_file(outside .. "/x.txt", "OUTSIDE")
+    for _, c in ipairs({ { "an ordinary directory of the root", "real" }, { "a directory outside the root" } }) do
+        local site = H.tmpdir()
+        vim.fn.mkdir(site .. "/real", "p")
+        H.write_file(site .. "/real/x.txt", "INROOT")
+        H.write_file(site .. "/plain.txt", "plain")
+        local target = c[2] and (site .. "/" .. c[2]) or outside
+        local made, made_err = uv.fs_symlink(target, site .. "/__Live", { dir = true, junction = true })
+        local inst = serve({ root = site, cors = true, features = { dirlist = { enabled = true } } })
+        if made and uv.fs_stat(site .. "/__Live") then
+            for _, path in ipairs({ "/__Live/x.txt", "/__LIVE/x.txt", "/__live/x.txt", "/__Live/", "/__Live" }) do
+                local r = raw(inst.port, get(path, inst.port))
+                local label = ("%s through a link to %s"):format(path, c[1])
+                eq(r.status, 404, label .. " is 404")
+                ok(
+                    not r.body:find("INROOT", 1, true) and not r.body:find("OUTSIDE", 1, true),
+                    label .. " serves nothing"
+                )
+                eq(r.headers["access-control-allow-origin"], nil, label .. " carries no ACAO")
+            end
+            local listing = raw(inst.port, get("/", inst.port)).body
+            ok(
+                listing:find('href="/plain.txt"', 1, true) ~= nil and not listing:find("__Live", 1, true),
+                "the root listing names plain.txt and not the link to " .. c[1]
+            )
+            if c[2] then
+                local r = raw(inst.port, get("/real/x.txt", inst.port))
+                ok(
+                    r.status == 200 and r.body == "INROOT",
+                    ("the directory the link points at is served by its own name (got %d)"):format(r.status)
+                )
+            end
+        else
+            H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], tostring(made_err)))
+        end
+    end
 end)
 
 H.finish()
