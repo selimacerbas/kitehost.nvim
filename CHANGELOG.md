@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to this project; versions follow SemVer. From `[Unreleased]` on, the format follows Keep a Changelog. The sections below it are the release notes as published on GitHub, with their headings moved one level down and the em dash written as a colon.
+All notable changes to this project; versions follow SemVer, which covers what a configuration and a plugin rely on: the `setup()` options as the README's Options block documents them, the `:LiveServer*` commands, the functions the README's "API (for lua configs)" names and its plugin-author section, while the wording of a notice, the statusline's text and anything these do not name may change in any release. From `[Unreleased]` on, the format follows Keep a Changelog. The sections below it are the release notes as published on GitHub, with their headings moved one level down and the em dash written as a colon.
 
 ## [Unreleased]
 
@@ -15,7 +15,7 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 - `host = "localhost"` binds `127.0.0.1`, and `inst.host` reads `"127.0.0.1"`.
 - Outside Linux, a start on a port another program listens on at the wildcard address, or a wildcard start on one held at the loopback address, raises `EADDRINUSE` as a start on the same address now does everywhere; on macOS it used to share the port with that program.
 - `inst.sse_clients` is internal; read `server.connected_client_count(inst)`.
-- The README's plugin-author section and `:help live-server-server-api` name the server API that SemVer covers; anything they do not name may change in any release.
+- The README's plugin-author section and `:help live-server-server-api` name the server API that SemVer covers; anything of `live_server.server` and `live_server.util` they do not name may change in any release.
 
 ### Added
 

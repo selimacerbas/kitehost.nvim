@@ -260,6 +260,12 @@ API                                             *live-server-api*
 All functions are on the `live_server` module: >lua
     local ls = require("live_server")
 <
+Versions follow SemVer, and the promise covers what a configuration and
+a plugin rely on: the |live-server-options|, the `:LiveServer*`
+commands, the functions below and |live-server-server-api|; a release
+that breaks any of it is a major release, while the wording of a notice,
+the statusline's text and anything these do not name may change in any
+release.
 
 live_server.setup({opts})                       *live_server.setup()*
     Merge {opts} with defaults and apply configuration.
@@ -300,10 +306,11 @@ authors)" section lists it: the calls and what they answer, the `start`
 keys, the two instance fields, the capability flags, the HTTP routes with
 their gating and refusals, and the event framing. A release that breaks
 any of it is a major release.
-Everything else is internal and may change in any release: every other
-field of the instance table (read `server.connected_client_count(inst)`,
-never the event-stream list `sse_clients`) and the wording of a message,
-except the `EADDRINUSE` text below. A minor release may still refuse a
+Everything else in these two modules is internal and may change in any
+release: every other field of the instance table (read
+`server.connected_client_count(inst)`, never the event-stream list
+`sse_clients`) and the wording of a message, except the `EADDRINUSE`
+text below. A minor release may still refuse a
 request the server admits today when refusing it closes a security hole;
 the requests the README lists as admitted stay admitted.
 
