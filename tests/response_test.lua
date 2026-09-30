@@ -549,12 +549,13 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
     -- The directory behind the namespace is reached under other request
     -- spellings too: a case variant on a case-folding volume, a link to a
     -- file in it and a link to it. Each is read by the name the disk gives
-    -- it, as the dot rule reads one. A link that cannot be made, or a
-    -- volume that keeps case, skips its row with the reason.
+    -- it, as the dot rule reads one. The case variant holds on every
+    -- volume: where case is kept it names no file and is 404 all the same.
+    -- A link that cannot be made skips its row with the reason.
     local file_link, file_link_err = uv.fs_symlink("__live/other.txt", site .. "/link.txt")
     local dir_link, dir_link_err = uv.fs_symlink("__live", site .. "/dirlink")
     local resolved = {
-        { "/__LIVE/other.txt", uv.fs_stat(site .. "/__LIVE/other.txt") ~= nil, "this volume keeps case" },
+        { "/__LIVE/other.txt", true },
         { "/link.txt", file_link, "no link: " .. tostring(file_link_err) },
         { "/dirlink/other.txt", dir_link, "no link: " .. tostring(dir_link_err) },
         { "/dirlink/", dir_link, "no link: " .. tostring(dir_link_err) },
@@ -700,6 +701,45 @@ H.case("Section 10: an index that resolves behind /__live/ is not the directory'
         r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("LIVEPAGE", 1, true),
         ("with no other index the directory is listed (got %d)"):format(r.status)
     )
+end)
+
+-- A directory made as __LIVE is the reserved one on a case-folding
+-- volume, where it and __live are one directory, and it was served with
+-- the root route's headers. The name on disk is read without regard to
+-- case on every volume, so no detection of how a volume folds is needed;
+-- the request's own spelling stays exact.
+H.case("Section 11: the directory behind /__live/ is matched in any case", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/__LIVE", "p")
+    H.write_file(site .. "/__LIVE/x.txt", "UPPERFILE")
+    H.write_file(site .. "/__LIVE/page.html", "<html><body>LIVEPAGE</body></html>")
+    H.write_file(site .. "/plain.txt", "plain")
+    vim.fn.mkdir(site .. "/solo", "p")
+    local link = site .. "/solo/index.html"
+    local made, made_err = uv.fs_symlink("../__LIVE/page.html", link)
+    local inst = serve({ root = site, cors = true, features = { dirlist = { enabled = true } } })
+    for _, target in ipairs({ "/__LIVE/x.txt", "/__Live/x.txt", "/__live/x.txt", "/__LIVE/" }) do
+        local r = raw(inst.port, get(target, inst.port))
+        eq(r.status, 404, target .. " is 404")
+        ok(not r.body:find("UPPERFILE", 1, true), target .. " never serves the file")
+        eq(r.headers["access-control-allow-origin"], nil, target .. " carries no ACAO")
+    end
+    local listing = raw(inst.port, get("/", inst.port)).body
+    ok(listing:find('href="/plain.txt"', 1, true) ~= nil, "the root listing names plain.txt")
+    ok(not listing:find("__LIVE", 1, true), "and not the __LIVE directory")
+    if made and uv.fs_stat(link) then
+        local r = raw(inst.port, get("/solo/", inst.port))
+        ok(
+            r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("LIVEPAGE", 1, true),
+            ("an index linking into __LIVE/ is not the directory's, which is listed (got %d)"):format(r.status)
+        )
+    else
+        H.skip(
+            "an index linking into __LIVE/ is not the directory's ("
+                .. tostring(made_err or "the link does not resolve")
+                .. ")"
+        )
+    end
 end)
 
 H.finish()

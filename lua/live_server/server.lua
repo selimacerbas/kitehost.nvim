@@ -504,8 +504,12 @@ end
 -- The directory behind the /__live/ namespace, read from a path under the
 -- real root as the disk spells it: a case variant or a link reaches it
 -- under another request spelling, so the request's own is not enough.
+-- The name is read in any case: on a case-folding volume a directory made
+-- as __LIVE is that same directory, and one rule for every volume needs no
+-- measure of how a volume folds.
 local function in_live_dir(rel)
-    return rel == "/__live" or rel:find("^/__live/") ~= nil
+    local first = rel:match("^/([^/]*)")
+    return first ~= nil and first:lower() == "__live"
 end
 
 local function read_file_all(abs_path)
@@ -1150,7 +1154,7 @@ local function dir_listing_html(inst, fs_path, req_path)
         end
         -- A name the dot rule refuses is not shown: show_hidden alone
         -- named .env and .git to anyone the server answers, behind 404s.
-        local shown = (show_all or name:sub(1, 1) ~= ".") and not (at_root and name == "__live")
+        local shown = (show_all or name:sub(1, 1) ~= ".") and not (at_root and in_live_dir("/" .. name))
         -- luv gives no type for an entry a filesystem leaves untyped (XFS
         -- with ftype=0, some NFS and FUSE mounts), so anything not typed as
         -- a file or a directory is judged as a link; a plain entry so judged
