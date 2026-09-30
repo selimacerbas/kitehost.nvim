@@ -1565,6 +1565,57 @@ local function in_credential_dir(path)
     return nil
 end
 
+-- An asset root's real path, or nil, what it is instead and its error's
+-- name: a directory outside every credential directory, whose requests
+-- the deny list would answer 404 one by one. libuv's text repeats the
+-- path raw after the error's name, so the name alone is kept.
+local function asset_dir(path)
+    local real, real_err = uv.fs_realpath(path)
+    local st, st_err = nil, real_err
+    if real then
+        st, st_err = uv.fs_stat(real)
+    end
+    if not (st and st.type == "directory") then
+        return nil, "not a directory", st_err and tostring(st_err):match("^[^:]*")
+    end
+    local keys = in_credential_dir(real)
+    if keys then
+        return nil, ("inside a credential directory (%s)"):format(keys)
+    end
+    return real
+end
+
+-- A function asset_root's answer, held to the rule start holds a string
+-- to, and absolute: a missing directory, a file or another type answered
+-- every request 404 without a word, and a relative path followed the
+-- working directory at each request. The real path, or nil and a warning
+-- once per server naming the answer, marked by warn_once. nil is no root
+-- yet, the caller's to say, and never reaches here.
+local function answered_root(inst, answer)
+    local what, cause
+    if type(answer) ~= "string" then
+        what = "no path"
+    elseif not (answer:find("^[/\\]") or answer:find("^%a:[/\\]")) then
+        what = "a relative path"
+    else
+        local real
+        real, what, cause = asset_dir(answer)
+        if real then
+            return real
+        end
+    end
+    local named = type(answer) == "string" and ('"' .. util.marked(answer, 300) .. '"') or ("a " .. type(answer))
+    warn_once(
+        inst,
+        "asset-root",
+        ("asset_root answered %s, which is %s%s; the asset request was answered 404"):format(
+            named,
+            what,
+            cause and (" (" .. cause .. ")") or ""
+        )
+    )
+end
+
 local function asset_denied(rel)
     if in_credential_dir(rel) then
         return true
@@ -1807,10 +1858,12 @@ local function handle_request(conn, req)
         end
         return send_response(sock, 200, { ["Content-Type"] = "text/plain" }, "ok")
     elseif path_only == "/__live/asset" then
-        local aroot = inst.asset_root
+        -- The list reads the asset root's own path too: a document kept in
+        -- ~/.ssh or ~/.aws would serve the credentials beside it. A string
+        -- was checked at start and is read again, since it may be gone.
+        local aroot, aroot_real = inst.asset_root, nil
         if type(aroot) == "function" then
             local ok_root, res = pcall(aroot)
-            aroot = ok_root and res or nil
             -- A raise read as a root not set, with no word: vim.fn inside
             -- this callback raises on every request.
             if not ok_root then
@@ -1819,12 +1872,11 @@ local function handle_request(conn, req)
                     "asset-root",
                     ("asset_root raised (%s); the asset request was answered 404"):format(raise_line(res))
                 )
+            elseif res ~= nil then
+                aroot_real = answered_root(inst, res)
             end
-        end
-        -- A callback's table or number is no asset root: luv's realpath
-        -- raised on it inside the read callback, and the peer waited.
-        if type(aroot) ~= "string" then
-            aroot = nil
+        elseif aroot then
+            aroot_real = asset_dir(aroot)
         end
         local rel = qparam("p")
         rel = rel and util.url_decode(rel) or ""
@@ -1837,7 +1889,7 @@ local function handle_request(conn, req)
         -- a name at it) outright; realpath containment below handles
         -- '..' traversal.
         if
-            not aroot
+            not aroot_real
             or rel == ""
             or last == ""
             or last == "."
@@ -1850,12 +1902,6 @@ local function handle_request(conn, req)
             return http_404(sock, "/__live/asset")
         end
         if asset_denied(rel) then
-            return http_404(sock, "/__live/asset")
-        end
-        -- The list reads the asset root's own path too: a document kept in
-        -- ~/.ssh or ~/.aws would serve the credentials beside it.
-        local aroot_real = uv.fs_realpath(aroot)
-        if not aroot_real or in_credential_dir(aroot_real) then
             return http_404(sock, "/__live/asset")
         end
         -- Containment and the resolved name come from one realpath: p may be
@@ -2437,27 +2483,14 @@ local function check_start(cfg)
         error("asset_root must be a directory or a function returning one, got " .. type(asset_root), 0)
     end
     if type(asset_root) == "string" then
-        local real, real_err = uv.fs_realpath(asset_root)
-        local is_dir, dir_err = false, real_err
-        if real then
-            is_dir, dir_err = root_directory(real)
-        end
-        -- libuv's text repeats the path raw after the error's name, so the
-        -- name alone is kept beside the escaped copy.
-        if not is_dir then
+        -- Named escaped, beside the error's name (asset_dir). A root inside
+        -- a credential directory had that same silent 404 on every request.
+        local real, what, cause = asset_dir(asset_root)
+        if not real then
             error(
-                ("asset_root is not a directory: %s%s"):format(
-                    vim.inspect(asset_root),
-                    dir_err and (" (" .. tostring(dir_err):match("^[^:]*") .. ")") or ""
-                ),
+                ("asset_root is %s: %s%s"):format(what, vim.inspect(asset_root), cause and (" (" .. cause .. ")") or ""),
                 0
             )
-        end
-        -- Every asset request under a credential directory answers 404,
-        -- which started and served nothing without a word.
-        local keys = in_credential_dir(real)
-        if keys then
-            error(("asset_root is inside a credential directory (%s): %s"):format(keys, vim.inspect(asset_root)), 0)
         end
         asset_root = real
     end

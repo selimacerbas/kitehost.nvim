@@ -10,7 +10,8 @@
 --   - sandboxes the HTML, SVG and XML documents it serves, never the root
 --     route's index (Section 5)
 --   - fixes a string root at start and reads a function per request, a
---     raise warned once (Section 6)
+--     raise or an answer that is no absolute directory outside the
+--     credential directories warned once, nil a silent 404 (Section 6)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -226,13 +227,17 @@ local function asset_server(aroot)
     })
 end
 -- A callback returning a table raised inside the read callback, and the
--- connection was never answered.
+-- connection was never answered. Its warning is Section 6's.
+local section_notify = vim.notify
+vim.notify = function() end
 inst = asset_server(function()
     return {}
 end)
 base = ("http://127.0.0.1:%d"):format(inst.port)
 eq(http_get(base .. "/__live/asset?p=a.png&t=" .. TOKEN).status, 404, "an asset_root callback returning a table is 404")
 server.stop(inst)
+vim.wait(50)
+vim.notify = section_notify
 -- The list read the names below the asset root alone, so a document kept in
 -- ~/.ssh served the keys beside it. A string root there is refused at
 -- start, since every request under it would answer 404 without a word;
@@ -426,28 +431,61 @@ H.ok(
     ("the warning holds the raise's first line, cut to 300 bytes (%d bytes)"):format(#msg)
 )
 server.stop(inst)
--- A callback returning no string is a root not set, and says nothing.
+-- A callback returning nil says there is no root yet: a 404, and no word.
 notes = {}
+inst = asset_server(function() end)
+base = ("http://127.0.0.1:%d"):format(inst.port)
+eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "a callback returning nil is 404")
+server.stop(inst)
+vim.wait(100)
+eq(#notes, 0, "and warns nothing")
+-- Any other answer is held to the string form's rule, an absolute path
+-- naming a directory outside every credential directory: a missing
+-- directory, a file or another type answered every request 404 without
+-- a word, and a relative path followed the working directory at each
+-- request (the cwd here makes "src" name the asset tree). Each is 404
+-- and warns once per server, naming the answer marked.
+vim.fn.mkdir(tmpdir .. "/.git/imgs", "p")
+write_file(tmpdir .. "/.git/imgs/pic.png", "PNGDATA")
 for _, c in ipairs({
-    { "nil", function() end },
+    { "a relative path", "src", '"src", which is a relative path' },
+    { "a missing directory", tmpdir .. "/missing", ('"%s/missing", which is not a directory (ENOENT)'):format(tmpdir) },
+    { "a file", tmpdir .. "/secret.txt", ('"%s/secret.txt", which is not a directory'):format(tmpdir) },
     {
-        "a number",
-        function()
-            return 42
-        end,
+        "a credential directory",
+        tmpdir .. "/.git/imgs",
+        ('"%s/.git/imgs", which is inside a credential directory (.git)'):format(tmpdir),
     },
+    { "a number", 42, "a number, which is no path" },
+    { "a table", {}, "a table, which is no path" },
+    { "a name with controls", "sr\27[2Jc", '"sr?[2Jc", which is a relative path' },
 }) do
-    inst = asset_server(c[2])
+    notes = {}
+    local answer = c[2]
+    inst = asset_server(function()
+        return answer
+    end)
     base = ("http://127.0.0.1:%d"):format(inst.port)
-    eq(
-        http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status,
-        404,
-        "a callback returning " .. c[1] .. " is 404"
+    assert(uv.chdir(tmpdir))
+    local first = http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN)
+    local second = http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN)
+    assert(uv.chdir(cwd))
+    eq(first.status, 404, "a callback answering " .. c[1] .. " is 404")
+    eq(second.status, 404, "and 404 again")
+    H.wait_for(function()
+        return #notes >= 1
+    end, 1000)
+    vim.wait(100)
+    local want = ("live-server: port %d asset_root answered %s; the asset request was answered 404"):format(
+        inst.port,
+        c[3]
+    )
+    H.ok(
+        #notes == 1 and notes[1].msg == want and notes[1].level == vim.log.levels.WARN,
+        ("and warns once, naming the answer: %s"):format(vim.inspect(notes, { newline = " ", indent = "" }))
     )
     server.stop(inst)
 end
-vim.wait(100)
-eq(#notes, 0, "and a callback that returns no string warns nothing")
 vim.notify = real_notify
 
 H.finish()
