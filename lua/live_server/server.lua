@@ -2409,9 +2409,13 @@ local function check_start(cfg)
     end
     -- libuv binds an IP literal alone, so a name, an empty string or a
     -- bracketed literal met no check here and was refused by the
-    -- bind as an invalid address, naming no option. A zone (fe80::1%en0)
-    -- is bound as given; "localhost" is read as 127.0.0.1 below.
-    if host ~= nil and host ~= "localhost" and not (is_ipv4(host) or is_ipv6(host:match("^(.-)%%.") or host)) then
+    -- bind as an invalid address, naming no option. An IPv6 address may
+    -- carry a zone (fe80::1%en0), an interface name: letters, digits, ".",
+    -- "_" and "-". Any other zone (a second %, a control byte, a space)
+    -- reached the bind, which dropped a zone it could not read without a
+    -- word. "localhost" is read as 127.0.0.1 below.
+    local address = host and (host:match("^(.-)%%[%w._-]+$") or host)
+    if host ~= nil and host ~= "localhost" and not (is_ipv4(host) or is_ipv6(address)) then
         error(('host must be an IP address or "localhost", got %s'):format(vim.inspect(host)), 0)
     end
     local allowed = cfg.allowed_hosts

@@ -393,6 +393,24 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             server.stop(res)
         end
         ok(started, ("host = %s starts: %s"):format(vim.inspect(host), started and "" or tostring(res)))
+        -- The address as bound, the zone left out.
+        if started and host:find("%", 1, true) then
+            eq(res.host, "::1", ("host = %s reports the address it bound"):format(vim.inspect(host)))
+        end
+    end
+    -- A zone is an interface name: the check read only the text before
+    -- the first %, so a second %, a control byte or a space reached the
+    -- bind, which dropped a zone it could not read without a word.
+    for _, host in ipairs({ "::1%a%b", "::1%%", "::1%\n", "::1%\27[2J", "::1% lo0", "::1%lo0 ", "127.0.0.1%lo0" }) do
+        local started, res = pcall(server.start, { port = 0, root = root, host = host })
+        if started then
+            server.stop(res)
+        end
+        eq(
+            not started and tostring(res) or "started",
+            ('host must be an IP address or "localhost", got %s'):format(vim.inspect(host)),
+            ("host = %s is refused, naming host"):format(vim.inspect(host))
+        )
     end
     -- libuv's own text repeats the path raw, a control byte included, so
     -- the refusal names it once, escaped, and keeps the error's name.
