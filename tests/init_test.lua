@@ -311,6 +311,32 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
             tostring(raised[1])
         )
     )
+    -- notify = false silenced the refusal too, so a start on a taken port
+    -- failed without a word; it silences the notices that report success.
+    local held = assert(vim.uv.new_tcp())
+    H.defer(function()
+        held:close()
+    end)
+    assert(held:bind("127.0.0.1", 0))
+    assert(held:listen(1, function() end))
+    local held_port = assert(held:getsockname()).port
+    H.defer(function()
+        picked_port = 0
+    end)
+    picked_port = held_port
+    note = refused_with({ notify = false })
+    picked_port = 0
+    ok(
+        raised[1] ~= nil and note.msg == "LiveServer did not start: " .. raised[1],
+        ("with notify = false a start on a taken port still says it did not start: %s (raised %s)"):format(
+            tostring(note.msg),
+            tostring(raised[1])
+        )
+    )
+    eq(note.level, vim.log.levels.ERROR, "as an error")
+    note = refused_with({ notify = false })
+    eq(raised[1], nil, "a start on a free port with notify = false starts")
+    eq(#notes, 0, "and says nothing: " .. vim.inspect(notes, { newline = " ", indent = "" }))
 end)
 
 -- A section given as a boolean replaced the table every start reads its

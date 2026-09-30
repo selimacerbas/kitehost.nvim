@@ -13,11 +13,15 @@ end
 local uv = vim.uv
 local U = {}
 
+-- notify = false silences what reports success; a warning or an error is
+-- shown whatever it says, since a start refused on a taken port otherwise
+-- failed without a word.
 function U.notify(msg, opts, level)
-    if opts and opts.notify == false then
+    local lvl = (level and vim.log.levels[level]) or vim.log.levels.INFO
+    if opts and opts.notify == false and lvl < vim.log.levels.WARN then
         return
     end
-    vim.notify(msg, (level and vim.log.levels[level]) or vim.log.levels.INFO, { title = "live-server.nvim" })
+    vim.notify(msg, lvl, { title = "live-server.nvim" })
 end
 
 function U.joinpath(...)
