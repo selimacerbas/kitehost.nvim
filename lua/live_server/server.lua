@@ -2556,6 +2556,12 @@ local function check_start(cfg)
     end
     local headers, spelled = {}, {}
     for k, v in pairs(cfg_headers) do
+        -- Before the refusal below, which repeats the name raw.
+        for _, s in ipairs({ k, v }) do
+            if type(s) == "string" then
+                no_nul("headers", s)
+            end
+        end
         if
             type(k) ~= "string"
             or not k:find("^" .. TCHAR .. "+$")

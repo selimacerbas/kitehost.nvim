@@ -158,7 +158,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         -- RFC 9110 5.5: a value holds visible characters, spaces and tabs. A
         -- NUL started the server, and then Chromium (ERR_INVALID_HTTP_RESPONSE)
         -- and curl refused every response that carried it.
-        { "headers", { ["X-Custom"] = "a\0b" }, "headers: a name must be a token and a value a line: X-Custom" },
+        { "headers", { ["X-Custom"] = "a\0b" }, "headers holds a NUL byte" },
         { "headers", { ["X-Custom"] = "a\1b" }, "headers: a name must be a token and a value a line: X-Custom" },
         { "headers", { ["X-Custom"] = "a\127b" }, "headers: a name must be a token and a value a line: X-Custom" },
         -- Two spellings of one name went out as two lines, which a cache
@@ -308,7 +308,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "asset_root", root .. "\0junk", "asset_root holds a NUL byte" },
         { "index_names", { "index.html\0junk" }, "index_names entry holds a NUL byte" },
         { "protected_paths", { "^/content%.md\0" }, "protected_paths pattern holds a NUL byte" },
-        { "headers", { ["X-A\0B"] = "1" }, "headers: a name must be a token and a value a line" },
+        { "headers", { ["X-A\0B"] = "1" }, "headers holds a NUL byte" },
         -- A key start does not read was dropped without a word, so a
         -- misspelled token or protected_paths started with nothing gated.
         { "tokn", "abc", "start does not read the key tokn" },
