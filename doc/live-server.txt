@@ -218,9 +218,9 @@ gates `/__live/asset` too.
 `live_reload.enabled` (boolean, default true)
     Watch files under the served root and push SSE reload events. A
     change under a dot path pushes none unless `serve_dotfiles` is set,
-    nor does one under an entry named `__live` at the root, the file you
-    started on excepted, and |live-server-liveignore| patterns match the
-    path relative to the root.
+    nor does one under an entry named `__live` at the root in any letter
+    case, the file you started on excepted, and |live-server-liveignore|
+    patterns match the path relative to the root.
 
 `live_reload.inject_script` (boolean, default true)
     Inject `<script src="/__live/script.js">` into HTML a browser navigates

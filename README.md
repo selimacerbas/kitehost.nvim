@@ -104,7 +104,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
   serve_dotfiles   = false,          -- serve .env, .git/ and other dot paths (default: 404; `/.well-known/` at the root is served)
   open_on_start    = true,           -- open browser after start/retarget
   notify           = true,           -- informational notices (start, retarget, stop, reload toggle); warnings and errors always show
-  notify_on_reload = false,          -- notify on every live-reload event, its own switch: notify = false leaves it on
+  notify_on_reload = false,          -- notify on every live-reload event, its own switch, which notify = false leaves as it is
   headers          = { ["Cache-Control"] = "no-cache" }, -- extra response headers
   cors             = false,          -- true/"*", an origin string, or a list of origins; the root route only, never /__live/*
   index_names      = { "index.html", "index.htm" }, -- index files to try in order
@@ -135,7 +135,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 ### CSS hot-inject
 
 When `css_inject` is enabled (default), editing a `.css` file triggers an instant stylesheet swap in the browser: no full page reload, no DOM state lost. All other file changes still trigger a full reload.
-A change under a dot path (`.env`, `.git/`) pushes no reload unless `serve_dotfiles` is set, nor does one under an entry named `__live` at the root, the file you started on excepted, and `.liveignore` patterns match the path relative to the served root.
+A change under a dot path (`.env`, `.git/`) pushes no reload unless `serve_dotfiles` is set, nor does one under an entry named `__live` at the root in any letter case, the file you started on excepted, and `.liveignore` patterns match the path relative to the served root.
 
 ### Auto-start
 
@@ -303,7 +303,7 @@ Each key takes the values below, and `start` refuses any other, naming the key:
 | --- | --- | --- | --- |
 | `root` | a path | required | a path that does not resolve or is not a directory |
 | `port` | an integer from 0 to 65535 | required | a fraction, a number out of range, a numeric string |
-| `host` | an IP address (IPv6 without brackets, a `%zone` after it allowed) or `"localhost"` | `"127.0.0.1"` | a name, `""`, `"[::1]"`, `"LOCALHOST"`, `"::1%"` |
+| `host` | an IP address (IPv6 without brackets, a `%zone` after it allowed) or `"localhost"` | `"127.0.0.1"` | a name, `""`, `"[::1]"`, `"LOCALHOST"`, `"::1%"`, a dotted quad with a leading zero (`"127.000.0.1"`) |
 | `default_index` | a path | none | |
 | `index_names` | a list of file names | `{ "index.html", "index.htm" }` | a map, an empty name, a name holding `/` or `\`, `.`, `..` |
 | `headers` | a map of names to strings | `{}` | `false`, a name that is no token, a value holding a control byte but a tab, `Content-Type`, `Content-Length`, `Transfer-Encoding`, `Connection`, one name spelled two ways |
@@ -311,7 +311,7 @@ Each key takes the values below, and `start` refuses any other, naming the key:
 | `token` | a non-empty UTF-8 string | none | `""`, `false`, invalid UTF-8 |
 | `protected_paths` | a list of Lua patterns | `{}` | a map, a malformed pattern, a non-empty list without `token` |
 | `asset_root` | a directory, or a function answering one | none | a path that names no directory or lies inside a credential directory (`.git`, `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, in any letter case) |
-| `allowed_hosts` | `true` or a list of host names | none | a map, a list with holes, an empty name, a wildcard, a port, brackets, a spelling no `Host` carries |
+| `allowed_hosts` | `true` or a list of host names | none | `false`, a map, a list with holes, an empty name, a wildcard, a port, brackets, a spelling no `Host` carries |
 | `serve_dotfiles`, `notify_on_reload` | `true` or `false` | `false` | |
 | `header_timeout_ms`, `sse_heartbeat_ms` | milliseconds, an integer from 0 to 2147483647 | 10000, 20000 | a fraction, a number out of range |
 | `max_connections` | an integer at or above 1 | 64 | a fraction, 0, `math.huge` |
@@ -348,7 +348,7 @@ On a stopped server `update_target` returns false without checking that the root
 
 `server.wildcard_loopback(ip)` answers `"127.0.0.1"` for `"0.0.0.0"`, `"::1"` for `"::"` and nil for any other address; a plugin calls it to show the address a wildcard bind's URL names, as this plugin's own URL does. Replacing it is not supported: `start` reads it through the module table, which every plugin in the process shares, so one plugin's replacement would move every other plugin's probe and URL.
 
-Outside the promise, for a person reading the notices: their text and how often they repeat may change in any release. A server tells the user of a fault through `vim.notify`, each line starting `live-server: port <n>`, and shows a control byte, a C1 code or a bidi control from a path or a name as `?`. A warning is sent once per server for each kind: a listener that stopped accepting connections, a connection it could not serve, a connection it could not read, a reload it could not schedule or cancel, a root it could not watch (sent again after a watcher starts), a directory under the root it could not watch (sent once per watch start that misses one, on the per-directory watcher Linux uses), a `.liveignore` it ignores (sent again after `update_target` moves to a new root), a `protected_paths` pattern it could not read, and an `asset_root` function that raised (its first line, at most 300 bytes) or answered what it may not serve from (the answer, at most 300 bytes), one kind for the two, the request answered 404 either way. A loopback bind started with `allowed_hosts = true` warns that the Host check is off. A request whose handling raised is answered with a 500 (or its connection closed, when the response had begun) and an error notice naming the path and the cause, once per such request. With `notify_on_reload`, each reload is a notice of its own (`live-server: port <n> reload → <path>`).
+Outside the promise, for a person reading the notices: their text and how often they repeat may change in any release. A server tells the user of a fault through `vim.notify`, each line starting `live-server: port <n>`, and shows a control byte, a C1 code or a bidi control from a path or a name as `?`. A warning is sent once per server for each kind: a listener that stopped accepting connections, a connection it could not serve, a connection it could not read, a reload it could not schedule or cancel, a root it could not watch (sent again after a watcher starts), a directory under the root it could not watch (sent once per watch start that misses one, on the per-directory watcher Linux uses), a `.liveignore` it ignores (sent again after `update_target` moves to a new root), a `protected_paths` pattern it could not read, and an `asset_root` function that raised (its first line, at most 300 bytes) or answered what it may not serve from (the answer or its type, at most 300 bytes), one kind for the two, the request answered 404 either way. A loopback bind started with `allowed_hosts = true` warns that the Host check is off. A request whose handling raised is answered with a 500 (or its connection closed, when the response had begun) and an error notice naming the path and the cause, once per such request. With `notify_on_reload`, each reload is a notice of its own (`live-server: port <n> reload → <path>`).
 
 `server.features` holds the flags a plugin checks before it relies on a capability: `token_auth` (the `token` option and the gated routes), `host_binding` (the `host` option), `asset_route` (`asset_root` and `/__live/asset`), `host_check` (a loopback bind answers only loopback Host names and the `allowed_hosts` names, 421 otherwise), `cors_list` (`cors` takes a list of origins; an install without it reads a list as `"*"`) and `start_raises` (`start` raises at level 0 when it cannot serve).
 
