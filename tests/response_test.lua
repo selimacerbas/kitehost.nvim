@@ -754,4 +754,44 @@ H.case("Section 11: the directory behind /__live/ is matched in any case", funct
     end
 end)
 
+-- The rule holds the root's own __live entry alone, and each edge of it
+-- is a promise: the file the server was started on is served at / though
+-- it sits there, a directory so named below the root is an ordinary one,
+-- listed and served, and the asset route serves one under asset_root.
+H.case("Section 12: the rule reaches the root's own __live entry alone", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/__live", "p")
+    H.write_file(site .. "/__live/page.html", "<html><body>LIVEPAGE</body></html>")
+    vim.fn.mkdir(site .. "/sub/__live", "p")
+    H.write_file(site .. "/sub/__live/x.txt", "NESTED")
+    vim.fn.mkdir(site .. "/assets/__live", "p")
+    H.write_file(site .. "/assets/__live/pic.png", "PNGDATA")
+    local inst = serve({
+        root = site,
+        token = "tok",
+        default_index = site .. "/__live/page.html",
+        asset_root = site .. "/assets",
+        features = { dirlist = { enabled = true } },
+    })
+    local r = raw(inst.port, get("/", inst.port))
+    ok(
+        r.status == 200 and r.body:find("LIVEPAGE", 1, true) ~= nil,
+        ("the started-on file in <root>/__live/ is served at / (got %d)"):format(r.status)
+    )
+    eq(raw(inst.port, get("/__live/page.html", inst.port)).status, 404, "and at its own name it is 404")
+    r = raw(inst.port, get("/sub/__live/x.txt", inst.port))
+    ok(r.status == 200 and r.body == "NESTED", ("<root>/sub/__live/x.txt is served (got %d)"):format(r.status))
+    r = raw(inst.port, get("/sub/", inst.port))
+    ok(
+        r.status == 200 and r.body:find('href="/sub/__live/"', 1, true) ~= nil,
+        ("and the listing of /sub/ names its __live directory (got %d)"):format(r.status)
+    )
+    r = raw(inst.port, get("/__live/asset?p=__live/pic.png&t=tok", inst.port))
+    ok(
+        r.status == 200 and r.body == "PNGDATA",
+        ("the asset route serves __live/pic.png under asset_root with the token (got %d)"):format(r.status)
+    )
+    eq(raw(inst.port, get("/__live/asset?p=__live/pic.png", inst.port)).status, 401, "and wants the token for it")
+end)
+
 H.finish()
