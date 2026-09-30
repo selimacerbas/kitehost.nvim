@@ -692,6 +692,7 @@ else
     vim.fn.mkdir(plain_ls .. "/lua/live_server", "p")
     H.write_file(plain_ls .. "/lua/live_server/server.lua", "return {}\n")
     H.write_file(plain_ls .. "/lua/live_server/util.lua", "return {}\n")
+    H.write_file(plain_ls .. "/lua/live_server/floor.lua", "return {}\n")
     -- A brace group with a comma makes building the search path raise E220
     -- here (measured), which the refusal names in place of a raw traceback.
     -- The hosted Windows runner drops the entry instead, a glob that matches
