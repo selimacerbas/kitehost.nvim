@@ -3130,6 +3130,14 @@ function S.update_target(inst, new_root, new_index)
     if new_index ~= nil and type(new_index) ~= "string" then
         error(("update_target: index is not a string (%s)"):format(type(new_index)), 2)
     end
+    -- libuv cut a path at a NUL: a root retargeted to the part before it,
+    -- and an index named another file. The value is left out, as start's
+    -- refusal of a NUL leaves it out.
+    for _, arg in ipairs({ { "root", new_root }, { "index", new_index } }) do
+        if arg[2] and arg[2]:find("%z") then
+            error(("update_target: %s holds a NUL byte"):format(arg[1]), 2)
+        end
+    end
     if inst.handle:is_closing() then
         return false
     end

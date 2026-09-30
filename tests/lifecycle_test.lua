@@ -1858,6 +1858,13 @@ io.stdout:write(vim.json.encode({ moved = moved, res = tostring(res) }))
     ok(got, "a table index raises at the caller: " .. err)
     got, err = refused("update_target: index is not a string (boolean)", root, true)
     ok(got, "a boolean index raises at the caller: " .. err)
+    -- libuv reads a path as a C string and cut it at a NUL: a root so
+    -- spelled retargeted to the part before it, and an index named
+    -- another file than the one written.
+    got, err = refused("update_target: root holds a NUL byte", root .. "\0/elsewhere", nil)
+    ok(got, "a root holding a NUL raises at the caller: " .. err)
+    got, err = refused("update_target: index holds a NUL byte", root, root .. "/hello.txt\0.html")
+    ok(got, "an index holding a NUL raises at the caller: " .. err)
     ok(
         inst.root == was_root and inst.root_real == was_real and inst.default_index == was_index,
         "and none of them changes the target"
