@@ -378,10 +378,10 @@ and refusals, and the event framing are the README's list.
 
 A plugin that sends its own HTTP to the server sends a Host the server
 can read: every bind answers 400 to a Host that is no host. An IPv6
-host goes in brackets before its port, `Host: [::1]:8421`; the
-unbracketed `Host: ::1:8421`, which a client builds by formatting
-`"%s:%d"` with `host = "::1"`, cannot be split into host and port and
-is 400.
+host always goes in brackets, with a port or without one:
+`Host: [::1]:8421` or `Host: [::1]`. The unbracketed `Host: ::1:8421`,
+which a client builds by formatting `"%s:%d"` with `host = "::1"`,
+cannot be split into host and port and is 400, and so is `Host: ::1`.
 
 ===============================================================================
 KEYMAPS                                         *live-server-keymaps*

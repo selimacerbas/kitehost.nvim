@@ -27,10 +27,14 @@ H.write_file(work .. "/doc/pic.png", "PNGDATA")
 H.write_file(work .. "/doc/sub/pic.png", "PNGSUB")
 
 -- Opens an event stream as a page or a back channel does and reads its
--- preamble; the client stays open for the rows that follow.
-local function open_stream(port, target, extra)
-    local c = assert(H.raw_connect(port))
-    assert(c:send(("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(target, port, extra or "")))
+-- preamble; the client stays open for the rows that follow. host is the
+-- address it connects to, 127.0.0.1 by default, and its Host line spells an
+-- IPv6 one in brackets.
+local function open_stream(port, target, extra, host)
+    host = host or "127.0.0.1"
+    local shown = host:find(":", 1, true) and ("[" .. host .. "]") or host
+    local c = assert(H.raw_connect(port, host))
+    assert(c:send(("GET %s HTTP/1.1\r\nHost: %s:%d\r\n%s\r\n"):format(target, shown, port, extra or "")))
     local head = c:read(2000, function(d)
         return d:find("retry: 1000\n\n", 1, true) ~= nil
     end)
@@ -279,11 +283,13 @@ end)
 
 H.case("Section 5: gh-markdown-preview's back channel on host = '::1'", function()
     local probe = assert(vim.uv.new_tcp())
-    local v6 = probe:bind("::1", 0)
+    local v6, v6_err = probe:bind("::1", 0)
     probe:close()
     if not v6 then
-        H.skip("gh-markdown-preview's unbracketed ::1 Host is 400 (no IPv6 loopback here)")
-        H.skip("its request with the host bracketed opens the stream (no IPv6 loopback here)")
+        H.skip("gh-markdown-preview's unbracketed ::1 Host is 400 (no IPv6 loopback here: " .. tostring(v6_err) .. ")")
+        H.skip(
+            "its request with the host bracketed opens the stream (no IPv6 loopback here: " .. tostring(v6_err) .. ")"
+        )
         return
     end
     local inst = server.start({
@@ -300,25 +306,16 @@ H.case("Section 5: gh-markdown-preview's back channel on host = '::1'", function
     local port = inst.port
     -- The back channel's request as preview.lua:188 formats it: host and
     -- port as configured, so an IPv6 host goes out unbracketed.
-    local request =
-        "GET /__live/events HTTP/1.1\r\nHost: %s:%d\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+    local fields = "Accept: text/event-stream\r\nConnection: keep-alive\r\n"
     local c = assert(H.raw_connect(port, "::1"))
-    assert(c:send(request:format("::1", port)))
-    local r = H.responses(c:read(2000) or "")[1]
+    assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: %s:%d\r\n%s\r\n"):format("::1", port, fields)))
+    local r = H.responses(c:read(2000))[1]
     c:close()
     eq(r and r.status, 400, "its Host ::1:<port> is no host, so it is 400")
-    c = assert(H.raw_connect(port, "::1"))
-    assert(c:send(request:format("[::1]", port)))
-    local head = c:read(2000, function(d)
-        return d:find("retry: 1000\n\n", 1, true) ~= nil
-    end)
-    c:close()
-    r = H.responses(head)[1]
-    eq(
-        r and r.headers["content-type"],
-        "text/event-stream",
-        "the same request with the host bracketed opens the stream"
-    )
+    local back, head = open_stream(port, "/__live/events", fields, "::1")
+    back:close()
+    eq(head.status, 200, "the same request with the host bracketed is answered 200")
+    eq(head.headers["content-type"], "text/event-stream", "the same request with the host bracketed opens the stream")
 end)
 
 H.finish()
