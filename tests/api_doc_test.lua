@@ -10,7 +10,10 @@
 --   promises. A route built by concatenation is no literal Section 6
 --   reads, and an option start reads under a configuration none of
 --   Section 4's gives is not recorded; a nested key is matched as a
---   whole name on its top-level key's line.
+--   whole name inside its own section's braces on its top-level key's
+--   line. Section 4's table rows: the start-key table names each key
+--   Section 4 records, once, and no other; what a row says of the
+--   values is read, not checked.
 -- Sections 7 and 8: every setup() option, and each field of a section,
 --   is in the README's Options block and has an entry in :help's
 --   options. The keys come from the defaults table and every M.opts.<key>
@@ -22,25 +25,29 @@
 --   tables (opts, state) are the module's state and are not read.
 -- Section 10: :help's server API names the surface the README does, and
 --   SECURITY.md states the Host check the code holds.
--- Section 11: each SECURITY.md claim a request can check is checked
---   beside a phrase of its sentence: the asset route's reach, list and
---   sandbox, the root route's script, the listing, a headers origin line,
---   no origin line on /__live/ while other Access-Control headers reach
---   it, a rebound page with the Host check off, /.well-known/, the
---   started-on dot file, the reserved __live entry, a pattern's spelling
---   and a hard link. A claim about what a program, a browser or a DNS
---   server does later (the start probe, a file swapped between the check
---   and the open, an allowed_hosts name's records, the opener's
---   arguments, the history) or about the editor (auto_start moving the
---   root) has no row.
+-- Section 11: these SECURITY.md claims are checked by a request beside a
+--   phrase of their sentence: the asset route's reach, list and sandbox,
+--   the root route sending no sandbox, the listing naming a gated file, a
+--   headers origin line on the root route, no origin line on the event
+--   stream or an asset, another Access-Control header on an asset and a
+--   served file and not on the client or a 404, a rebound page with the
+--   Host check off, /.well-known/, strict-origin replacing a weaker
+--   policy, the started-on dot file, the reserved __live entry, a
+--   pattern's spelling and a hard link. The other clauses are read, not
+--   checked: that header on a listing or the event stream, a kept
+--   no-referrer, the inject endpoint's rules, what a cors list admits,
+--   what a program, a browser or a DNS server does later (the start
+--   probe, a file swapped between the check and the open, an
+--   allowed_hosts name's records, the opener's arguments, the history)
+--   and what the editor does (auto_start moving the root).
 -- Section 12: the README's request order, where a request can check it:
---   the 400 for a method, a header name and a value, and the namespace's
---   404 before the method check. The order of the other checks is read,
---   not checked.
--- Sections 10 to 12 hold phrase rows, labelled "... states ..." or "the
---   README states ...", beside rows that check the server: a reworded
---   claim reds a phrase row, a reversed one that keeps the phrase does
---   not.
+--   the 400 for a first byte, a method, a header name and a value, and
+--   the namespace's 404 before the method check. The order of the other
+--   checks is read, not checked.
+-- Sections 10 to 12 hold phrase rows, labelled ":help says", ":help
+--   names the", "SECURITY.md states" or "the README states", beside rows
+--   that check the server: a reworded claim reds a phrase row, a reversed
+--   one that keeps the phrase does not.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
 
@@ -146,6 +153,29 @@ local function names_only(t)
     return true
 end
 
+-- The text after `<name> = ` at the top level of a table's inside, or nil:
+-- a field inside a nested pair of braces is another table's, so
+-- features.dirlist's enabled does not name a features.enabled.
+local function field_value(inside, name)
+    local depth = 0
+    for i = 1, #inside do
+        local c = inside:sub(i, i)
+        if c == "{" then
+            depth = depth + 1
+        elseif c == "}" then
+            depth = depth - 1
+        elseif depth == 0 then
+            local _, stop = inside:find("^%f[%w_]" .. vim.pesc(name) .. " = ", i)
+            if stop then
+                return inside:sub(stop + 1)
+            end
+        end
+    end
+end
+
+-- Every key Section 4 records, for the start-key table's rows below.
+local start_keys = {}
+
 H.case("Section 4: every option start reads is documented", function()
     local root, assets = H.tmpdir(), H.tmpdir()
     H.write_file(root .. "/page.html", "PAGE")
@@ -213,15 +243,37 @@ H.case("Section 4: every option start reads is documented", function()
     local keys = sorted_keys(read)
     ok(#keys > 0, "start reads its options through the table given")
     for _, key in ipairs(keys) do
+        start_keys[key] = true
         -- A nested key is named on its top-level key's line of the example,
-        -- as a whole name: inject_script and css_inject do not name inject.
+        -- as a whole name inside its own section's braces: inject_script
+        -- and css_inject do not name inject, nor dirlist's enabled a
+        -- features.enabled.
         local parts = vim.split(key, ".", { plain = true })
-        local line = section:match("\n  " .. vim.pesc(parts[1]) .. " = [^\n]*")
-        local named = line ~= nil
+        local value = section:match("\n  " .. vim.pesc(parts[1]) .. " = ([^\n]*)")
         for i = 2, #parts do
-            named = named and line:find("%f[%w_]" .. vim.pesc(parts[i]) .. " = ") ~= nil
+            local braced = value and value:match("^%b{}")
+            value = braced and field_value(braced:sub(2, -2), parts[i])
         end
-        ok(named, ("start's %s is documented"):format(key))
+        ok(value ~= nil, ("start's %s is documented"):format(key))
+    end
+end)
+
+-- The table states each start key's values and refusals, so it names the
+-- keys Section 4 records, each once, and no other.
+H.case("Section 4, the table: the start-key table has a row for each key start reads", function()
+    local tbl = section:match("\nEach key takes the values below[^\n]*\n\n(.-)\n\n") or ""
+    ok(tbl ~= "", "the section has the start-key table")
+    local rows = {}
+    for line in (tbl .. "\n"):gmatch("([^\n]*)\n") do
+        local cell = line:match("^| ([^|]+) |")
+        for key in (cell or ""):gmatch("`([^`]+)`") do
+            ok(not rows[key], ("the table names %s once"):format(key))
+            rows[key] = true
+            ok(start_keys[key], ("the table's %s is a key start reads"):format(key))
+        end
+    end
+    for _, key in ipairs(sorted_keys(start_keys)) do
+        ok(rows[key], ("start's %s has a table row"):format(key))
     end
 end)
 
@@ -423,7 +475,7 @@ H.case("Section 10: :help names the same surface, SECURITY.md the Host check", f
         or security:match("\n## What the server exposes\n(.*)$")
         or ""
     ok(exposes ~= "", "SECURITY.md has its exposure section")
-    ok(server.features.host_check == true, "features.host_check is on, as SECURITY.md states")
+    ok(server.features.host_check == true, "features.host_check is on")
     for _, claim in ipairs({
         "421",
         "`*.localhost`",
@@ -691,8 +743,19 @@ H.case("Section 12: the README's request order holds as the server answers", fun
         return data and H.response(data) or { status = 0, headers = {} }
     end
 
-    -- A head the server cannot read is 400 before any route is read.
+    -- A head the server cannot read is 400 before any route is read. A
+    -- first byte that is no upper-case letter is refused as it arrives,
+    -- with no head after it; a method past that byte is read with the head.
+    local early = assert(H.raw_connect(inst.port))
+    assert(early:send("g"))
+    local first = early:read(2000, function(bytes)
+        return bytes:find("\r\n\r\n", 1, true) ~= nil
+    end)
+    early:close()
+    ok(first:find("^HTTP/1%.1 400 ") ~= nil, "a lower-case first byte is 400 before the head arrives")
     ok(send("get /a.txt HTTP/1.1").status == 400, "a lower-case method is 400")
+    says("whose first byte, after any empty lines, is no upper-case letter", "the 400 for a first byte")
+    ok(send("GEt /a.txt HTTP/1.1").status == 400, "a method lower-case past its first letter is 400")
     ok(send("M-SEARCH /a.txt HTTP/1.1").status == 400, "a method holding a hyphen is 400")
     says("a method that is not upper-case letters alone", "the 400 for a method")
     ok(send("GET /a.txt HTTP/1.1", "X-A : 1\r\n").status == 400, "a header name holding a space is 400")
