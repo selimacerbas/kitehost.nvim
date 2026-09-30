@@ -162,14 +162,18 @@ function M.setup(opts)
     if auto ~= nil and auto ~= false and type(auto) ~= "table" then
         error("auto_start must be a table or false", 0)
     end
+    -- Each entry becomes an autocmd pattern, which reads "" as every
+    -- filetype and a comma as two, and refuses a brace or a line break only
+    -- after the options below are replaced and the earlier autocmd cleared,
+    -- so an entry is a filetype name or refused here.
     if type(auto) == "table" and auto.filetypes ~= nil then
         local fts = auto.filetypes
         local listed = type(fts) == "table" and vim.islist(fts)
         for _, ft in ipairs(listed and fts or {}) do
-            listed = listed and type(ft) == "string"
+            listed = listed and type(ft) == "string" and ft:find("^[%w_.+-]+$") ~= nil
         end
         if not listed then
-            error("auto_start.filetypes must be a list of strings", 0)
+            error("auto_start.filetypes must be a list of filetype names", 0)
         end
     end
     M.opts = merged

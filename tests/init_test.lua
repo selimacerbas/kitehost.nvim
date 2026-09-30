@@ -438,9 +438,9 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { 5, "auto_start must be a table or false" },
         { "html", "auto_start must be a table or false" },
         { true, "auto_start must be a table or false" },
-        { { filetypes = 5 }, "auto_start.filetypes must be a list of strings" },
-        { { filetypes = "html" }, "auto_start.filetypes must be a list of strings" },
-        { { filetypes = { 1 } }, "auto_start.filetypes must be a list of strings" },
+        { { filetypes = 5 }, "auto_start.filetypes must be a list of filetype names" },
+        { { filetypes = "html" }, "auto_start.filetypes must be a list of filetype names" },
+        { { filetypes = { 1 } }, "auto_start.filetypes must be a list of filetype names" },
     }) do
         local value = vim.inspect(c[1], { newline = " ", indent = "" })
         package.loaded["live_server"] = nil
@@ -457,6 +457,44 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
             ("and a refused auto_start = %s keeps every option it had"):format(value)
         )
     end
+    -- The autocmd API reads an empty pattern as every filetype and a comma
+    -- as two, and it refused a brace or a line break with a file position
+    -- after the options were replaced and the earlier autocmd cleared.
+    for _, bad in ipairs({ "", "html,css", "{a", "a\nb" }) do
+        local shown = vim.inspect(bad)
+        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+        package.loaded["live_server"] = nil
+        local configured = require("live_server")
+        configured.setup({ notify = false, auto_start = { filetypes = { "keeptestft" } } })
+        local set, err = pcall(configured.setup, {
+            notify = false,
+            default_port = 9002,
+            auto_start = { filetypes = { "html", bad } },
+        })
+        eq(
+            not set and tostring(err) or "setup took it",
+            "auto_start.filetypes must be a list of filetype names",
+            ("setup refuses the filetype %s, naming the option"):format(shown)
+        )
+        eq(configured.opts.default_port, 8000, ("and a refused filetype %s keeps every option it had"):format(shown))
+        local found, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+        ok(
+            found and #cmds == 1 and cmds[1].pattern == "keeptestft",
+            ("and keeps the earlier FileType autocmd: %s"):format(
+                vim.inspect(found and cmds or nil, { newline = " ", indent = "" })
+            )
+        )
+    end
+    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    -- Names Neovim ships with each of these characters are taken.
+    package.loaded["live_server"] = nil
+    local named = require("live_server")
+    local took, took_err = pcall(named.setup, {
+        notify = false,
+        auto_start = { filetypes = { "html", "git-rebase", "sh.bash", "c_2", "x++" } },
+    })
+    ok(took, "letters, digits and _ . + - are taken: " .. tostring(took_err))
+    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
     -- false is off, as for a section, and an empty list starts nothing:
     -- neither arms the FileType autocmd.
     for _, value in ipairs({ false, { filetypes = {} } }) do
