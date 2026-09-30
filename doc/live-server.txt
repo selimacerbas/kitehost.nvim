@@ -108,13 +108,14 @@ Options:
 `host` (string, default `"127.0.0.1"`)
     Bind address, an IP address or `"localhost"`, which binds
     `127.0.0.1`; a start refuses any other string. An IPv6 address may
-    carry a `%zone` of letters, digits, `.`, `_` and `-`; on macOS a
-    zoned link-local bind starts and answers no request, and the opened
-    URL carries no zone. `"0.0.0.0"` serves every file under the root,
-    except a dot path unless `serve_dotfiles` is set and an entry named
-    `__live` at the root in any letter case, and the file you started
-    on, at `/`, to anyone who can reach the port; set `token` there and
-    read SECURITY.md first.
+    carry a `%zone` of letters, digits, `.`, `_` and `-`, not checked
+    against the interfaces; on macOS a zoned link-local bind starts and
+    answers no request, and `inst.host` and the opened URL carry no
+    zone. `"0.0.0.0"` serves every file under the root, except a dot
+    path (unless `serve_dotfiles` is set) and an entry named `__live` at
+    the root in any letter case, and the file you started on, at `/`, to
+    anyone who can reach the port; set `token` there and read SECURITY.md
+    first.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
@@ -353,11 +354,11 @@ release: every other field of the instance table (read
 text below. A minor release may still refuse a
 request the server admits today when refusing it closes a security hole;
 the requests the README lists as admitted stay admitted. A minor release
-may also change how a method other than GET is answered (a `HEAD` among
-them, and the `Allow` field), but for the `cors` preflight's answer,
-which the README's request order states, how a request line naming
-`HTTP/1.2` to `HTTP/1.9` is answered, and the 64 KiB cap on a request
-head.
+may also change how a method other than GET is answered (a `HEAD` and
+the `cors` preflight's answer, which the README's request order states
+as it is today, among them, and the `Allow` field), how a request line
+naming `HTTP/1.2` to `HTTP/1.9` is answered, and the 64 KiB cap on a
+request head.
 
 Below Neovim 0.10 `live_server.server` and `live_server.util` raise on
 every `require`, so a plugin that also runs on an older Neovim loads them
@@ -423,6 +424,11 @@ source. The instance argument is not checked: given nil, or a table
 message naming the module's line rather than the caller's, or returns;
 a stopped instance is taken, and a call on it changes nothing.
 
+A relative `default_index` is joined to the working directory at start,
+and on a running server a relative `update_target` index at the call; a
+path is absolute by the OS's rule, as for the `asset_root` answer, so
+`C:/i.html` and `\i.html` are relative on macOS and Linux.
+
 `update_target` returns true when the server serves the root asked, and
 false with the cause when live reload is on and the new root cannot be
 watched (the root moves and live reload turns off); on a stopped server
@@ -464,16 +470,15 @@ root's `.liveignore` matches. On Linux, where each directory is watched
 on its own, a directory named `node_modules` that is there when the
 watch starts is not watched, nor anything under it, so a change there
 sends no reload; one made later is watched. The README's section holds
-the rest of the
-promise: the `start` keys, which of them are required, what one left
-out means and the values each takes; how `asset_root` is read, as a
-string at start and as a function on every asset request, inside a fast
-event where `vim.fn` and `vim.api` raise, its answer held to the
-string's rule; the order a request is checked in, from the 400 for a
-head the server cannot read to the 404 for a path under `/__live/` that
-is no route; the routes with their token gating and refusals, the asset
-route's deny list and sandbox among them; and the event framing, with
-when a stream that falls behind is dropped.
+the rest of the promise: the `start` keys, which of them are required,
+what one left out means and the values each takes; how `asset_root` is
+read, as a string at start and as a function on every asset request,
+inside a fast event where `vim.fn` and `vim.api` raise, its answer held
+to the string's rule; the order a request is checked in, from the 400
+for a head the server cannot read to the 404 for a path under
+`/__live/` that is no route; the routes with their token gating and
+refusals, the asset route's deny list and sandbox among them; and the
+event framing, with when a stream that falls behind is dropped.
 
 A plugin that sends its own HTTP to the server sends a Host the server
 can read: every bind answers 400 to a Host that is no host. An IPv6
