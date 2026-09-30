@@ -218,17 +218,18 @@ local function raise_line(raised)
     return util.marked(tostring(raised):match("^[^\n]*"), 300)
 end
 
--- Tells the user, once and on one line, that answering path raised.
--- 0.10's v:errmsg kept a traceback's last line alone, so the cause is the
--- raise's first line (raise_line). The query is cut, since ?t=<token>
--- rides there and :messages keeps it, and so is the length, since a peer
--- controls the path up to the head's cap, as it would a cause that quoted
--- the path. Scheduled: a request runs in a fast event, where vim.notify
--- raises.
-local function report_raise(path, raised)
+-- Tells the user, once and on one line, that answering path raised on
+-- port, which the line names, as every notice does, for a user with two
+-- servers. 0.10's v:errmsg kept a traceback's last line alone, so the
+-- cause is the raise's first line (raise_line). The query is cut, since
+-- ?t=<token> rides there and :messages keeps it, and so is the length,
+-- since a peer controls the path up to the head's cap, as it would a
+-- cause that quoted the path. Scheduled: a request runs in a fast event,
+-- where vim.notify raises.
+local function report_raise(port, path, raised)
     local cause = raise_line(raised)
     local shown = util.marked(path:match("^[^?#]*"), 200)
-    local line = ("live-server: %s failed: %s"):format(shown, cause)
+    local line = ("live-server: port %d %s failed: %s"):format(port, shown, cause)
     vim.schedule(function()
         util.notify(line, { notify = true }, "ERROR")
     end)
@@ -786,7 +787,13 @@ local function send_reload(inst, rp, css)
     sse_broadcast(inst, "reload", payload)
     -- The path may be a peer's file name, so the line is marked.
     if inst.notify_on_reload then
-        local line = util.marked(("Reload%s → %s"):format(is_css and " (CSS)" or "", rp ~= "" and rp or "manual"))
+        local line = util.marked(
+            ("live-server: port %d reload%s → %s"):format(
+                inst.port,
+                is_css and " (CSS)" or "",
+                rp ~= "" and rp or "manual"
+            )
+        )
         vim.schedule(function()
             util.notify(line, { notify = true })
         end)
@@ -1232,7 +1239,7 @@ end
 
 -- shown is what a 404 names: the request path, never abs_path, which gave
 -- a peer the user's home directory and project layout.
-local function stream_file(sock, abs_path, extra_headers, shown)
+local function stream_file(inst, sock, abs_path, extra_headers, shown)
     local fd = uv.fs_open(abs_path, "r", 438)
     if not fd then
         return http_404(sock, shown or "/")
@@ -1280,7 +1287,7 @@ local function stream_file(sock, abs_path, extra_headers, shown)
             close_fd()
             error(err, 0)
         end
-        report_raise(shown or "/", err)
+        report_raise(inst.port, shown or "/", err)
         abort()
     end
     local CHUNK = 64 * 1024
@@ -1336,7 +1343,7 @@ local function serve_path(inst, sock, abs_path, req, extra_headers, shown)
     if mime:find("^text/html") then
         return serve_html_file_with_injection(inst, sock, abs_path, extra_headers, req, shown)
     else
-        return stream_file(sock, abs_path, extra_headers, shown)
+        return stream_file(inst, sock, abs_path, extra_headers, shown)
     end
 end
 
@@ -1935,7 +1942,7 @@ local function handle_request(conn, req)
         if not st or st.type ~= "file" then
             return http_404(sock, "/__live/asset")
         end
-        return stream_file(sock, real, asset_headers(inst, real), "/__live/asset")
+        return stream_file(inst, sock, real, asset_headers(inst, real), "/__live/asset")
     end
     -- The namespace is the server's: a name under it that is no route never
     -- reaches the disk. This reads the request's spelling; the directory
@@ -2187,7 +2194,7 @@ local function on_read(conn, err, chunk)
     -- alone, never into the page. A file the raise cut short was closed by
     -- its transfer on the way out. Reported first, so a raise while the
     -- connection is answered or closed cannot swallow the notice.
-    report_raise(req.path, raised)
+    report_raise(conn.inst.port, req.path, raised)
     if started[sock] then
         close_once(sock)
     elseif not sock:is_closing() then
@@ -2880,11 +2887,9 @@ function S.start(cfg)
             if inst.handle:is_closing() then
                 return
             end
-            util.notify(
-                "live-server: allowed_hosts = true turns the Host check off; a DNS-rebinding page can read this server",
-                { notify = true },
-                "WARN"
-            )
+            local line = "live-server: port %d answers any Host: allowed_hosts = true turns the Host check off;"
+                .. " a DNS-rebinding page can read this server"
+            util.notify(line:format(inst.port), { notify = true }, "WARN")
         end)
     end
     -- Past the last raise: every warning start found now names a server.

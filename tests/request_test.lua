@@ -624,6 +624,11 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
             and not notes[1].msg:find("secret", 1, true),
         "on one line naming the path, never its query"
     )
+    -- With two servers a line naming no port named neither.
+    ok(
+        notes[1] ~= nil and notes[1].msg:find(("live-server: port %d /style.css failed: "):format(port), 1, true) == 1,
+        "and the server's port: " .. tostring(notes[1] and notes[1].msg)
+    )
     -- A peer on a network bind writes the path: an escape in it reaches
     -- whatever vim.notify was replaced with, so a control byte is a mark.
     stat_raises()
@@ -703,7 +708,7 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
     stat_raises()
     ask(port, get("/" .. ("./"):rep(200) .. "style.css", port))
     uv.fs_stat = real_stat
-    local shown = reported(4, "deliberate stat failure") and notes[4].msg:match("^live%-server: (.-) failed: ")
+    local shown = reported(4, "deliberate stat failure") and notes[4].msg:match("^live%-server: port %d+ (.-) failed: ")
     eq(shown and #shown, 200, "a 410-byte path is cut to 200 bytes in the notice")
 
     -- The notice goes out before the connection is answered or closed, so
@@ -739,7 +744,8 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
         stat_raises()
         ask(port, get(path, port))
         uv.fs_stat = real_stat
-        return reported(n, "deliberate stat failure") and notes[n].msg:match("^live%-server: (.-) failed: ") or ""
+        return reported(n, "deliberate stat failure") and notes[n].msg:match("^live%-server: port %d+ (.-) failed: ")
+            or ""
     end
     eq(notice_for(6, "/a\155b/../style.css"), "/a?b/../style.css", "a raw 0x9B in the path is one mark")
     eq(notice_for(7, "/a\194\155b/../style.css"), "/a?b/../style.css", "and U+009B encoded is one mark")

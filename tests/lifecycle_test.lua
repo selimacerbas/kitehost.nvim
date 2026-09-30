@@ -2427,7 +2427,11 @@ H.case("Section 9c: every notice goes out marked", function()
     server.reload(loud, crafted .. ".html")
     vim.wait(100)
     local reload = notes[mark + 1] and notes[mark + 1].msg or ""
-    eq(reload, "Reload → d?[31m?????e.html", "the notify_on_reload notice naming a crafted path arrives marked")
+    eq(
+        reload,
+        ("live-server: port %d reload → d?[31m?????e.html"):format(loud.port),
+        "the notify_on_reload notice naming a crafted path arrives marked, naming the port"
+    )
     local clean_reload
     clean_reload, why = clean(reload)
     ok(clean_reload, "and carries no control, C1 pair or U+202E: " .. tostring(why))

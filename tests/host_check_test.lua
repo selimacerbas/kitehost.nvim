@@ -146,6 +146,11 @@ H.case("Section 3: allowed_hosts adds names, true turns the check off", function
         notes[1] ~= nil and notes[1].level == vim.log.levels.WARN and notes[1].msg:find("allowed_hosts", 1, true) ~= nil,
         "as a warning naming the option"
     )
+    -- With two servers a line naming no port named neither.
+    ok(
+        notes[1] ~= nil and notes[1].msg:find(("live-server: port %d "):format(open.port), 1, true) == 1,
+        "and the server's port: " .. tostring(notes[1] and notes[1].msg)
+    )
     serve({ host = "0.0.0.0", allowed_hosts = true })
     vim.wait(200)
     eq(#notes, 1, "a network bind adds no warning: it had no check to turn off")
