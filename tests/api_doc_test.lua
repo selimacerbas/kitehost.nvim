@@ -21,10 +21,14 @@
 -- Section 10: :help's server API names the surface the README does, and
 --   SECURITY.md states the Host check the code holds.
 -- Section 11: each SECURITY.md claim a request can check is checked
---   beside its sentence: the asset route's reach, list and sandbox, the
---   listing, a headers origin line, the started-on dot file, a pattern's
---   spelling and a hard link. A claim about what a program or a browser
---   does later (the start probe, where the token travels) has no row.
+--   beside a phrase of its sentence: the asset route's reach, list and
+--   sandbox, the root route's script, the listing, a headers origin line,
+--   no origin line on /__live/, the referrer policy, the started-on dot
+--   file, a pattern's spelling and a hard link. A claim about what a
+--   program or a browser does later (the start probe, the opener's
+--   arguments, the history) has no row.
+-- Sections 10 and 11 pin a phrase: a reworded claim reds, a reversed one
+--   that keeps the phrase does not.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
 
@@ -383,8 +387,8 @@ H.case("Section 10: :help names the same surface, SECURITY.md the Host check", f
 end)
 
 -- SECURITY.md states only what the code holds, so each claim a request
--- can check is checked here beside its sentence: a change to either
--- reds the row, and the two are brought back together.
+-- can check is checked here beside a phrase of its sentence: a change to
+-- the behaviour, or a rewording of the phrase, reds the row.
 local function exposes()
     local security = table.concat(vim.fn.readfile(H.root .. "/SECURITY.md"), "\n")
     return security:match("\n## What the server exposes\n(.-)\n## ")
@@ -437,7 +441,7 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     local joined = get(policed.port, "/__live/asset?p=pic.svg").headers["content-security-policy"]
     ok(joined == "default-src 'self', sandbox", "a policy set in headers comes first, the sandbox after it")
     states("a `sandbox` directive in `Content-Security-Policy`", "the asset route's sandbox")
-    states("script in the server's origin", "what the root route runs")
+    states("runs its script in the server's origin", "what the root route runs")
 
     -- The listing, on by default, names a file the token gates.
     local gated = server.start({ port = 0, root = root, token = "tok", protected_paths = { "^/secret%.txt$" } })
@@ -448,14 +452,49 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     ok(get(gated.port, "/").body:find("secret.txt", 1, true) ~= nil, "the listing names it without one")
     states("the files `protected_paths` gates included", "what the listing names")
 
-    -- cors = false keeps an Access-Control-Allow-Origin passed in headers.
+    -- cors = false keeps an Access-Control-Allow-Origin set in headers.
     local acao = server.start({ port = 0, root = root, headers = { ["Access-Control-Allow-Origin"] = "*" } })
     H.defer(function()
         server.stop(acao)
     end)
     local read = get(acao.port, "/secret.txt", "Origin: http://other.example\r\n")
     ok(read.headers["access-control-allow-origin"] == "*", "a headers origin line reaches the root route")
-    states("With `cors = false`, an `Access-Control-Allow-Origin` you set in `headers`", "the headers origin line")
+    states("you set in `headers` is still sent on the root route", "the headers origin line")
+
+    -- No /__live/ answer carries an origin line, from cors or from
+    -- headers: the event stream's head and an asset alike.
+    local live = server.start({
+        port = 0,
+        root = root,
+        asset_root = assets,
+        cors = true,
+        headers = { ["Access-Control-Allow-Origin"] = "*" },
+    })
+    H.defer(function()
+        server.stop(live)
+    end)
+    local origin = "Origin: http://other.example\r\n"
+    local stream = assert(H.raw_connect(live.port))
+    assert(stream:send("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1\r\n" .. origin .. "\r\n"))
+    local head = stream:read(2000, function(bytes)
+        return bytes:find("\r\n\r\n", 1, true) ~= nil
+    end)
+    stream:close()
+    ok(head:find("text/event-stream", 1, true) ~= nil, "the event stream answers")
+    ok(not head:lower():find("access-control-allow-origin", 1, true), "the event stream carries no origin line")
+    local asset = get(live.port, "/__live/asset?p=pic.svg", origin)
+    ok(asset.status == 200 and asset.headers["access-control-allow-origin"] == nil, "an asset carries none")
+    ok(get(live.port, "/secret.txt", origin).headers["access-control-allow-origin"] == "*", "the root route does")
+    states("no `/__live/` route carries a CORS header", "the live routes' origin line")
+
+    -- Every response names strict-origin, a weaker policy set in headers
+    -- replaced.
+    local policy = server.start({ port = 0, root = root, headers = { ["Referrer-Policy"] = "unsafe-url" } })
+    H.defer(function()
+        server.stop(policy)
+    end)
+    ok(get(policy.port, "/secret.txt").headers["referrer-policy"] == "strict-origin", "unsafe-url is replaced")
+    states("every response carries `Referrer-Policy: strict-origin`", "the referrer policy")
 
     -- The file the user started on is served at / though it is a dot file.
     local draft = server.start({ port = 0, root = root, default_index = root .. "/.draft.html" })
