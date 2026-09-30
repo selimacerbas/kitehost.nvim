@@ -425,7 +425,18 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     ok(sandboxed == "sandbox", "the asset route sends an SVG with a sandbox")
     local plain = get(inst.port, "/pic.svg")
     ok(plain.status == 200 and plain.headers["content-security-policy"] == nil, "the root route sends none")
-    states("`Content-Security-Policy: sandbox`", "the asset route's sandbox")
+    local policed = server.start({
+        port = 0,
+        root = root,
+        asset_root = assets,
+        headers = { ["Content-Security-Policy"] = "default-src 'self'" },
+    })
+    H.defer(function()
+        server.stop(policed)
+    end)
+    local joined = get(policed.port, "/__live/asset?p=pic.svg").headers["content-security-policy"]
+    ok(joined == "default-src 'self', sandbox", "a policy set in headers comes first, the sandbox after it")
+    states("a `sandbox` directive in `Content-Security-Policy`", "the asset route's sandbox")
     states("script in the server's origin", "what the root route runs")
 
     -- The listing, on by default, names a file the token gates.
