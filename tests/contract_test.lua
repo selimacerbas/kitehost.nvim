@@ -2,9 +2,10 @@
 -- The calls the two known consumers make, held as rows: markdown-preview's
 -- start, its raw-TCP inject and its page's stream, and gh-markdown-preview's
 -- tokenless server, its back channel, its page's hello and its read of
--- inst.sse_clients, the capability flags a caller detects and the text a
--- taken port's refusal carries. A change that breaks one of them reds
--- here first.
+-- inst.sse_clients, the capability flags a caller detects, the text a
+-- taken port's refusal carries and, in Section 5, that back channel's
+-- unbracketed Host on a ::1 bind, refused, beside its bracketed form. A
+-- change that breaks one of them reds here first.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/contract_test.lua"
 
@@ -304,8 +305,10 @@ H.case("Section 5: gh-markdown-preview's back channel on host = '::1'", function
         server.stop(inst)
     end)
     local port = inst.port
-    -- The back channel's request as preview.lua:188 formats it: host and
-    -- port as configured, so an IPv6 host goes out unbracketed.
+    -- The back channel's request as gh-markdown-preview.nvim formats it
+    -- (lua/gh_markdown_preview/preview.lua line 188, read at its commit
+    -- 914c056): host and port as configured, so an IPv6 host goes out
+    -- unbracketed.
     local fields = "Accept: text/event-stream\r\nConnection: keep-alive\r\n"
     local c = assert(H.raw_connect(port, "::1"))
     assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: %s:%d\r\n%s\r\n"):format("::1", port, fields)))
