@@ -406,23 +406,54 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         )
         eq(flagged.opts.default_port, 8000, ("and a refused %s keeps every option it had"):format(c[2]))
     end
-    -- setup reads auto_start's fields, so a number there raised with a
-    -- file position and no word of the option.
-    for _, value in ipairs({ 5, "html", false }) do
+    -- setup reads auto_start's fields, so a number there, or in its
+    -- filetypes, raised with a file position and no word of the option.
+    for _, c in ipairs({
+        { 5, "auto_start must be a table or false" },
+        { "html", "auto_start must be a table or false" },
+        { true, "auto_start must be a table or false" },
+        { { filetypes = 5 }, "auto_start.filetypes must be a list of strings" },
+        { { filetypes = "html" }, "auto_start.filetypes must be a list of strings" },
+        { { filetypes = { 1 } }, "auto_start.filetypes must be a list of strings" },
+    }) do
+        local value = vim.inspect(c[1], { newline = " ", indent = "" })
         package.loaded["live_server"] = nil
         local configured = require("live_server")
-        local set, err = pcall(configured.setup, { notify = false, default_port = 9000, auto_start = value })
+        local set, err = pcall(configured.setup, { notify = false, default_port = 9000, auto_start = c[1] })
         eq(
             not set and tostring(err) or "setup took it",
-            "auto_start must be a table",
-            ("setup refuses auto_start = %s, naming it"):format(vim.inspect(value))
+            c[2],
+            ("setup refuses auto_start = %s, naming it"):format(value)
         )
         eq(
             configured.opts.default_port,
             8000,
-            ("and a refused auto_start = %s keeps every option it had"):format(vim.inspect(value))
+            ("and a refused auto_start = %s keeps every option it had"):format(value)
         )
     end
+    -- false is off, as for a section, and an empty list starts nothing:
+    -- neither arms the FileType autocmd.
+    for _, value in ipairs({ false, { filetypes = {} } }) do
+        local shown = vim.inspect(value, { newline = " ", indent = "" })
+        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+        package.loaded["live_server"] = nil
+        local configured = require("live_server")
+        local set, err = pcall(configured.setup, { notify = false, auto_start = value })
+        ok(set, ("setup takes auto_start = %s: %s"):format(shown, tostring(err)))
+        eq(
+            vim.inspect(configured.opts.auto_start, { newline = " ", indent = "" }),
+            shown,
+            ("opts.auto_start is %s"):format(shown)
+        )
+        local listed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+        ok(not listed or #cmds == 0, ("auto_start = %s arms no FileType autocmd"):format(shown))
+    end
+    -- The same probe sees one a listed filetype arms.
+    package.loaded["live_server"] = nil
+    pcall(require("live_server").setup, { notify = false, auto_start = { filetypes = { "livetestft" } } })
+    local armed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+    ok(armed and #cmds == 1, 'auto_start = { filetypes = { "livetestft" } } arms one FileType autocmd')
+    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
     package.loaded["live_server"] = nil
     local flags = require("live_server")
     local set, err = pcall(flags.setup, {

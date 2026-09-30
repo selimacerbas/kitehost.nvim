@@ -155,9 +155,22 @@ function M.setup(opts)
             error(("%s must be true or false, got %s"):format(key, type(merged[key])), 0)
         end
     end
-    -- Its fields are read below; a number there raised with a file position.
-    if merged.auto_start ~= nil and type(merged.auto_start) ~= "table" then
-        error("auto_start must be a table", 0)
+    -- Its fields are read below; a number there, or in its filetypes, raised
+    -- with a file position. false is off, as for a section; nil cannot
+    -- come through the merge. port is the start's to check when it fires.
+    local auto = merged.auto_start
+    if auto ~= nil and auto ~= false and type(auto) ~= "table" then
+        error("auto_start must be a table or false", 0)
+    end
+    if type(auto) == "table" and auto.filetypes ~= nil then
+        local fts = auto.filetypes
+        local listed = type(fts) == "table" and vim.islist(fts)
+        for _, ft in ipairs(listed and fts or {}) do
+            listed = listed and type(ft) == "string"
+        end
+        if not listed then
+            error("auto_start.filetypes must be a list of strings", 0)
+        end
     end
     M.opts = merged
 

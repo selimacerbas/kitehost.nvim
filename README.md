@@ -126,7 +126,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
 }
 ```
 
-`live_reload` and `directory_listing` also take `true` or `false`, which turns the section on or off and keeps its other fields. `setup()` refuses a section of any other type and a flag that is not `true` or `false`, naming it (`live_reload.enabled must be true or false, got string`; `open_on_start`, `notify` and `serve_dotfiles` the same way; `auto_start` must be a table), and keeps the options it had. A value the server refuses is named by the server's own key when a start fails (`live.debounce` for `live_reload.debounce`).
+`live_reload` and `directory_listing` also take `true` or `false`, which turns the section on or off and keeps its other fields. `setup()` refuses a section of any other type and a flag that is not `true` or `false`, naming it (`live_reload.enabled must be true or false, got string`; `open_on_start`, `notify` and `serve_dotfiles` the same way; `auto_start` must be a table or `false`), and keeps the options it had. A value the server refuses is named by the server's own key when a start fails (`live.debounce` for `live_reload.debounce`).
 
 ---
 
