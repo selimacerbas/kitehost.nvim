@@ -208,21 +208,23 @@ local function http_400(sock, msg)
     )
 end
 
--- Tells the user, once and on one line, that answering path raised. A
--- traceback ran to 15 lines, a hit-enter prompt per failed request, and
--- 0.10's v:errmsg kept its last line alone; the raise's first line
--- already names its file and line. The query is cut, since ?t=<token>
--- rides there and :messages keeps it, and so is the length, since a peer
--- controls the path up to the head's cap, as it would a cause that quoted
--- the path. A control in the line is a mark: Neovim shows one as a
--- caret pair, but a notifier that forwards to a terminal or a desktop
--- would pass an escape a peer wrote. Scheduled: a request runs in a fast
--- event, where vim.notify raises. A caller's callback that raised is told
--- through raise_line too, cut the same way.
+-- A raise's text as a notice carries it: its first line, which already
+-- names the file and line (a traceback ran to 15 lines, a hit-enter
+-- prompt each), cut to 300 bytes and marked. A control in the line is a
+-- mark: Neovim shows one as a caret pair, but a notifier that forwards to
+-- a terminal or a desktop would pass an escape a peer wrote. A request's
+-- fault and a caller's callback that raised are both told through it.
 local function raise_line(raised)
     return util.marked(tostring(raised):match("^[^\n]*"), 300)
 end
 
+-- Tells the user, once and on one line, that answering path raised.
+-- 0.10's v:errmsg kept a traceback's last line alone, so the cause is the
+-- raise's first line (raise_line). The query is cut, since ?t=<token>
+-- rides there and :messages keeps it, and so is the length, since a peer
+-- controls the path up to the head's cap, as it would a cause that quoted
+-- the path. Scheduled: a request runs in a fast event, where vim.notify
+-- raises.
 local function report_raise(path, raised)
     local cause = raise_line(raised)
     local shown = util.marked(path:match("^[^?#]*"), 200)
