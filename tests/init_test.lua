@@ -725,6 +725,24 @@ H.case("Section 10: the status list counts clients through the public counter", 
     ok(shown:find("clients:7", 1, true) ~= nil, "the status list reads connected_client_count: " .. shown)
 end)
 
+-- The status command exists to print, and under notify = false it printed
+-- nothing, whether a server ran or not: a user who asks for it gets it.
+H.case("Section 11: :LiveServerStatus prints under notify = false", function()
+    local _, _, inst = start_with({ notify = false })
+    local ls = require("live_server")
+    notices = {}
+    ls.status()
+    local shown = table.concat(notices, "\n")
+    ok(
+        inst ~= nil and shown:find(("LiveServer status:\n  :%d "):format(inst.port), 1, true) ~= nil,
+        "with a server running it lists the server: " .. shown
+    )
+    ls.stop_all()
+    notices = {}
+    ls.status()
+    eq(table.concat(notices, "\n"), "No running servers.", "with none it says so")
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

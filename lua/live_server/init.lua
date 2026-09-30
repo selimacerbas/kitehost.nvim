@@ -412,11 +412,13 @@ function M.stop_all()
     util.notify("Stopped all LiveServer instances.", M.opts)
 end
 
--- Status
+-- Status. Printed whatever notify says: the command exists to print, and
+-- a user who ran it asked for the list.
+local SHOWN = { notify = true }
 function M.status()
     local ports = vim.tbl_keys(M.state.servers)
     if #ports == 0 then
-        return util.notify("No running servers.", M.opts)
+        return util.notify("No running servers.", SHOWN)
     end
     table.sort(ports)
     local lines = { "LiveServer status:" }
@@ -430,7 +432,7 @@ function M.status()
             ("  :%d → %s  [live:%s  clients:%d  uptime:%ds]"):format(port, s.root, live, clients, uptime)
         )
     end
-    util.notify(table.concat(lines, "\n"), M.opts)
+    util.notify(table.concat(lines, "\n"), SHOWN)
 end
 
 -- Statusline component: returns "[LS :8000]" or ""
