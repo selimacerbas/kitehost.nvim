@@ -106,6 +106,8 @@ end
 H.case("start refuses a bad option, naming it, before any socket opens", function()
     -- { option, value, the text the refusal must carry (the option's name
     -- unless given) }
+    local keys = H.tmpdir() .. "/.SSH/imgs"
+    assert(vim.fn.mkdir(keys, "p") == 1)
     local bad = {
         { "token", "" },
         { "token", 42 },
@@ -264,6 +266,10 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "asset_root", "", 'asset_root is not a directory: ""' },
         { "asset_root", root .. "/missing", ('asset_root is not a directory: "%s/missing"'):format(root) },
         { "asset_root", root .. "/content.md", ('asset_root is not a directory: "%s/content.md"'):format(root) },
+        -- Every asset request under a credential directory answers 404,
+        -- so a root there started and served nothing without a word; the
+        -- segment is named as the disk spells it.
+        { "asset_root", keys, ("asset_root is inside a credential directory (.SSH): %s"):format(vim.inspect(keys)) },
         -- A flag turned off on exactly false, so 0 turned it on.
         { "notify_on_reload", 0, "notify_on_reload must be true or false, got number" },
         { "notify_on_reload", "no", "notify_on_reload must be true or false, got string" },

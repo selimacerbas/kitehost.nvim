@@ -1554,15 +1554,15 @@ local ASSET_DENY = {
     },
 }
 
--- Whether a segment of path names a credential directory; a Windows path
--- separates with a backslash too.
+-- The first segment of path that names a credential directory, as path
+-- spells it, or nil; a Windows path separates with a backslash too.
 local function in_credential_dir(path)
-    for seg in path:lower():gmatch("[^/\\]+") do
-        if ASSET_DENY.dirs[seg] then
-            return true
+    for seg in path:gmatch("[^/\\]+") do
+        if ASSET_DENY.dirs[seg:lower()] then
+            return seg
         end
     end
-    return false
+    return nil
 end
 
 local function asset_denied(rel)
@@ -2452,6 +2452,12 @@ local function check_start(cfg)
                 ),
                 0
             )
+        end
+        -- Every asset request under a credential directory answers 404,
+        -- which started and served nothing without a word.
+        local keys = in_credential_dir(real)
+        if keys then
+            error(("asset_root is inside a credential directory (%s): %s"):format(keys, vim.inspect(asset_root)), 0)
         end
         asset_root = real
     end

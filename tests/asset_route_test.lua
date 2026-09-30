@@ -4,8 +4,9 @@
 --   - requires ?t=<token> when token auth is configured
 --   - rejects traversal (a symlink out of the root too), absolute paths, and schemes
 --   - refuses secrets by name (.env, .git, key files) and anything but a file
---   - serves nothing from an asset root that is no path, or one inside a
---     credential directory such as .ssh (Section 4)
+--   - serves nothing from an asset root that is no path, and refuses at
+--     start a string root inside a credential directory such as .ssh,
+--     whose function form serves nothing there (Section 4)
 --   - sandboxes the HTML, SVG and XML documents it serves, never the root
 --     route's index (Section 5)
 --   - fixes a string root at start and reads a function per request, a
@@ -233,12 +234,29 @@ base = ("http://127.0.0.1:%d"):format(inst.port)
 eq(http_get(base .. "/__live/asset?p=a.png&t=" .. TOKEN).status, 404, "an asset_root callback returning a table is 404")
 server.stop(inst)
 -- The list read the names below the asset root alone, so a document kept in
--- ~/.ssh served the keys beside it.
+-- ~/.ssh served the keys beside it. A string root there is refused at
+-- start, since every request under it would answer 404 without a word;
+-- a function's answer there is read per request.
 vim.fn.mkdir(tmpdir .. "/.ssh", "p")
 write_file(tmpdir .. "/.ssh/pic.png", "PNGDATA")
-inst = asset_server(tmpdir .. "/.ssh")
+local up, why = pcall(asset_server, tmpdir .. "/.ssh")
+eq(
+    not up and tostring(why) or "started",
+    ("asset_root is inside a credential directory (.ssh): %s"):format(vim.inspect(tmpdir .. "/.ssh")),
+    "an asset root inside .ssh is refused at start, naming the directory"
+)
+if up then
+    server.stop(why)
+end
+inst = asset_server(function()
+    return tmpdir .. "/.ssh"
+end)
 base = ("http://127.0.0.1:%d"):format(inst.port)
-eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "an asset root inside .ssh serves nothing")
+eq(
+    http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status,
+    404,
+    "an asset root inside .ssh a function answers serves nothing"
+)
 server.stop(inst)
 
 H.section("Section 5: active documents on the asset route are sandboxed")
