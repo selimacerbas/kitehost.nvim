@@ -1,15 +1,20 @@
 -- tests/start_test.lua
 -- What start refuses, each before any socket opens,
--- naming what it refused, at level 0: options that are no table, a bad
--- token (one that is no UTF-8 among them), default_index, a live, dirlist
--- or notify_on_reload flag that is no boolean, protected_paths
--- (patterns with no token among them), serve_dotfiles, index_names, headers
--- (a control byte in a value, two spellings of one name and the server's
--- own fields among them), cors, allowed_hosts (a string, a map, a hole, a
--- wildcard, an entry no Host can match), live and its debounce, features,
--- host, header_timeout_ms, sse_heartbeat_ms, max_connections, asset_root
--- (a string naming no directory among them),
--- a port it cannot hold or a root that is no string, does not resolve or is no
+-- naming what it refused, at level 0: options that are no table, a key
+-- start does not read (a misspelled token or protected_paths, a nested
+-- key of live or features), a bad token (one that is no UTF-8 among
+-- them), default_index, a live, dirlist or notify_on_reload flag that is
+-- no boolean, protected_paths (patterns with no token among them, and a
+-- malformed pattern named by the byte of its fault wherever it sits),
+-- serve_dotfiles, index_names, headers (a control byte in a value, two
+-- spellings of one name, the server's own fields and false among them),
+-- cors, allowed_hosts (a string, a map, a hole, a wildcard, an entry no
+-- Host can match), live and its debounce, features, host (a name, an
+-- empty string, a bracketed literal, and a zone that is no interface
+-- name among them), header_timeout_ms, sse_heartbeat_ms,
+-- max_connections, asset_root (a string naming no directory or inside a
+-- credential directory among them), a NUL in any string option, a port
+-- it cannot hold or a root that is no string, does not resolve or is no
 -- directory (a relative default_index is fixed at start); a bind to an
 -- address this machine lacks or to a port in use raises naming it and
 -- leaves no socket, a socket that cannot be made raises naming it, and a
@@ -17,8 +22,10 @@
 -- timer or watcher, the timer's raise naming it. A wildcard bind raises
 -- unless the loopback address its URL names is free, and its probe of that
 -- address is never left open; a loopback bind raises when a wildcard
--- listener holds its port. A pattern the check cannot read past its
--- literal starts and gates every path it is asked about, and each option is
+-- listener holds its port. Each construct of a well-formed pattern starts,
+-- one that nests too deep for LuaJIT on a path gates every path it is
+-- asked about with one warning, a zoned host reports the address it
+-- bound, a table naming every key start reads starts, and each option is
 -- read from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
