@@ -376,6 +376,13 @@ Neovim 0.10 writes a slash as `\/`, so a reader decodes it and never
 compares its bytes. The `start` keys, the routes with their token gating
 and refusals, and the event framing are the README's list.
 
+A plugin that sends its own HTTP to the server sends a Host the server
+can read: every bind answers 400 to a Host that is no host. An IPv6
+host goes in brackets before its port, `Host: [::1]:8421`; the
+unbracketed `Host: ::1:8421`, which a client builds by formatting
+`"%s:%d"` with `host = "::1"`, cannot be split into host and port and
+is 400.
+
 ===============================================================================
 KEYMAPS                                         *live-server-keymaps*
 

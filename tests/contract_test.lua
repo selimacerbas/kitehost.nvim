@@ -277,4 +277,48 @@ H.case("Section 4: a taken port's refusal carries luv's text", function()
     end
 end)
 
+H.case("Section 5: gh-markdown-preview's back channel on host = '::1'", function()
+    local probe = assert(vim.uv.new_tcp())
+    local v6 = probe:bind("::1", 0)
+    probe:close()
+    if not v6 then
+        H.skip("gh-markdown-preview's unbracketed ::1 Host is 400 (no IPv6 loopback here)")
+        H.skip("its request with the host bracketed opens the stream (no IPv6 loopback here)")
+        return
+    end
+    local inst = server.start({
+        port = 0,
+        host = "::1",
+        root = work .. "/ws",
+        headers = { ["Cache-Control"] = "no-cache" },
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local port = inst.port
+    -- The back channel's request as preview.lua:188 formats it: host and
+    -- port as configured, so an IPv6 host goes out unbracketed.
+    local request =
+        "GET /__live/events HTTP/1.1\r\nHost: %s:%d\r\nAccept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+    local c = assert(H.raw_connect(port, "::1"))
+    assert(c:send(request:format("::1", port)))
+    local r = H.responses(c:read(2000) or "")[1]
+    c:close()
+    eq(r and r.status, 400, "its Host ::1:<port> is no host, so it is 400")
+    c = assert(H.raw_connect(port, "::1"))
+    assert(c:send(request:format("[::1]", port)))
+    local head = c:read(2000, function(d)
+        return d:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    c:close()
+    r = H.responses(head)[1]
+    eq(
+        r and r.headers["content-type"],
+        "text/event-stream",
+        "the same request with the host bracketed opens the stream"
+    )
+end)
+
 H.finish()

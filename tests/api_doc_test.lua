@@ -250,6 +250,7 @@ H.case("Section 3: :help names the same surface, SECURITY.md the Host check", fu
     local named = other_inst_fields(api)
     ok(#named == 0, ":help names no other field: " .. table.concat(named, ", "))
     ok(api:find("SemVer", 1, true) ~= nil, ":help says SemVer covers it")
+    ok(api:find("Host: [::1]:", 1, true) ~= nil, ":help names the bracketed IPv6 Host a client sends")
 
     local security = table.concat(vim.fn.readfile(H.root .. "/SECURITY.md"), "\n")
     local exposes = security:match("\n## What the server exposes\n(.-)\n## ")
