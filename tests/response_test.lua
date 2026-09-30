@@ -879,7 +879,7 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
             H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], tostring(made_err)))
         end
     end
-    -- Each resolves to a name the disk rule passes: plain.txt, or the
+    -- Each resolves to a name the disk rule lets through: plain.txt, or the
     -- root, whose files then sit under the reserved spelling.
     for _, c in ipairs({
         { "a file of the root", "plain.txt", false, { "/__Live", "/__LIVE" } },
