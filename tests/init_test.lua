@@ -823,6 +823,80 @@ H.case("Section 12: a refused auto-start never raises out of the edit", function
     end
 end)
 
+-- A notifier may forward a notice to a terminal or a desktop, where a
+-- control byte in a directory's name acts and a bidi control reorders
+-- the line; the start, retarget and status notices sent the root raw, and
+-- a refused start the server's text, which repeats the root raw.
+H.case("Section 13: every notice naming a root shows its controls as ?", function()
+    local base = H.tmpdir()
+    local named = base .. "/d\27]0;x\7\226\128\174e"
+    assert(vim.fn.mkdir(named, "p") == 1)
+    local other = base .. "/o\27\7\226\128\174p"
+    assert(vim.fn.mkdir(other, "p") == 1)
+    local shown = base .. "/d?]0;x??e"
+    local other_shown = base .. "/o???p"
+    local notes = {}
+    local suite_notify, suite_pick_path = vim.notify, util.pick_path
+    local real_realpath = vim.uv.fs_realpath
+    H.defer(function()
+        vim.notify, util.pick_path, picked_port = suite_notify, suite_pick_path, 0
+        vim.uv.fs_realpath = real_realpath
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    local target = named
+    util.pick_path = function(cb)
+        cb(target)
+    end
+    package.loaded["live_server"] = nil
+    local ls = require("live_server")
+    ls.setup({ notify = true, open_on_start = false })
+    H.defer(function()
+        ls.stop_all()
+    end)
+    ls.start_picker()
+    local port = next(ls.state.servers)
+    local said = notes[1] and notes[1].msg or ""
+    eq(
+        said:match("^(.-) at "),
+        ("LiveServer %s started → %s"):format(tostring(port), shown),
+        "the start notice shows the root's controls as ?"
+    )
+    notes, target, picked_port = {}, other, port or 0
+    ls.start_picker()
+    picked_port = 0
+    eq(
+        notes[1] and notes[1].msg,
+        ("LiveServer %s retargeted → %s"):format(tostring(port), other_shown),
+        "the retarget notice shows them as ?"
+    )
+    notes = {}
+    ls.status()
+    local listed = notes[1] and notes[1].msg or ""
+    ok(
+        listed:find(("\n  :%s → %s  [live:"):format(tostring(port), other_shown), 1, true) ~= nil
+            and not listed:find("[\1-\9\11-\31]"),
+        "the status list shows them as ?, its line breaks kept: " .. vim.inspect(listed)
+    )
+    ls.stop_all()
+    -- The server refuses a root it cannot resolve, naming the root raw.
+    vim.uv.fs_realpath = function(path, ...)
+        if path == named then
+            return nil, "ENOENT: stubbed", "ENOENT"
+        end
+        return real_realpath(path, ...)
+    end
+    notes, target = {}, named
+    ls.start_picker()
+    vim.uv.fs_realpath = real_realpath
+    eq(
+        notes[1] and notes[1].msg,
+        "LiveServer did not start: Invalid root: " .. shown,
+        "a refused start shows the server's text with them as ?"
+    )
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

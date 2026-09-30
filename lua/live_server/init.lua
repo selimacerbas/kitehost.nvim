@@ -216,9 +216,13 @@ end
 -- FileType autocmd (in_autocmd) every notice waits for the loop, as the
 -- floor notice above does: an error notice sent there is raised out of
 -- the :edit that fired it, which stopped a picker's or a plugin's edit
--- and every later autocmd of the buffer.
+-- and every later autocmd of the buffer. Each notice names a root or
+-- carries the server's text, which repeats one raw, and a directory's
+-- name may hold a control a notifier forwards to a terminal, so each is
+-- marked, as the server marks its own.
 function start_for_path(path, port, in_autocmd)
     local function say(msg, level)
+        msg = util.marked(msg)
         if not in_autocmd then
             return util.notify(msg, M.opts, level)
         end
@@ -246,11 +250,9 @@ function start_for_path(path, port, in_autocmd)
             return say("LiveServer could not retarget: " .. tostring(answer), "ERROR")
         end
         -- The retarget read as done while its live reload went off unsaid;
-        -- the server's own warning names the cause, and a root may carry
-        -- a peer's bytes, so the line is marked.
+        -- the server's own warning names the cause.
         if answer == false then
-            local off = ("LiveServer %d retargeted to %s; live reload is off"):format(port, root)
-            say(util.marked(off), "WARN")
+            say(("LiveServer %d retargeted to %s; live reload is off"):format(port, root), "WARN")
         else
             say(
                 ("LiveServer %d retargeted → %s%s"):format(
@@ -424,7 +426,8 @@ function M.stop_all()
 end
 
 -- Status. Printed whatever notify says: the command exists to print, and
--- a user who ran it asked for the list.
+-- a user who ran it asked for the list. Each root is marked alone, as
+-- start_for_path marks its notices, so the list keeps its line breaks.
 local SHOWN = { notify = true }
 function M.status()
     local ports = vim.tbl_keys(M.state.servers)
@@ -440,7 +443,7 @@ function M.status()
         local uptime = os.time() - s.started_at
         table.insert(
             lines,
-            ("  :%d → %s  [live:%s  clients:%d  uptime:%ds]"):format(port, s.root, live, clients, uptime)
+            ("  :%d → %s  [live:%s  clients:%d  uptime:%ds]"):format(port, util.marked(s.root), live, clients, uptime)
         )
     end
     util.notify(table.concat(lines, "\n"), SHOWN)
