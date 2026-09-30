@@ -1802,6 +1802,8 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         { "[]", 1, "a set is not closed" },
         { "[a%", 1, "a set is not closed" },
         { "[^", 1, "a set is not closed" },
+        -- An escaped ] belongs to the set, so it does not close it.
+        { "[%]", 1, "a set is not closed" },
         { "%1", 1, "%1 names no closed capture" },
         { "(a%1)", 3, "%1 names no closed capture" },
         { "(a)%2", 4, "%2 names no closed capture" },
@@ -1825,6 +1827,8 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "[]x]",
         "[^/]+%.md$",
         "[%]%-]",
+        "[%]]",
+        "[%%]",
         "^/%a%d%l%s%u%w%x%p%c%z%A",
         "^/(%w+)/%1$",
         "()x",
