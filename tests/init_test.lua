@@ -337,6 +337,18 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     note = refused_with({ notify = false })
     eq(raised[1], nil, "a start on a free port with notify = false starts")
     eq(#notes, 0, "and says nothing: " .. vim.inspect(notes, { newline = " ", indent = "" }))
+    -- A warning is kept as an error is: a reload asked of a port no server
+    -- holds said nothing under notify = false, and the user read it as done.
+    local ls = require("live_server")
+    notes, picked_port = {}, 1
+    ls.force_reload()
+    picked_port = 0
+    eq(
+        notes[1] and notes[1].msg,
+        "No live-server instance on that port.",
+        "with notify = false a warning is still shown: " .. vim.inspect(notes, { newline = " ", indent = "" })
+    )
+    eq(notes[1] and notes[1].level, vim.log.levels.WARN, "as a warning")
 end)
 
 -- A section given as a boolean replaced the table every start reads its
