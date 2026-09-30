@@ -2284,8 +2284,9 @@ local function root_directory(real)
 end
 
 -- Read per request, a relative index followed a later :cd to another file.
+-- Absolute is read per OS (is_absolute), as the asset route reads it.
 local function absolute_index(index)
-    if index == nil or index == "" or index:match("^[/\\]") or index:match("^%a:[/\\]") then
+    if index == nil or index == "" or is_absolute(index) then
         return index
     end
     local cwd, cwd_err = uv.cwd()

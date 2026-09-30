@@ -1642,6 +1642,37 @@ H.case("a relative default_index names the file it named at start", function()
     local none = serve({ default_index = "" })
     eq(none.default_index, "", "an empty default_index is kept as it is")
     eq(http_get(("http://127.0.0.1:%d/"):format(none.port)).status, 200, "and / serves the root's index.html")
+    -- A drive letter or a leading backslash is absolute on Windows alone;
+    -- on macOS and Linux each is a relative name, which was kept as given
+    -- and followed the working directory at each request. Compared as
+    -- text: realpath would resolve the relative name to the same file.
+    if vim.fn.has("win32") == 1 then
+        H.skip("a drive-letter or backslash default_index is relative on macOS and Linux (this is Windows)")
+        return
+    end
+    vim.cmd.cd(here)
+    vim.fn.mkdir(vim.fs.joinpath(here, "C:"), "p")
+    H.write_file(vim.fs.joinpath(here, "C:", "i.html"), "DRIVE-PAGE")
+    H.write_file(vim.fs.joinpath(here, "\\i.html"), "SLASH-PAGE")
+    for _, name in ipairs({ "C:/i.html", "\\i.html" }) do
+        local started = serve({ root = here, default_index = name })
+        ok(
+            started.default_index == util.joinpath(assert(vim.uv.cwd()), name),
+            ("default_index = %s is fixed to the working directory at start: %s"):format(
+                vim.inspect(name),
+                tostring(started.default_index)
+            )
+        )
+        local moved = serve({ root = there })
+        server.update_target(moved, here, name)
+        ok(
+            moved.default_index == util.joinpath(assert(vim.uv.cwd()), name),
+            ("and update_target's index %s is fixed the same way: %s"):format(
+                vim.inspect(name),
+                tostring(moved.default_index)
+            )
+        )
+    end
 end)
 
 -- new_tcp's nil went unread, so the bind indexed it and raised at the
