@@ -107,10 +107,14 @@ Options:
 
 `host` (string, default `"127.0.0.1"`)
     Bind address, an IP address or `"localhost"`, which binds
-    `127.0.0.1`; a start refuses any other string. `"0.0.0.0"` serves
-    every file under the root, except a dot path unless `serve_dotfiles`
-    is set, and the file you started on, at `/`, to anyone who can reach
-    the port; set `token` there and read SECURITY.md first.
+    `127.0.0.1`; a start refuses any other string. An IPv6 address may
+    carry a `%zone` of letters, digits, `.`, `_` and `-`; on macOS a
+    zoned link-local bind starts and answers no request, and the opened
+    URL carries no zone. `"0.0.0.0"` serves every file under the root,
+    except a dot path unless `serve_dotfiles` is set and an entry named
+    `__live` at the root in any letter case, and the file you started
+    on, at `/`, to anyone who can reach the port; set `token` there and
+    read SECURITY.md first.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
@@ -141,7 +145,9 @@ gates `/__live/asset` too.
     entry is a host name or an IPv6 address without brackets, with no
     port or wildcard; a start refuses any other. `true` turns the check
     off, with a warning at each start on a loopback bind. A network bind
-    (`0.0.0.0`, a LAN address) has no Host check.
+    (`0.0.0.0`, a LAN address) has no Host check. A page under a listed
+    name is the server's own origin once that name points at this
+    machine, and `cors` does not govern what it reads.
 
 `serve_dotfiles` (boolean, default false)
     Serve dot paths: while false, a request whose path, or the file it
@@ -197,10 +203,12 @@ gates `/__live/asset` too.
     serves starts one on `port`, or, when a server already runs on that
     port, retargets it to that directory: the root follows the files you
     open, and with `host = "0.0.0.0"` it is the network-reachable root
-    that moves. A new file not yet on disk starts nothing (the notice
-    reads `Path not found`), and writing it does not either; |:edit| it
-    once it is written. A start that fails, a taken port among them, lets
-    the file open and shows its notice after it.
+    that moves. A new file not yet on disk starts nothing, and writing it
+    does not either; |:edit| it once it is written. In a directory that
+    is on disk and that no running server serves, the notice reads
+    `Path not found`; in a directory not yet on disk, or one a running
+    server already serves, no notice shows. A start that fails, a taken
+    port among them, lets the file open and shows its notice after it.
 
 `auto_start.filetypes` (string[])
     Filetype names to trigger on, each made of letters, digits, `_`, `.`
@@ -298,7 +306,10 @@ release.
 
 live_server.setup({opts})                       *live_server.setup()*
     Merge {opts} with defaults and apply configuration.
-    If `auto_start` is set, registers a `FileType` autocmd.
+    If `auto_start` is set, registers a `FileType` autocmd. A key it
+    does not read, a misspelled one among them, is refused, naming it
+    (`setup does not read the key live_reload.debounc`), and the options
+    stay as they were.
 
 live_server.start_picker()                      *live_server.start_picker()*
     UI flow: pick a path (Telescope or vim.ui), pick a port, start.
@@ -343,8 +354,10 @@ text below. A minor release may still refuse a
 request the server admits today when refusing it closes a security hole;
 the requests the README lists as admitted stay admitted. A minor release
 may also change how a method other than GET is answered (a `HEAD` among
-them, and the `Allow` field), how a request line naming `HTTP/1.2` to
-`HTTP/1.9` is answered, and the 64 KiB cap on a request head.
+them, and the `Allow` field), but for the `cors` preflight's answer,
+which the README's request order states, how a request line naming
+`HTTP/1.2` to `HTTP/1.9` is answered, and the 64 KiB cap on a request
+head.
 
 Below Neovim 0.10 `live_server.server` and `live_server.util` raise on
 every `require`, so a plugin that also runs on an older Neovim loads them
@@ -397,13 +410,18 @@ holds, and `inst.host`, the address the socket is bound to as the OS
 reports it (a configured `"localhost"` reads `"127.0.0.1"`).
 
 A call made wrongly raises at level 2, so the message names the calling
-line: `reload` with a path that is not a string, `send_event` with a name
-or payload that is not a string or a name holding a line break,
-`enable_live` with a flag that is not a boolean, `update_target` with a
-root or index that is not a string or, on a running server, a root it
-cannot serve, changing nothing, and `util.random_token` with a length
-outside 1 to 1024. `util.random_token` also raises when the OS offers no
-random source.
+line: `reload` with a path that is neither a string nor nil,
+`send_event` with a name that is not a string, a payload that is neither
+a string nor nil or a name holding a line break, `enable_live` with a
+flag that is not a boolean, `update_target` with a root that is not a
+string, an index that is neither a string nor nil, a root or index
+holding a NUL byte or, on a running server, a root it cannot serve,
+changing nothing, and `util.random_token` with a length outside 1 to
+1024. `util.random_token` also raises when the OS offers no random
+source. The instance argument is not checked: given nil, or a table
+`start` did not return, a call raises from inside the module, its
+message naming the module's line rather than the caller's, or returns;
+a stopped instance is taken, and a call on it changes nothing.
 
 `update_target` returns true when the server serves the root asked, and
 false with the cause when live reload is on and the new root cannot be
@@ -442,7 +460,11 @@ Neovim 0.10 writes a slash as `\/`, so a reader decodes it and never
 compares its bytes. The watcher sends no reload for a change under a
 dot path while `serve_dotfiles` is off or under the `__live` entry at
 the root, the file the server was started on excepted, nor for one the
-root's `.liveignore` matches. The README's section holds the rest of the
+root's `.liveignore` matches. On Linux, where each directory is watched
+on its own, a directory named `node_modules` that is there when the
+watch starts is not watched, nor anything under it, so a change there
+sends no reload; one made later is watched. The README's section holds
+the rest of the
 promise: the `start` keys, which of them are required, what one left
 out means and the values each takes; how `asset_root` is read, as a
 string at start and as a function on every asset request, inside a fast
@@ -480,7 +502,7 @@ Suggested keymaps (under `<leader>l` with which-key group): >lua
 TROUBLESHOOTING                                 *live-server-troubleshooting*
 
 Port in use ~
-    The notice reads `LiveServer did not start: Failed to bind
+    The notice reads `LiveServer <port> did not start: Failed to bind
     127.0.0.1:<port>: EADDRINUSE: address already in use`, shown even
     with `notify = false`: another program holds that port. A
     `127.0.0.1` bind is refused the same way when a program holds the
