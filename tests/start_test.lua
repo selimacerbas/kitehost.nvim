@@ -239,6 +239,13 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "features", { dirlist = 1 }, "features.dirlist must be a table" },
         { "host", 1, "host must be a string" },
         { "host", { "127.0.0.1" }, "host must be a string" },
+        -- libuv binds an IP literal alone, so each of these reached the
+        -- bind and was refused there as an invalid address, naming no
+        -- option, after start had checked every other one.
+        { "host", "example.com", 'host must be an IP address or "localhost", got "example.com"' },
+        { "host", "", 'host must be an IP address or "localhost", got ""' },
+        { "host", "[::1]", 'host must be an IP address or "localhost", got "[::1]"' },
+        { "host", "LOCALHOST", 'host must be an IP address or "localhost", got "LOCALHOST"' },
         { "live", false, "live must be a table" },
         { "features", false, "features must be a table" },
         -- A default_index that is no string started, and every GET / then
@@ -302,6 +309,25 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         eq(after, tcps, ("%s opens no socket"):format(shown))
         eq(fds_after, fds, ("%s opens no descriptor"):format(shown))
     end
+    -- A socket opened and closed again leaves the counts above as they
+    -- were, so the host is shown refused before any is made.
+    local real_new_tcp, made = vim.uv.new_tcp, 0
+    H.defer(function()
+        vim.uv.new_tcp = real_new_tcp
+    end)
+    vim.uv.new_tcp = function(...)
+        made = made + 1
+        return real_new_tcp(...)
+    end
+    for _, host in ipairs({ "example.com", "", "[::1]", "LOCALHOST" }) do
+        made = 0
+        local started, res = pcall(server.start, { port = 0, root = root, host = host })
+        if started then
+            server.stop(res)
+        end
+        eq(made, 0, ("host = %s is refused before a socket is made"):format(vim.inspect(host)))
+    end
+    vim.uv.new_tcp = real_new_tcp
     -- libuv's own text repeats the path raw, a control byte included, so
     -- the refusal names it once, escaped, and keeps the error's name.
     local odd = root .. "/mi\27[2Jss\nx"
