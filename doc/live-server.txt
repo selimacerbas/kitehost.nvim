@@ -125,6 +125,22 @@ Options:
 `require("live_server.server").start()` passes it, and the token then
 gates `/__live/asset` too.
 
+`allowed_hosts` (string[]|true, default nil)
+    More Host names a loopback bind (`127.0.0.1`, `::1`) answers. Without
+    them it answers only `localhost`, a `*.localhost` name and a loopback
+    address, and any other Host gets `421 Misdirected Request`, which
+    keeps out a page that reaches the port through DNS rebinding. Each
+    entry is a bare host name, with no port, brackets or wildcard; a start
+    refuses any other. `true` turns the check off, with a warning at each
+    start. A network bind (`0.0.0.0`, a LAN address) has no Host check.
+
+`serve_dotfiles` (boolean, default false)
+    Serve dot paths: while false, a request whose path, or the file it
+    reaches, has a segment starting with `.` (`.env`, `.git/config`,
+    `node_modules/.pnpm`) is 404 and is left out of listings, and a change
+    under one pushes no reload. `/.well-known/` at the root is served
+    either way, and so is the file you started on, at `/`.
+
 `open_on_start` (boolean, default true)
     Open the browser automatically after starting or retargeting.
 
@@ -167,6 +183,10 @@ gates `/__live/asset` too.
     - `filetypes` (string[]): Neovim filetypes to trigger on.
     - `port` (number, optional): Port to use. Falls back to `default_port`.
 
+`live_reload` (table|boolean, default the fields below)
+    `false` turns the section off and `true` on, keeping its other
+    fields; any other value that is not a table is refused.
+
 `live_reload.enabled` (boolean, default true)
     Watch files under the served root and push SSE reload events. A
     change under a dot path pushes none unless `serve_dotfiles` is set,
@@ -189,11 +209,16 @@ gates `/__live/asset` too.
     When a `.css` file changes, hot-swap stylesheets in the browser
     without a full page reload. DOM state is preserved.
 
+`directory_listing` (table|boolean, default the fields below)
+    `false` turns the section off and `true` on, keeping its other
+    fields; any other value that is not a table is refused.
+
 `directory_listing.enabled` (boolean, default true)
     Show a styled directory index when no index file is found.
 
 `directory_listing.show_hidden` (boolean, default false)
-    Include dotfiles in directory listings.
+    List dot entries too; it needs `serve_dotfiles`, since a listing
+    names no dot entry while `serve_dotfiles` is false.
 
 ===============================================================================
 LIVEIGNORE                                      *live-server-liveignore*

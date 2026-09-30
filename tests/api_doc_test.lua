@@ -172,12 +172,12 @@ end)
 -- reads from M.opts. A key whose default is nil is no key of opts at run
 -- time, so both are read from the module's source; each run-time key
 -- found in the table, and a key found there that opts lacks, prove that
--- read.
-H.case("Section 2: every setup() option is in README Options", function()
+-- read. The keys come back sorted, each with its fields: a section's
+-- fields are options too, the keys of a table default that are all names
+-- (the headers table's keys are header names, and a list holds values).
+local function setup_options()
     package.loaded["live_server"] = nil
     local opts = require("live_server").opts
-    local block = readme:match("\n## Options\n(.-)\n## ") or ""
-    ok(block ~= "", "the README has the Options section")
     local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n")
     local defaults = "\n" .. (source:match("\nlocal defaults = {\n(.-)\n}\n") or "")
     local declared, seen, keys = {}, {}, {}
@@ -203,24 +203,47 @@ H.case("Section 2: every setup() option is in README Options", function()
         add(k)
     end
     table.sort(keys)
+    local fields = {}
     for _, k in ipairs(keys) do
-        ok(block:find("\n  " .. k .. " ", 1, true) ~= nil, "setup option " .. k .. " is in README Options")
-        -- A section's fields are options too; the headers table's keys are
-        -- header names, and a list holds values.
         local v = opts[k]
-        local fields = type(v) == "table" and not vim.islist(v) and sorted_keys(v) or {}
-        local is_section = #fields > 0
-        for _, f in ipairs(fields) do
+        local names = type(v) == "table" and not vim.islist(v) and sorted_keys(v) or {}
+        local is_section = #names > 0
+        for _, f in ipairs(names) do
             is_section = is_section and type(f) == "string" and f:find("^[%a_][%w_]*$") ~= nil
         end
-        if is_section then
-            local body = "\n" .. (block:match("\n  " .. vim.pesc(k) .. " = {\n(.-)\n  },") or "")
-            for _, f in ipairs(fields) do
-                ok(
-                    body:find("\n    " .. f .. " ", 1, true) ~= nil,
-                    ("setup option %s.%s is in README Options"):format(k, f)
-                )
-            end
+        fields[k] = is_section and names or {}
+    end
+    return keys, fields
+end
+
+H.case("Section 2: every setup() option is in README Options", function()
+    local block = readme:match("\n## Options\n(.-)\n## ") or ""
+    ok(block ~= "", "the README has the Options section")
+    local keys, fields = setup_options()
+    for _, k in ipairs(keys) do
+        ok(block:find("\n  " .. k .. " ", 1, true) ~= nil, "setup option " .. k .. " is in README Options")
+        local body = "\n" .. (block:match("\n  " .. vim.pesc(k) .. " = {\n(.-)\n  },") or "")
+        for _, f in ipairs(fields[k]) do
+            ok(
+                body:find("\n    " .. f .. " ", 1, true) ~= nil,
+                ("setup option %s.%s is in README Options"):format(k, f)
+            )
+        end
+    end
+end)
+
+-- :help's option list is the other place a user reads the options, so
+-- each one, and each field of a section, has its own entry there.
+H.case("Section 4: every setup() option has an entry in :help's options", function()
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
+    local block = help:match("%*live%-server%-options%*\n(.-)\n=====") or ""
+    ok(block ~= "", "doc/live-server.txt has the live-server-options section")
+    local keys, fields = setup_options()
+    for _, k in ipairs(keys) do
+        ok(block:find("\n`" .. k .. "` (", 1, true) ~= nil, ":help has an entry for setup option " .. k)
+        for _, f in ipairs(fields[k]) do
+            local entry = "\n`" .. k .. "." .. f .. "` ("
+            ok(block:find(entry, 1, true) ~= nil, (":help has an entry for setup option %s.%s"):format(k, f))
         end
     end
 end)
