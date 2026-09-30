@@ -273,7 +273,7 @@ function start_for_path(path, port, in_autocmd)
         -- By pcall itself, so a refused root is a notice with no position.
         local retargeted, answer = pcall(server.update_target, s, root, index)
         if not retargeted then
-            return say("LiveServer could not retarget: " .. tostring(answer), "ERROR")
+            return say(("LiveServer %s could not retarget: %s"):format(tostring(port), tostring(answer)), "ERROR")
         end
         -- The retarget read as done while its live reload went off unsaid;
         -- the server's own warning names the cause.
@@ -318,8 +318,11 @@ function start_for_path(path, port, in_autocmd)
         if not ok then
             -- The server's message names the cause; this names what failed,
             -- since :messages shows the notice without its title. A bind
-            -- prefix here read a refused option as a busy port.
-            return say("LiveServer did not start: " .. tostring(inst_or_err), "ERROR")
+            -- prefix here read a refused option as a busy port. The port is
+            -- the one asked for, as the retarget notices name theirs; an
+            -- auto_start port is the config's own, unchecked until start
+            -- refuses it, so it is spelled by tostring, never by %d.
+            return say(("LiveServer %s did not start: %s"):format(tostring(port), tostring(inst_or_err)), "ERROR")
         end
         active_port = inst_or_err.port
         M.state.servers[active_port] = inst_or_err

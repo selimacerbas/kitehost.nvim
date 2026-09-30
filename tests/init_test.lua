@@ -298,14 +298,14 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     local note = refused_with({ token = "" })
     eq(
         note.msg,
-        "LiveServer did not start: token must be a non-empty string",
+        "LiveServer 0 did not start: token must be a non-empty string",
         "a refused option is reported in the server's words, after what failed"
     )
     eq(note.level, vim.log.levels.ERROR, "as an error")
     -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
     note = refused_with({ host = "192.0.2.1" })
     ok(
-        raised[1] ~= nil and note.msg == "LiveServer did not start: " .. raised[1],
+        raised[1] ~= nil and note.msg == "LiveServer 0 did not start: " .. raised[1],
         ("a failed bind is reported as the server raised it: %s (raised %s)"):format(
             tostring(note.msg),
             tostring(raised[1])
@@ -327,7 +327,7 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     note = refused_with({ notify = false })
     picked_port = 0
     ok(
-        raised[1] ~= nil and note.msg == "LiveServer did not start: " .. raised[1],
+        raised[1] ~= nil and note.msg == ("LiveServer %d did not start: "):format(held_port) .. raised[1],
         ("with notify = false a start on a taken port still says it did not start: %s (raised %s)"):format(
             tostring(note.msg),
             tostring(raised[1])
@@ -659,7 +659,10 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     local note = notes[1] or {}
     eq(
         note.msg,
-        ("LiveServer could not retarget: update_target: root %s does not resolve (ENOENT: stubbed)"):format(unresolved),
+        ("LiveServer %d could not retarget: update_target: root %s does not resolve (ENOENT: stubbed)"):format(
+            inst.port,
+            unresolved
+        ),
         "naming what failed, then the server's cause"
     )
     eq(note.level, vim.log.levels.ERROR, "as an error")
@@ -807,9 +810,10 @@ end)
 -- picker's or a plugin's vim.cmd.edit failed with a traceback, and the
 -- buffer's later FileType autocmds never ran. The stub raises an error
 -- notice sent while the edit runs, as Neovim does, and records the rest.
--- Each notice the auto-start can send is driven: a refused start, a file
--- not yet on disk and a retarget the server refuses (stubbed, since no
--- real directory both resolves for the autocmd and fails the retarget).
+-- Each notice the auto-start can send is driven: a refused start (a port
+-- held, a port start refuses), a file not yet on disk and a retarget the
+-- server refuses (stubbed, since no real directory both resolves for the
+-- autocmd and fails the retarget).
 H.case("Section 12: no auto-start notice raises out of the edit", function()
     local held = assert(vim.uv.new_tcp())
     H.defer(function()
@@ -843,7 +847,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
         server.update_target = real_update
     end)
     -- { what the edit meets, the port auto_start names, whether the file
-    -- is written first, the notice's start }
+    -- is written first, the notice's start with the port in place of %s }
     local shapes = {
         {
             "a refused start",
@@ -851,7 +855,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 return held_port
             end,
             true,
-            "^LiveServer did not start: ",
+            "^LiveServer %s did not start: ",
         },
         {
             "a file not yet on disk",
@@ -860,6 +864,16 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
             end,
             false,
             "^Path not found: ",
+        },
+        -- setup leaves auto_start's port to start, so the notice names
+        -- whatever the config gave.
+        {
+            "a port start refuses",
+            function()
+                return "x"
+            end,
+            true,
+            "^LiveServer %s did not start: port must be an integer",
         },
         {
             "a refused retarget",
@@ -875,7 +889,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 return inst.port
             end,
             true,
-            "^LiveServer could not retarget: update_target: stubbed$",
+            "^LiveServer %s could not retarget: update_target: stubbed$",
         },
     }
     for i, shape in ipairs(shapes) do
@@ -887,7 +901,8 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 open_on_start = false,
                 auto_start = { filetypes = { "lsautoft" }, port = 0 },
             })
-            ls.opts.auto_start.port = shape[2](ls)
+            local port = shape[2](ls)
+            ls.opts.auto_start.port = port
             local later = 0
             vim.api.nvim_create_autocmd("FileType", {
                 group = vim.api.nvim_create_augroup("LiveServerLaterFileType", { clear = true }),
@@ -914,7 +929,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
             end, 1000)
             local note = after[1] or {}
             ok(
-                note.msg ~= nil and note.msg:find(shape[4]) ~= nil and #after == 1,
+                note.msg ~= nil and note.msg:find(shape[4]:format(tostring(port))) ~= nil and #after == 1,
                 ("the notice is sent once the edit is done %s: %s"):format(
                     label,
                     vim.inspect(after, { newline = " ", indent = "" })
@@ -995,7 +1010,7 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     vim.uv.fs_realpath = real_realpath
     eq(
         notes[1] and notes[1].msg,
-        "LiveServer did not start: Invalid root: " .. shown,
+        "LiveServer 0 did not start: Invalid root: " .. shown,
         "a refused start shows the server's text with them as ?"
     )
 end)
