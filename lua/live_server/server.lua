@@ -212,7 +212,7 @@ end
 -- names the file and line (a traceback ran to 15 lines, a hit-enter
 -- prompt each), cut to 300 bytes and marked. A control in the line is a
 -- mark: Neovim shows one as a caret pair, but a notifier that forwards to
--- a terminal or a desktop would pass an escape a peer wrote. A request's
+-- a terminal or a desktop would deliver an escape a peer wrote. A request's
 -- fault and a caller's callback that raised are both told through it.
 local function raise_line(raised)
     return util.marked(tostring(raised):match("^[^\n]*"), 300)
