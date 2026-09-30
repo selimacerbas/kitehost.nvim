@@ -842,8 +842,11 @@ local function schedule_reload(inst, changed_path)
     local rel = changed_path and changed_rel(inst, changed_path)
     local own = rel and is_own_index(inst, rel)
     -- A dot path's change names it to every events client, the name the
-    -- listing hides, and reloads a page for a file the server never serves.
-    if rel and not inst.serve_dotfiles and has_dot_segment(rel) and not own then
+    -- listing hides, and reloads a page for a file the server never serves;
+    -- so does a change in the directory behind /__live/, whatever
+    -- serve_dotfiles says.
+    local hidden = rel and in_live_dir("/" .. rel)
+    if rel and (hidden or (not inst.serve_dotfiles and has_dot_segment(rel))) and not own then
         return
     end
     -- Read with a leading slash, so a line starting with one anchors at
@@ -854,10 +857,11 @@ local function schedule_reload(inst, changed_path)
         return
     end
     -- The file the user started on reloads the page at /; when it sits on
-    -- a dot path (its own name, or the target of a plain-named link) the
-    -- payload says / so no dot name reaches an events client, and a plain
-    -- name keeps its path, so a started-on stylesheet still swaps.
-    local path = (own and has_dot_segment(rel)) and "/" or rel
+    -- a dot path (its own name, or the target of a plain-named link) or in
+    -- that directory, the payload says / so no hidden name reaches an
+    -- events client, and a plain name keeps its path, so a started-on
+    -- stylesheet still swaps.
+    local path = (own and (hidden or has_dot_segment(rel))) and "/" or rel
     -- Each path once, at its latest change: a file written faster than the
     -- debounce restarts it at every write. A map to the change's number,
     -- sorted at the send, where a move to the end was quadratic in a burst.
@@ -917,7 +921,10 @@ end
 -- .git included.
 local function dir_watched(inst, dir)
     local rel = changed_rel(inst, dir)
-    return inst.serve_dotfiles or not has_dot_segment(rel) or holds_own_index(inst, rel)
+    if holds_own_index(inst, rel) then
+        return true
+    end
+    return (inst.serve_dotfiles or not has_dot_segment(rel)) and not in_live_dir("/" .. rel)
 end
 
 -- Recursively scan all subdirectories under root (for Linux fallback watchers)

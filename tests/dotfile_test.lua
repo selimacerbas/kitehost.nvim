@@ -3,7 +3,8 @@
 -- to anyone the server answers (measured). The request path is checked, and
 -- the file served by its path under the root, never the root's own path.
 -- Since the rule the listing hides them too, where show_hidden alone named
--- them, and a change to one sends no reload. A .liveignore that is not a
+-- them, and a change to one sends no reload, nor does one in the
+-- directory behind /__live/ (Section 7). A .liveignore that is not a
 -- regular file (a FIFO, a directory), cannot be read or is over 64 KiB (a
 -- link to a large file among them) is never read, gives no rule and is
 -- named once; the FIFO row starts in a child Neovim bounded at 5 s. A
@@ -421,6 +422,37 @@ H.case("Section 7: a dot path's change sends no reload", function()
     ok(
         reloaded(qc, qmark, 2000, "axb.txt"),
         "a .liveignore line a?b is literal, so axb.txt reloads " .. named(qc, qmark)
+    )
+    -- The directory behind /__live/, directly under the root and in any
+    -- letter case, is refused by the root route and hidden by the listing,
+    -- and a change there named its file to every events client and
+    -- reloaded every page, as a dot path's once did. The file the server
+    -- was started on is the exception there too, reloading as /; a
+    -- directory so named below the root is an ordinary one.
+    for _, name in ipairs({ "__live", "__Live" }) do
+        local ns = H.tmpdir()
+        vim.fn.mkdir(ns .. "/" .. name, "p")
+        vim.fn.mkdir(ns .. "/sub/__live", "p")
+        local _, nc, nmark = watched(nil, ns)
+        H.write_file(ns .. "/" .. name .. "/secret-name.html", "SECRET-15")
+        vim.wait(300)
+        H.write_file(ns .. "/sub/__live/x.txt", "x")
+        ok(
+            reloaded(nc, nmark, 2000, "sub/__live/x.txt") and not streamed(nc, nmark, "secret%-name"),
+            ("a write under <root>/%s/ sends no reload, and one under sub/__live/ does %s"):format(
+                name,
+                named(nc, nmark)
+            )
+        )
+    end
+    local own_ns = H.tmpdir()
+    vim.fn.mkdir(own_ns .. "/__live", "p")
+    H.write_file(own_ns .. "/__live/page.html", "<html><body>LIVEPAGE</body></html>")
+    local _, nsc, nsmark = watched({ default_index = own_ns .. "/__live/page.html" }, own_ns)
+    H.write_file(own_ns .. "/__live/page.html", "<html><body>LIVEPAGE 2</body></html>")
+    ok(
+        reloaded(nsc, nsmark, 2000, "/") and not streamed(nsc, nsmark, "__live"),
+        "a write to the started-on file in <root>/__live/ reloads, naming / " .. named(nsc, nsmark)
     )
 end)
 
