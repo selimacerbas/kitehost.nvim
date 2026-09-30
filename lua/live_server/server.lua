@@ -2299,9 +2299,12 @@ local function check_start(cfg)
     -- Content-Type that rendered an asset as HTML past the sandbox its
     -- extension decides. Two spellings of one name went out as two lines,
     -- which a cache reads as one list. The copy comes from the same pass,
-    -- so the table served is the one checked.
-    local cfg_headers = cfg.headers or {}
-    if type(cfg_headers) ~= "table" then
+    -- so the table served is the one checked. false is refused as for
+    -- the other table keys, where it read as no headers.
+    local cfg_headers = cfg.headers
+    if cfg_headers == nil then
+        cfg_headers = {}
+    elseif type(cfg_headers) ~= "table" then
         error("headers must be a table of header names and values", 0)
     end
     local headers, spelled = {}, {}

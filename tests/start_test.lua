@@ -177,6 +177,9 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "headers", { ["connection"] = "keep-alive" }, "headers: connection is the server's own field" },
         { "headers", { ["CONTENT-type"] = "text/html" }, "headers: CONTENT-type is the server's own field" },
         { "headers", "x", "headers must be a table" },
+        -- Read as unset, where host, protected_paths, index_names,
+        -- default_index and asset_root given as false are refused.
+        { "headers", false, "headers must be a table of header names and values" },
         { "cors", "http://a.example\r\nSet-Cookie: x=1", "cors entry is not an origin" },
         { "cors", "http://a.example\n", "cors entry is not an origin" },
         { "cors", "http://a .example", "cors entry is not an origin" },
