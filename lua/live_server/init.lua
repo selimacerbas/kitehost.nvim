@@ -174,12 +174,16 @@ function M.setup(opts)
     end
     M.opts = merged
 
+    -- Cleared on every call: a later setup that arms nothing (false, no
+    -- filetypes, an empty list) must also disarm the earlier autocmd, which
+    -- otherwise kept starting servers and raised on a false auto_start.
+    local group = vim.api.nvim_create_augroup("LiveServerAutoStart", { clear = true })
     if M.opts.auto_start and M.opts.auto_start.filetypes then
         local fts = M.opts.auto_start.filetypes
         if #fts > 0 then
             vim.api.nvim_create_autocmd("FileType", {
                 pattern = fts,
-                group = vim.api.nvim_create_augroup("LiveServerAutoStart", { clear = true }),
+                group = group,
                 callback = function(args)
                     local file = vim.api.nvim_buf_get_name(args.buf)
                     if file == "" then

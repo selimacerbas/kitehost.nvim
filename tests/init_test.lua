@@ -454,6 +454,33 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     local armed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
     ok(armed and #cmds == 1, 'auto_start = { filetypes = { "livetestft" } } arms one FileType autocmd')
     pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    -- A later setup that arms nothing kept the earlier autocmd, which then
+    -- started servers or raised on a false auto_start, so the group is not
+    -- deleted between the two calls here: the sequence is what is checked.
+    local function file_types()
+        local found, list = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+        local patterns = {}
+        for _, cmd in ipairs(found and list or {}) do
+            table.insert(patterns, cmd.pattern)
+        end
+        table.sort(patterns)
+        return table.concat(patterns, ",")
+    end
+    for _, c in ipairs({
+        { false, "" },
+        { { filetypes = {} }, "" },
+        { { filetypes = { "othertestft" } }, "othertestft" },
+    }) do
+        local later = vim.inspect(c[1], { newline = " ", indent = "" })
+        package.loaded["live_server"] = nil
+        local configured = require("live_server")
+        configured.setup({ notify = false, auto_start = { filetypes = { "livetestft" } } })
+        eq(file_types(), "livetestft", "the first setup arms livetestft before auto_start = " .. later)
+        local set, err = pcall(configured.setup, { notify = false, auto_start = c[1] })
+        ok(set, ("a later setup takes auto_start = %s: %s"):format(later, tostring(err)))
+        eq(file_types(), c[2], ("a later auto_start = %s leaves the FileType autocmds it arms, only"):format(later))
+    end
+    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
     package.loaded["live_server"] = nil
     local flags = require("live_server")
     local set, err = pcall(flags.setup, {
