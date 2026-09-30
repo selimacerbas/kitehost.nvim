@@ -337,6 +337,31 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         eq(made, 0, ("host = %s is refused before a socket is made"):format(vim.inspect(host)))
     end
     vim.uv.new_tcp = real_new_tcp
+    -- The shapes the check takes, each started and stopped: a zone is bound
+    -- as given, so the loopback's own zone (lo0 on macOS, lo on Linux) is
+    -- read from the machine, and the zoned row is skipped where no IPv6
+    -- loopback exists.
+    local zone
+    for name, list in pairs(vim.uv.interface_addresses() or {}) do
+        for _, a in ipairs(list) do
+            if a.ip == "::1" then
+                zone = name
+            end
+        end
+    end
+    local accepted = { "localhost", "127.0.0.1", "::FFFF:127.0.0.1" }
+    if zone then
+        vim.list_extend(accepted, { "::1", "::1%" .. zone })
+    else
+        H.skip('host = "::1" and "::1%<loopback zone>" start (no IPv6 loopback on this machine)')
+    end
+    for _, host in ipairs(accepted) do
+        local started, res = pcall(server.start, { port = 0, root = root, host = host })
+        if started then
+            server.stop(res)
+        end
+        ok(started, ("host = %s starts: %s"):format(vim.inspect(host), started and "" or tostring(res)))
+    end
     -- libuv's own text repeats the path raw, a control byte included, so
     -- the refusal names it once, escaped, and keeps the error's name.
     local odd = root .. "/mi\27[2Jss\nx"

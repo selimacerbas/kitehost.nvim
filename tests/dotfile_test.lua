@@ -454,6 +454,38 @@ H.case("Section 7: a dot path's change sends no reload", function()
         reloaded(nsc, nsmark, 2000, "/") and not streamed(nsc, nsmark, "__live"),
         "a write to the started-on file in <root>/__live/ reloads, naming / " .. named(nsc, nsmark)
     )
+    -- The per-directory watchers inotify needs, run here by reading the
+    -- system as Linux: a watch under <root>/__live/ would be spent on
+    -- changes the rule above drops, as one under a dot directory would.
+    local deep = H.tmpdir()
+    vim.fn.mkdir(deep .. "/__live/a/b", "p")
+    vim.fn.mkdir(deep .. "/sub/c", "p")
+    local per = server.start({
+        port = 0,
+        root = deep,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(per)
+    end)
+    local real_uname = uv.os_uname
+    uv.os_uname = function()
+        return { sysname = "Linux" }
+    end
+    local on = server.enable_live(per, true)
+    uv.os_uname = real_uname
+    local dirs, spent = {}, false
+    for dir in pairs(per._fs_events or {}) do
+        dirs[#dirs + 1] = dir
+        spent = spent or dir:find("/__live", 1, true) ~= nil
+    end
+    table.sort(dirs)
+    local shown = table.concat(dirs, " ")
+    ok(
+        on and #dirs > 0 and shown:find("/sub/c", 1, true) ~= nil and not spent,
+        "the per-directory watcher watches sub/c and nothing under <root>/__live/: " .. shown
+    )
 end)
 
 -- libuv names an event on the watched directory itself by the directory's

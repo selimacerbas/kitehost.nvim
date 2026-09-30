@@ -549,10 +549,11 @@ end)
 -- namespace never carries. The namespace is the server's: such a name is
 -- 404 under each configuration below and the disk is never read, while
 -- the four routes answer as they did. The token gate comes first, so on a
--- token server whose protected_paths pattern matches such a name, a
--- request without the token is 401 before the namespace's 404. The rule reads the path as normalized, so an
--- escaped, doubled or dotted spelling of the namespace is held too; a FIFO
--- there answers at once, since opening one blocks the editor's loop.
+-- token server whose protected_paths pattern matches such a name, a GET
+-- without the token is 401 before the namespace's 404, and 404 with it.
+-- The rule reads the path as normalized, so an escaped, doubled or dotted
+-- spelling of the namespace is held too; a FIFO there answers at once,
+-- since opening one blocks the editor's loop.
 H.case("Section 8: a /__live/ name that is no route is 404", function()
     local site = H.tmpdir()
     H.write_file(site .. "/index.html", "<html><body>ok</body></html>")
@@ -663,6 +664,13 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
         )
         eq(raw(port, get("/index.html", port)).status, 200, "under " .. c[1] .. ", a root-route file is 200")
     end
+    local gated = serve({ root = site, token = "tok", protected_paths = { "^/__live/" } })
+    eq(
+        raw(gated.port, get("/__live/other.txt", gated.port)).status,
+        401,
+        "under a pattern matching /__live/, a name that is no route is 401 without the token"
+    )
+    eq(raw(gated.port, get("/__live/other.txt?t=tok", gated.port)).status, 404, "and 404 with it")
 end)
 
 -- The listing named the __live directory and links into it, each 404 on
