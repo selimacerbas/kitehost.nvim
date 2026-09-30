@@ -444,7 +444,7 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     end)
     local read = get(acao.port, "/secret.txt", "Origin: http://other.example\r\n")
     ok(read.headers["access-control-allow-origin"] == "*", "a headers origin line reaches the root route")
-    states("With `cors = false`, an `Access-Control-Allow-Origin` you pass in `headers`", "the headers origin line")
+    states("With `cors = false`, an `Access-Control-Allow-Origin` you set in `headers`", "the headers origin line")
 
     -- The file the user started on is served at / though it is a dot file.
     local draft = server.start({ port = 0, root = root, default_index = root .. "/.draft.html" })
