@@ -486,14 +486,16 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         )
     end
     pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
-    -- Names Neovim ships with each of these characters are taken.
+    -- Names of the accepted shape are taken: Neovim ships bicep-params,
+    -- lsp_markdown and 8th; a dot joins a compound filetype (c.doxygen),
+    -- and no shipped name holds a plus, which is left for a user's own.
     package.loaded["live_server"] = nil
     local named = require("live_server")
     local took, took_err = pcall(named.setup, {
         notify = false,
-        auto_start = { filetypes = { "html", "git-rebase", "sh.bash", "c_2", "x++" } },
+        auto_start = { filetypes = { "html", "bicep-params", "lsp_markdown", "8th", "c.doxygen", "my+ft" } },
     })
-    ok(took, "letters, digits and _ . + - are taken: " .. tostring(took_err))
+    ok(took, "names of the accepted shape (letters, digits, _ . + -) are taken: " .. tostring(took_err))
     pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
     -- false is off, as for a section, and an empty list starts nothing:
     -- neither arms the FileType autocmd.
