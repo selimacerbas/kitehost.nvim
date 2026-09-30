@@ -1778,14 +1778,18 @@ local function handle_request(conn, req)
     -- gate first; any other method never reaches the gate, so it is
     -- answered here, before the preflight, which answered /__live and
     -- /__live/ (one canonical path) as the root route's, origin and all.
+    -- The first segment is read in any case here, as refusal() reads it:
+    -- a case variant (/__Live/x.txt) got the root route's preflight 204
+    -- and its origin line while its GET was 404. The routes stay exact.
     local namespaced = path_only == "/__live" or path_only:find("^/__live/") ~= nil
-    if namespaced and req.method ~= "GET" and not LIVE_ROUTES[path_only] then
+    local reserved = in_live_dir(path_only)
+    if reserved and req.method ~= "GET" and not LIVE_ROUTES[path_only] then
         return http_404(sock, path_only)
     end
     -- A cors preflight for the root route; /__live/* answers no
     -- cross-origin read, so its preflight gets the 405 below. Both read the
     -- canonical path: /%5F_live/events is served as /__live/events.
-    if req.method == "OPTIONS" and inst.cors and req.headers["access-control-request-method"] and not namespaced then
+    if req.method == "OPTIONS" and inst.cors and req.headers["access-control-request-method"] and not reserved then
         -- A browser refuses a read that carries a header outside the
         -- safelist unless the preflight names it. The names asked for are
         -- echoed when every comma-separated item is a token, never as "*":

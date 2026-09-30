@@ -851,6 +851,18 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
                 )
                 eq(r.headers["access-control-allow-origin"], nil, label .. " carries no ACAO")
             end
+            -- The preflight read the exact spelling alone, so a case
+            -- variant got the root route's 204 and its origin line.
+            for _, path in ipairs({ "/__Live/x.txt", "/__LIVE/x.txt", "/__live/x.txt" }) do
+                local r = raw(
+                    inst.port,
+                    ("OPTIONS %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://a.test\r\n"):format(path, inst.port)
+                        .. "Access-Control-Request-Method: GET\r\n\r\n"
+                )
+                local label = ("a preflight for %s beside a link to %s"):format(path, c[1])
+                eq(r.status, 404, label .. " is 404")
+                eq(r.headers["access-control-allow-origin"], nil, label .. " carries no ACAO")
+            end
             local listing = raw(inst.port, get("/", inst.port)).body
             ok(
                 listing:find('href="/plain.txt"', 1, true) ~= nil and not listing:find("__Live", 1, true),
