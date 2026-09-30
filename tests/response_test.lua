@@ -4,8 +4,8 @@
 -- and its own fields once, the preflight answer (before the token gate,
 -- never with cors off or on /__live/*) and the request headers it allows,
 -- a cors list's echo of a listed Origin, a 404 that names the request,
--- never a filesystem path or the query, and the instance's header tables
--- left as start made them.
+-- never a filesystem path or the query, the instance's header tables left
+-- as start made them, and a /__live/ name that is no route answered 404.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -526,6 +526,48 @@ H.case("Section 7: a response leaves the instance's header tables as start made 
         vim.deep_equal(listed.headers, headers),
         "under a cors list inst.headers is as start made it: " .. shown(listed.headers)
     )
+end)
+
+-- A name under /__live/ that is no route fell through to the root route,
+-- so a user's own <root>/__live/ file was served with the cors origin the
+-- namespace never carries. The namespace is the server's: such a name is
+-- 404 under every configuration and the disk is never read, while the four
+-- routes answer as they did.
+H.case("Section 8: a /__live/ name that is no route is 404", function()
+    local site = H.tmpdir()
+    H.write_file(site .. "/index.html", "<html><body>ok</body></html>")
+    vim.fn.mkdir(site .. "/__live", "p")
+    H.write_file(site .. "/__live/other.txt", "USERFILE")
+    for _, c in ipairs({
+        { "no cors, no token", {} },
+        { "cors", { cors = true } },
+        { "a token", { token = "tok" } },
+        { "cors and a token", { cors = true, token = "tok" } },
+    }) do
+        local cfg = vim.tbl_extend("force", { root = site, features = { dirlist = { enabled = true } } }, c[2])
+        local inst = serve(cfg)
+        local port = inst.port
+        local q = cfg.token and "?t=tok" or ""
+        for _, target in ipairs({ "/__live/other.txt", "/__live/other.txt?t=tok", "/__live/", "/__live" }) do
+            local r = raw(port, get(target, port))
+            eq(r.status, 404, ("under %s, %s is 404"):format(c[1], target))
+            ok(not r.body:find("USERFILE", 1, true), ("under %s, %s never serves the file"):format(c[1], target))
+            eq(r.headers["access-control-allow-origin"], nil, ("under %s, %s carries no ACAO"):format(c[1], target))
+        end
+        eq(raw(port, get("/__live/script.js", port)).status, 200, "under " .. c[1] .. ", the client script is 200")
+        eq(stream_head(port, "/__live/events" .. q).status, 200, "under " .. c[1] .. ", the event stream is 200")
+        eq(
+            raw(port, get("/__live/inject" .. (q == "" and "?" or q .. "&") .. "event=x", port)).status,
+            200,
+            "under " .. c[1] .. ", inject is 200"
+        )
+        eq(
+            raw(port, get("/__live/asset" .. (q == "" and "?" or q .. "&") .. "p=pic.png", port)).status,
+            200,
+            "under " .. c[1] .. ", the asset route is 200"
+        )
+        eq(raw(port, get("/index.html", port)).status, 200, "under " .. c[1] .. ", a root-route file is 200")
+    end
 end)
 
 H.finish()

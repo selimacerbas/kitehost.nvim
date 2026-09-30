@@ -913,10 +913,12 @@ H.case("the injected client is never gated", function()
     else
         H.skip("a link to the root's own __live/script.js (" .. tostring(link_err) .. ")")
     end
-    -- A case-sensitive volume has no second name for the file.
+    -- A case-sensitive volume has no second name for the file. The variant
+    -- is a name under /__live/ that is no route, so it never reaches the
+    -- file at all.
     if uv.fs_stat(site .. "/__live/SCRIPT.JS") then
         local r = http_get(base .. "/__live/SCRIPT.JS")
-        eq(r.status, 401, "the root's own __live/script.js under a case variant wants the token")
+        eq(r.status, 404, "the root's own __live/script.js under a case variant is 404, never served")
     else
         H.skip("a case variant of the root's own __live/script.js (this volume is case-sensitive)")
     end

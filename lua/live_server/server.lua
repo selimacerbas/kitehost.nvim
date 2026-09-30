@@ -1836,6 +1836,12 @@ local function handle_request(conn, req)
         end
         return stream_file(sock, real, asset_headers(inst, real), "/__live/asset")
     end
+    -- The namespace is the server's: a name under it that is no route never
+    -- reaches the disk, so a user's own <root>/__live/ file cannot answer
+    -- with the root route's headers, the cors origin among them.
+    if path_only == "/__live" or path_only:find("^/__live/") then
+        return http_404(sock, path_only)
+    end
 
     -- Map path
     local mapped = sanitize_and_map(path_only, inst.root_real)
