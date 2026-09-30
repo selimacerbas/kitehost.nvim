@@ -407,8 +407,18 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     end
     -- A zone is an interface name: the check read only the text before
     -- the first %, so a second %, a control byte or a space reached the
-    -- bind, which dropped a zone it could not read without a word.
-    for _, host in ipairs({ "::1%a%b", "::1%%", "::1%\n", "::1%\27[2J", "::1% lo0", "::1%lo0 ", "127.0.0.1%lo0" }) do
+    -- bind, which dropped a zone it could not read without a word; an
+    -- empty zone names no interface either.
+    for _, host in ipairs({
+        "::1%",
+        "::1%a%b",
+        "::1%%",
+        "::1%\n",
+        "::1%\27[2J",
+        "::1% lo0",
+        "::1%lo0 ",
+        "127.0.0.1%lo0",
+    }) do
         local started, res = pcall(server.start, { port = 0, root = root, host = host })
         if started then
             server.stop(res)
