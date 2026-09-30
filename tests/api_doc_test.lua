@@ -9,12 +9,14 @@
 --   /__live/ route and, of the instance's fields, only the two it
 --   promises. A route built by concatenation is no literal Section 6
 --   reads, and an option start reads under a configuration none of
---   Section 4's gives is not recorded.
+--   Section 4's gives is not recorded; a nested key is matched as a
+--   whole name on its top-level key's line.
 -- Sections 7 and 8: every setup() option, and each field of a section,
 --   is in the README's Options block and has an entry in :help's
 --   options. The keys come from the defaults table and every M.opts.<key>
---   the module's source spells, so a key read through an alias of M.opts
---   or rawget is not seen.
+--   the module's source spells, and a section whose default is nil
+--   (auto_start) takes its fields from every M.opts.<key>.<field>, so a
+--   key or field read through an alias of M.opts or rawget is not seen.
 -- Section 9: every function of require("live_server") is named in the
 --   README's "API (for lua configs)" and in :help's API section. Its
 --   tables (opts, state) are the module's state and are not read.
@@ -23,11 +25,19 @@
 -- Section 11: each SECURITY.md claim a request can check is checked
 --   beside a phrase of its sentence: the asset route's reach, list and
 --   sandbox, the root route's script, the listing, a headers origin line,
---   no origin line on /__live/, the referrer policy, the started-on dot
---   file, a pattern's spelling and a hard link. A claim about what a
---   program or a browser does later (the start probe, the opener's
---   arguments, the history) has no row.
--- Sections 10 and 11 pin a phrase: a reworded claim reds, a reversed one
+--   no origin line on /__live/ while other Access-Control headers reach
+--   it, a rebound page with the Host check off, /.well-known/, the
+--   started-on dot file, the reserved __live entry, a pattern's spelling
+--   and a hard link. A claim about what a program, a browser or a DNS
+--   server does later (the start probe, a file swapped between the check
+--   and the open, an allowed_hosts name's records, the opener's
+--   arguments, the history) or about the editor (auto_start moving the
+--   root) has no row.
+-- Section 12: the README's request order, where a request can check it:
+--   the 400 for a method, a header name and a value, and the namespace's
+--   404 before the method check. The order of the other steps is read,
+--   not checked.
+-- Sections 10 to 12 pin a phrase: a reworded claim reds, a reversed one
 --   that keeps the phrase does not.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
@@ -120,17 +130,28 @@ end)
 -- when the section is a table), so the keys are the union over several
 -- configurations: none but the two required, the sections given empty or
 -- off, and every option set, a function asset_root and a cors list among
--- them. A map or an empty table is read through a proxy of its own, so
--- its keys are recorded too; a list is handed over as it is, since start
--- walks it with ipairs, which reads no proxy.
+-- them. A section (a map keyed by Lua names, or an empty table) is read
+-- through a proxy of its own, so its keys are recorded too; a list, and
+-- the headers map, whose keys are header names, are handed over as they
+-- are, since start walks them with ipairs or pairs, which read no proxy.
+local function names_only(t)
+    for k in pairs(t) do
+        if type(k) ~= "string" or not k:find("^[%a_][%w_]*$") then
+            return false
+        end
+    end
+    return true
+end
+
 H.case("Section 4: every option start reads is documented", function()
     local root, assets = H.tmpdir(), H.tmpdir()
+    H.write_file(root .. "/page.html", "PAGE")
     local read = {}
     local function proxy(backing, prefix)
         return setmetatable({}, {
             __index = function(_, key)
                 local value = backing[key]
-                if type(value) == "table" and #value == 0 then
+                if type(value) == "table" and #value == 0 and names_only(value) then
                     return proxy(value, prefix .. key .. ".")
                 end
                 read[prefix .. key] = true
@@ -174,21 +195,28 @@ H.case("Section 4: every option start reads is documented", function()
             features = { dirlist = { enabled = false } },
         },
     }
+    local started = {}
     for _, cfg in ipairs(configs) do
         local inst = server.start(proxy(cfg, ""))
+        table.insert(started, inst)
         H.defer(function()
             server.stop(inst)
         end)
     end
+    -- The configuration with every option set sends its one header, so
+    -- start walked the headers map rather than an empty proxy.
+    local sent = H.response(H.raw_request(started[4].port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    ok(sent.headers["x-test"] == "1", "start reads the headers map given: X-Test is sent")
     local keys = sorted_keys(read)
     ok(#keys > 0, "start reads its options through the table given")
     for _, key in ipairs(keys) do
-        -- A nested key is named on its top-level key's line of the example.
+        -- A nested key is named on its top-level key's line of the example,
+        -- as a whole name: inject_script and css_inject do not name inject.
         local parts = vim.split(key, ".", { plain = true })
         local line = section:match("\n  " .. vim.pesc(parts[1]) .. " = [^\n]*")
         local named = line ~= nil
         for i = 2, #parts do
-            named = named and line:find(parts[i] .. " = ", 1, true) ~= nil
+            named = named and line:find("%f[%w_]" .. vim.pesc(parts[i]) .. " = ") ~= nil
         end
         ok(named, ("start's %s is documented"):format(key))
     end
@@ -276,6 +304,15 @@ local function setup_options()
         end
         fields[k] = is_section and names or {}
     end
+    -- A section whose default is nil (auto_start) has no default table to
+    -- name its fields, so every M.opts.<key>.<field> the source spells is
+    -- a field too.
+    for k, f in source:gmatch("M%.opts%.([%a_][%w_]*)%.([%a_][%w_]*)") do
+        if fields[k] and not vim.tbl_contains(fields[k], f) then
+            table.insert(fields[k], f)
+            table.sort(fields[k])
+        end
+    end
     return keys, fields
 end
 
@@ -285,12 +322,21 @@ H.case("Section 7: every setup() option is in README Options", function()
     local keys, fields = setup_options()
     for _, k in ipairs(keys) do
         ok(block:find("\n  " .. k .. " ", 1, true) ~= nil, "setup option " .. k .. " is in README Options")
-        local body = "\n" .. (block:match("\n  " .. vim.pesc(k) .. " = {\n(.-)\n  },") or "")
+        local body = block:match("\n  " .. vim.pesc(k) .. " = {\n(.-)\n  },")
+        -- A section shown as a table names each field on a line of its own;
+        -- one whose default is nil names its fields on its example lines.
+        local example = ""
+        for line in block:gmatch("\n  [%-%s]*" .. vim.pesc(k) .. " = [^\n]*") do
+            example = example .. line
+        end
         for _, f in ipairs(fields[k]) do
-            ok(
-                body:find("\n    " .. f .. " ", 1, true) ~= nil,
-                ("setup option %s.%s is in README Options"):format(k, f)
-            )
+            local named
+            if body then
+                named = ("\n" .. body):find("\n    " .. f .. " ", 1, true) ~= nil
+            else
+                named = example:find("%f[%w_]" .. vim.pesc(f) .. " = ") ~= nil
+            end
+            ok(named, ("setup option %s.%s is in README Options"):format(k, f))
         end
     end
 end)
@@ -485,7 +531,50 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     local asset = get(live.port, "/__live/asset?p=pic.svg", origin)
     ok(asset.status == 200 and asset.headers["access-control-allow-origin"] == nil, "an asset carries none")
     ok(get(live.port, "/secret.txt", origin).headers["access-control-allow-origin"] == "*", "the root route does")
-    states("no `/__live/` route carries a CORS header", "the live routes' origin line")
+    states("no `/__live/` route carries an `Access-Control-Allow-Origin` header", "the live routes' origin line")
+
+    -- Another Access-Control header set in headers reaches every route.
+    local credentials = server.start({
+        port = 0,
+        root = root,
+        asset_root = assets,
+        headers = { ["Access-Control-Allow-Credentials"] = "true" },
+    })
+    H.defer(function()
+        server.stop(credentials)
+    end)
+    local cred = get(credentials.port, "/__live/asset?p=pic.svg", origin)
+    ok(
+        cred.headers["access-control-allow-credentials"] == "true"
+            and cred.headers["access-control-allow-origin"] == nil,
+        "an asset carries a headers Access-Control-Allow-Credentials and no origin line"
+    )
+    states("reaches every route", "the other Access-Control headers")
+
+    -- With the Host check off, a page under a name that rebinds to this
+    -- machine is answered as the server's own origin; with it on, 421.
+    local rebind = "Host: rebind.example\r\n"
+    local function as_rebound(port, path)
+        local data = H.raw_request(port, ("GET %s HTTP/1.1\r\n%s\r\n"):format(path, rebind))
+        return data and H.response(data).status or 0
+    end
+    local checked = server.start({ port = 0, root = root, asset_root = assets })
+    local open = server.start({ port = 0, root = root, asset_root = assets, allowed_hosts = true })
+    H.defer(function()
+        server.stop(checked)
+        server.stop(open)
+    end)
+    ok(as_rebound(checked.port, "/secret.txt") == 421, "with the Host check on, a rebound name is 421")
+    ok(as_rebound(open.port, "/secret.txt") == 200, "with it off, the root route answers a rebound name")
+    ok(as_rebound(open.port, "/__live/asset?p=pic.svg") == 200, "and without the token the asset route does too")
+    states("a page whose name rebinds to this machine", "a rebound page with the Host check off")
+
+    -- /.well-known/ at the root is served under the dot rule, token or not.
+    vim.fn.mkdir(root .. "/.well-known", "p")
+    H.write_file(root .. "/.well-known/security.txt", "WELLKNOWN")
+    local known = get(gated.port, "/.well-known/security.txt")
+    ok(known.status == 200 and known.body == "WELLKNOWN", "/.well-known/ at the root is served without the token")
+    states("`/.well-known/` at the root is served either way", "the dot rule's exception")
 
     -- Every response names strict-origin, a weaker policy set in headers
     -- replaced.
@@ -504,6 +593,43 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     ok(get(draft.port, "/").body == "DRAFT", "the started-on dot file is served at /")
     ok(get(draft.port, "/.draft.html").status == 404, "and by its own name is 404")
     states("even when it is a dot file", "the started-on file's exception")
+
+    -- An entry named __live at the root, in any letter case, is the
+    -- server's: a directory's files and a file of that name are not
+    -- served and the listing leaves the entry out; the file the server
+    -- was started on is served at / from there, and the asset route
+    -- serves such a directory under its asset_root.
+    local reserved, named_file = H.tmpdir(), H.tmpdir()
+    vim.fn.mkdir(reserved .. "/__Live", "p")
+    H.write_file(reserved .. "/__Live/page.html", "LIVEPAGE")
+    H.write_file(reserved .. "/__Live/x.txt", "RESERVED")
+    H.write_file(reserved .. "/plain.txt", "PLAIN")
+    H.write_file(named_file .. "/__LIVE", "NAMED")
+    H.write_file(named_file .. "/plain.txt", "PLAIN")
+    local held = server.start({ port = 0, root = reserved, asset_root = reserved })
+    local filed = server.start({ port = 0, root = named_file })
+    local own = server.start({ port = 0, root = reserved, default_index = reserved .. "/__Live/page.html" })
+    H.defer(function()
+        server.stop(held)
+        server.stop(filed)
+        server.stop(own)
+    end)
+    ok(get(held.port, "/__Live/x.txt").status == 404, "a file in <root>/__Live/ is not served")
+    ok(get(filed.port, "/__LIVE").status == 404, "a file named __LIVE at the root is not served")
+    local held_list, filed_list = get(held.port, "/").body, get(filed.port, "/").body
+    ok(
+        held_list:find("plain.txt", 1, true) and not held_list:lower():find("__live", 1, true),
+        "the listing leaves the __Live directory out"
+    )
+    ok(filed_list:find("plain.txt", 1, true) and not filed_list:lower():find("__live", 1, true), "and the __LIVE file")
+    states("an entry named `__live` at the root, in any letter case, file or directory", "the reserved entry")
+    states("the `__live` entry excepted", "what the listing leaves out")
+    ok(get(own.port, "/").body == "LIVEPAGE", "the started-on file in <root>/__Live/ is served at /")
+    ok(get(own.port, "/__Live/page.html").status == 404, "and by its own name is 404")
+    states("or sits in that directory", "the started-on file's exception")
+    local reached = get(held.port, "/__live/asset?p=__Live/x.txt")
+    ok(reached.status == 200 and reached.body == "RESERVED", "the asset route serves the directory")
+    states("and a `__live` directory too", "the asset route's reach")
 
     -- A pattern matches the name as the disk spells it; a hard link is
     -- another name.
@@ -531,6 +657,53 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
         H.skip("no hard link could be made: " .. tostring(link_err))
     end
     states("a hard link to a protected file under another name is not gated", "the hard link")
+end)
+
+-- The README's request order is part of the promise, so the steps a
+-- request can check are checked beside a phrase of their sentence.
+H.case("Section 12: the README's request order holds as the server answers", function()
+    local order = readme:match("\nThe HTTP surface is part of the same promise[^\n]*") or ""
+    ok(order ~= "", "the README has the request-order paragraph")
+    local function says(claim, what)
+        ok(order:find(claim, 1, true) ~= nil, ("the README states %s: %s"):format(what, claim))
+    end
+    local root = H.tmpdir()
+    H.write_file(root .. "/a.txt", "A")
+    local inst = server.start({ port = 0, root = root, cors = true })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local function send(line, extra)
+        local data = H.raw_request(inst.port, ("%s\r\nHost: 127.0.0.1\r\n%s\r\n"):format(line, extra or ""))
+        return data and H.response(data) or { status = 0, headers = {} }
+    end
+
+    -- A head the server cannot read is 400 before any route is read.
+    ok(send("get /a.txt HTTP/1.1").status == 400, "a lower-case method is 400")
+    ok(send("M-SEARCH /a.txt HTTP/1.1").status == 400, "a method holding a hyphen is 400")
+    says("a method that is not upper-case letters alone", "the 400 for a method")
+    ok(send("GET /a.txt HTTP/1.1", "X-A : 1\r\n").status == 400, "a header name holding a space is 400")
+    says("a header name that is no token", "the 400 for a header name")
+    ok(send("GET /a.txt HTTP/1.1", "X-A: a\rb\r\n").status == 400, "a bare CR in a value is 400")
+    ok(send("GET /a.txt HTTP/1.1", "X-A: a\0b\r\n").status == 400, "a NUL in a value is 400")
+    says("a CR or a NUL in a header value", "the 400 for a value")
+
+    -- A method other than GET on a name in the namespace that is no route
+    -- is 404 before the method check, so a preflight there gets no origin
+    -- line; the root route's preflight still answers.
+    local asked = "Origin: http://app.test\r\nAccess-Control-Request-Method: GET\r\n"
+    for _, path in ipairs({ "/__live", "/__live/", "/__live/other.txt" }) do
+        local r = send("OPTIONS " .. path .. " HTTP/1.1", asked)
+        ok(
+            r.status == 404 and r.headers["access-control-allow-origin"] == nil,
+            ("a preflight on %s is 404 with no origin line"):format(path)
+        )
+    end
+    ok(send("POST /__live/other.txt HTTP/1.1").status == 404, "a POST there is 404")
+    ok(send("OPTIONS /__live/events HTTP/1.1", asked).status == 405, "a preflight on a route is 405")
+    local root_pre = send("OPTIONS /a.txt HTTP/1.1", asked)
+    ok(root_pre.status == 204 and root_pre.headers["access-control-allow-origin"] == "*", "the root route's is 204")
+    says("is 404 before the method check", "the namespace's 404 for another method")
 end)
 
 H.finish()
