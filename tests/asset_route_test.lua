@@ -358,6 +358,18 @@ if started then
     eq(after.status, 200, "and still does after the working directory changes")
     server.stop(inst)
 end
+-- A caller retargets its function between requests and may have no root
+-- yet when the server starts, so start never calls it; each request does.
+local calls = 0
+inst = asset_server(function()
+    calls = calls + 1
+    return tmpdir .. "/src"
+end)
+eq(calls, 0, "start does not call a function asset_root")
+base = ("http://127.0.0.1:%d"):format(inst.port)
+eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 200, "an asset request is served through it")
+eq(calls, 1, "and that one request calls it once")
+server.stop(inst)
 -- A callback that raised answered 404 with no word, and vim.fn inside it
 -- raises on every request. Captured here, where the real notify would
 -- print to the run.
