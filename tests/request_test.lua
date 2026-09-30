@@ -344,6 +344,10 @@ H.case("Section 4b: a Host value that is not a host is 400 on every bind", funct
         local inst = serve({ host = bind })
         local port = inst.port
         eq(status(port, "::1:" .. port), 400, bind .. ": an unbracketed IPv6 address with a port is 400")
+        -- The OS port above is no hextet, so a parser that took an
+        -- unbracketed literal still refused it; these two are literals.
+        eq(status(port, "::1"), 400, bind .. ": an unbracketed IPv6 address with no port is 400")
+        eq(status(port, "::1:80"), 400, bind .. ": an unbracketed ::1:80, a port that reads as a hextet, is 400")
         eq(status(port, "[::::]"), 400, bind .. ": brackets around what is no IPv6 address are 400")
         eq(status(port, "[::1"), 400, bind .. ": an unclosed bracket is 400")
         eq(status(port, "%ZZ"), 400, bind .. ": a % not followed by two hex digits is 400")
@@ -355,6 +359,32 @@ H.case("Section 4b: a Host value that is not a host is 400 on every bind", funct
         eq(status(port, "a b", "1.0"), 400, bind .. ": HTTP/1.0 too")
         eq(status(port, "[::1]:" .. port), 200, bind .. ": a bracketed IPv6 address is served")
         eq(status(port, "localhost:"), 200, bind .. ": an empty port is served")
+    end
+    -- On a ::1 bind the unbracketed literal names the bound address itself.
+    local probe = assert(vim.uv.new_tcp())
+    local v6, v6_err = probe:bind("::1", 0)
+    probe:close()
+    if v6 then
+        local six = serve({ host = "::1" })
+        local function status6(value)
+            local c = assert(H.raw_connect(six.port, "::1"))
+            assert(c:send(("GET /style.css HTTP/1.1\r\nHost: %s\r\n\r\n"):format(value)))
+            local data = c:read(3000)
+            c:close()
+            local r = H.responses(data or "")
+            return r[1] and r[1].status
+        end
+        eq(status6("::1"), 400, "::1: an unbracketed IPv6 address with no port is 400")
+        eq(status6("::1:80"), 400, "::1: an unbracketed ::1:80 is 400")
+        eq(status6("[::1]:" .. six.port), 200, "::1: the bracketed form is served")
+    else
+        for _, row in ipairs({
+            "::1: an unbracketed IPv6 address with no port is 400",
+            "::1: an unbracketed ::1:80 is 400",
+            "::1: the bracketed form is served",
+        }) do
+            H.skip(row .. " (no IPv6 loopback here: " .. tostring(v6_err) .. ")")
+        end
     end
     -- The grammar's other accepted forms, on a network bind.
     local wide = serve({ host = "0.0.0.0" })
