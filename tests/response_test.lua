@@ -6,7 +6,11 @@
 -- a cors list's echo of a listed Origin, a 404 that names the request,
 -- never a filesystem path or the query, the instance's header tables left
 -- as start made them, and a /__live/ name that is no route answered 404,
--- a preflight or any other method included.
+-- a preflight or any other method included (Section 8). Of the directory
+-- behind /__live/: a listing names nothing in it (Section 9), an index
+-- that resolves into it is not its directory's (Section 10), its name is
+-- matched in any letter case (Section 11), and the rule reaches the
+-- root's own entry alone, the started-on file served at / (Section 12).
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -543,8 +547,10 @@ end)
 -- A name under /__live/ that is no route fell through to the root route,
 -- so a user's own <root>/__live/ file was served with the cors origin the
 -- namespace never carries. The namespace is the server's: such a name is
--- 404 under every configuration and the disk is never read, while the four
--- routes answer as they did. The rule reads the path as normalized, so an
+-- 404 under each configuration below and the disk is never read, while
+-- the four routes answer as they did. The token gate comes first, so on a
+-- token server whose protected_paths pattern matches such a name, a
+-- request without the token is 401 before the namespace's 404. The rule reads the path as normalized, so an
 -- escaped, doubled or dotted spelling of the namespace is held too; a FIFO
 -- there answers at once, since opening one blocks the editor's loop.
 H.case("Section 8: a /__live/ name that is no route is 404", function()
@@ -562,12 +568,20 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
     -- spellings too: a case variant on a case-folding volume, a link to a
     -- file in it and a link to it. Each is read by the name the disk gives
     -- it, as the dot rule reads one. The case variant holds on every
-    -- volume: where case is kept it names no file and is 404 all the same.
+    -- volume: where case is kept it names no file and is 404 all the same,
+    -- which its label says, since there the rule is never reached.
     -- A link that cannot be made skips its row with the reason.
     local file_link, file_link_err = uv.fs_symlink("__live/other.txt", site .. "/link.txt")
     local dir_link, dir_link_err = uv.fs_symlink("__live", site .. "/dirlink")
+    local folds = uv.fs_stat(site .. "/__LIVE/other.txt") ~= nil
     local resolved = {
-        { "/__LIVE/other.txt", true },
+        {
+            "/__LIVE/other.txt",
+            true,
+            nil,
+            folds and "which this case-folding volume resolves under __live/"
+                or "which names no file on this case-keeping volume",
+        },
         { "/link.txt", file_link, "no link: " .. tostring(file_link_err) },
         { "/dirlink/other.txt", dir_link, "no link: " .. tostring(dir_link_err) },
         { "/dirlink/", dir_link, "no link: " .. tostring(dir_link_err) },
@@ -616,7 +630,7 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
             eq(r.headers["access-control-allow-origin"], nil, ("under %s, %s carries no ACAO"):format(c[1], target))
         end
         for _, t in ipairs(resolved) do
-            local label = ("under %s, %s, which resolves under __live/, is 404"):format(c[1], t[1])
+            local label = ("under %s, %s, %s, is 404"):format(c[1], t[1], t[4] or "which resolves under __live/")
             if t[2] then
                 local r = raw(port, get(t[1] .. q, port))
                 eq(r.status, 404, label)

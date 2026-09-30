@@ -852,7 +852,11 @@ H.case("the injected client is never gated", function()
     H.write_file(site .. "/app.js", "var secret = 1")
     vim.fn.mkdir(site .. "/__live", "p")
     H.write_file(site .. "/__live/script.js", "var mine = 1")
-    local linked, link_err = uv.fs_symlink("__live/script.js", site .. "/alias.txt")
+    -- A file of the client's name outside the reserved directory, whose
+    -- files the root route never serves, so a link to it reads the gate.
+    vim.fn.mkdir(site .. "/lib", "p")
+    H.write_file(site .. "/lib/script.js", "var linked = 1")
+    local linked, link_err = uv.fs_symlink("lib/script.js", site .. "/alias.txt")
     local gated = server.start({
         port = 0,
         root = site,
@@ -908,10 +912,12 @@ H.case("the injected client is never gated", function()
     -- Windows may refuse the link (no symlink privilege); the fixture is
     -- measured and its row skipped where it is not.
     if linked then
-        local r = http_get(base .. "/alias.txt")
-        eq(r.status, 401, "the root's own __live/script.js reached through a link wants the token")
+        eq(http_get(base .. "/alias.txt").status, 401, "a file named script.js reached through a link wants the token")
+        local r = http_get(base .. "/alias.txt?t=" .. TOKEN)
+        ok(r.status == 200 and r.body == "var linked = 1", ("and is served with it (got %d)"):format(r.status))
     else
-        H.skip("a link to the root's own __live/script.js (" .. tostring(link_err) .. ")")
+        H.skip("a file named script.js reached through a link wants the token (" .. tostring(link_err) .. ")")
+        H.skip("and is served with it (" .. tostring(link_err) .. ")")
     end
     -- A case-sensitive volume has no second name for the file. The variant
     -- is a name under /__live/ that is no route, so it never reaches the
