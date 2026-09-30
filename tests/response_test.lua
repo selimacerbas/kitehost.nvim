@@ -668,4 +668,38 @@ H.case("Section 9: a listing names nothing behind /__live/", function()
     ok(not listing:find('href="/dl', 1, true), "nor a link to it")
 end)
 
+-- An index.html linking into the directory behind /__live/ made its
+-- whole directory 404. As with an index the dot rule refuses, it is not
+-- the directory's, so the next index name or the listing answers.
+H.case("Section 10: an index that resolves behind /__live/ is not the directory's", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/__live", "p")
+    H.write_file(site .. "/__live/page.html", "<html><body>LIVEPAGE</body></html>")
+    for _, dir in ipairs({ "both", "solo" }) do
+        vim.fn.mkdir(site .. "/" .. dir, "p")
+    end
+    H.write_file(site .. "/both/index.htm", "<html><body>PLAIN</body></html>")
+    for _, dir in ipairs({ "both", "solo" }) do
+        local link = site .. "/" .. dir .. "/index.html"
+        local made, err = uv.fs_symlink("../__live/page.html", link)
+        if not made or not uv.fs_stat(link) then
+            local why = " (" .. tostring(err or "the link does not resolve") .. ")"
+            H.skip("an index.htm beside an index.html linking into __live/ is served" .. why)
+            H.skip("with no other index the directory is listed" .. why)
+            return
+        end
+    end
+    local inst = serve({ root = site, features = { dirlist = { enabled = true } } })
+    local r = raw(inst.port, get("/both/", inst.port))
+    ok(
+        r.status == 200 and r.body:find("PLAIN", 1, true) ~= nil,
+        ("an index.htm beside an index.html linking into __live/ is served (got %d)"):format(r.status)
+    )
+    r = raw(inst.port, get("/solo/", inst.port))
+    ok(
+        r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("LIVEPAGE", 1, true),
+        ("with no other index the directory is listed (got %d)"):format(r.status)
+    )
+end)
+
 H.finish()

@@ -1907,14 +1907,15 @@ local function handle_request(conn, req)
         if not candidate then
             for _, iname in ipairs(inst.index_names) do
                 -- Resolved as a file request is: a linked index.html that
-                -- points outside the root or at a name the dot rule refuses
-                -- is not this directory's, so the next name or the listing
-                -- answers; a directory named index.html is no page, and a
-                -- FIFO so named would block the editor's loop.
+                -- points outside the root, at a name the dot rule refuses or
+                -- into the directory behind /__live/ is not this directory's,
+                -- so the next name or the listing answers; a directory named
+                -- index.html is no page, and a FIFO so named would block the
+                -- editor's loop.
                 local try = sanitize_and_map((path_only == "/" and "" or path_only) .. "/" .. iname, inst.root_real)
                 local tst = try and uv.fs_stat(try)
                 local trel = tst and tst.type == "file" and root_rel(inst.root_real, try)
-                if trel and (inst.serve_dotfiles or not has_dot_segment(trel)) then
+                if trel and not in_live_dir(trel) and (inst.serve_dotfiles or not has_dot_segment(trel)) then
                     candidate = try
                     break
                 end
