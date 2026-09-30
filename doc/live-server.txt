@@ -152,7 +152,10 @@ gates `/__live/asset` too.
     Open the browser automatically after starting or retargeting.
 
 `notify` (boolean, default true)
-    Show `vim.notify` messages for server events.
+    Show the informational notices (a start, a retarget, a live-reload
+    toggle, a stop). `false` silences those alone: a warning or an error,
+    a start that failed among them, is always shown, and
+    |:LiveServerStatus| always prints.
 
 `notify_on_reload` (boolean, default false)
     Show a notification on every live-reload event.
@@ -186,8 +189,15 @@ gates `/__live/asset` too.
     per directory (no duplicates). >lua
         auto_start = { filetypes = { "html" }, port = 8000 }
 <
+    Opening a matching file in a directory no running server serves
+    starts one on `port`, or, when a server already runs on that port,
+    retargets it to that directory: the root follows the files you open,
+    and with `host = "0.0.0.0"` it is the network-reachable root that
+    moves.
     Fields:
-    - `filetypes` (string[]): Neovim filetypes to trigger on.
+    - `filetypes` (string[]): filetype names to trigger on, each made of
+      letters, digits, `_`, `.`, `+` and `-`; `"*"`, an empty string or a
+      comma is refused.
     - `port` (number, optional): Port to use. Falls back to `default_port`.
 
 `live_reload` (table|boolean, default the fields below)
@@ -237,11 +247,11 @@ starting with `#` are comments. >
     # Skip these
     node_modules
     *.log
-    .git
     dist
 <
 A line starting with `/` is anchored at the served root: `/dist` skips
-`dist/` and not `sub/dist/`.
+`dist/` and not `sub/dist/`. A dot path such as `.git/` needs no line:
+a change under one pushes no reload unless `serve_dotfiles` is set.
 
 The ignore file is re-parsed when the server retargets to a new root.
 
@@ -292,7 +302,7 @@ live_server.toggle_livereload()                 *live_server.toggle_livereload()
 
 live_server.status()                            *live_server.status()*
     Print running servers with port, root, uptime, live state, and
-    connected client count via `vim.notify`.
+    connected client count via `vim.notify`, whatever `notify` says.
 
 live_server.statusline()
     Returns a short string for statusline use. See |live-server-statusline|.
@@ -451,7 +461,11 @@ Suggested keymaps (under `<leader>l` with which-key group): >lua
 TROUBLESHOOTING                                 *live-server-troubleshooting*
 
 Port in use ~
-    Another process is on that port. Pick a different port or run
+    The notice reads `LiveServer did not start: Failed to bind
+    127.0.0.1:<port>: EADDRINUSE: address already in use`, shown even
+    with `notify = false`: another program holds that port. A
+    `127.0.0.1` bind is refused the same way when a program holds the
+    port at `0.0.0.0`, and the reverse. Pick a different port or run
     `:LiveServerStop` / `:LiveServerStopAll`.
 
 Browser didn't open ~
@@ -462,6 +476,8 @@ Browser didn't open ~
 Live-reload didn't trigger ~
     - Only HTML pages get the injected script.
     - Check `.liveignore` isn't excluding the changed file.
+    - A change under a dot path pushes no reload unless `serve_dotfiles`
+      is set.
     - Try `:LiveServerToggleLive` off/on, or `:LiveServerReload`.
 
 fs_event error ~

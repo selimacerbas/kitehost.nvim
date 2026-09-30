@@ -4,7 +4,7 @@ A tiny, zero-dependency **local web server** for Neovim, written in pure Lua wit
 Start a server on any file or folder, auto-reload the browser on save, and quickly reopen existing ports.
 
 * **Pure Lua**: no npm, no Python, no binaries.
-* **Local by default**: binds to `127.0.0.1`; set `host = "0.0.0.0"` for network access.
+* **Local by default**: binds to `127.0.0.1`; set `host = "0.0.0.0"` for network access, with a `token`, after reading [SECURITY.md](SECURITY.md).
 * **SSE live-reload**: instant page refresh on file changes (debounced).
 * **CSS hot-inject**: stylesheet changes apply instantly without a full page reload.
 * **Directory listing**: clean index when no `index.html` exists.
@@ -14,7 +14,7 @@ Start a server on any file or folder, auto-reload the browser on save, and quick
 * **Auto-start**: optionally start a server when you open an HTML file.
 * **Statusline**: show active servers in your statusline/lualine.
 
-> This plugin binds to `127.0.0.1` by default. Set `host = "0.0.0.0"` to make it accessible from other machines on the network.
+> This plugin binds to `127.0.0.1` by default. Set `host = "0.0.0.0"` to make it accessible from other machines on the network: anyone who can reach the port then reads every file the server serves, so set `token` and read [SECURITY.md](SECURITY.md) first.
 
 ---
 
@@ -103,7 +103,7 @@ Configured via `require("live_server").setup({...})` or `opts = { ... }` in your
   allowed_hosts    = nil,            -- more Host names a loopback bind answers besides localhost, *.localhost and loopback addresses; true turns the check off
   serve_dotfiles   = false,          -- serve .env, .git/ and other dot paths (default: 404; `/.well-known/` at the root is served)
   open_on_start    = true,           -- open browser after start/retarget
-  notify           = true,           -- use vim.notify for events
+  notify           = true,           -- informational notices (start, stop, reload toggle); warnings and errors always show
   notify_on_reload = false,          -- notify on every live-reload event
   headers          = { ["Cache-Control"] = "no-cache" }, -- extra response headers
   cors             = false,          -- true/"*", an origin string, or a list of origins; the root route only, never /__live/*
@@ -145,7 +145,7 @@ Set `auto_start` to automatically start a server when you open a matching filety
 auto_start = { filetypes = { "html" }, port = 8000 }
 ```
 
-The server starts once per directory: opening another HTML file in the same folder won't spawn a duplicate.
+The server starts once per directory: opening another HTML file in the same folder won't spawn a duplicate. Opening a matching file in a folder no running server serves starts one on `port` (`default_port` when unset) or, when a server already runs on that port, retargets it to that folder, so the root follows the files you open; with `host = "0.0.0.0"` it is the network-reachable root that moves. Each entry of `filetypes` is a filetype name (letters, digits, `_`, `.`, `+` and `-`); `"*"`, an empty string or a comma is refused.
 
 ### `.liveignore`
 
@@ -155,11 +155,10 @@ Create a `.liveignore` file in your served root to skip file-watcher noise. One 
 # Don't reload on these
 node_modules
 *.log
-.git
 dist
 ```
 
-A line starting with `/` is anchored at the served root: `/dist` skips `dist/` and not `sub/dist/`.
+A line starting with `/` is anchored at the served root: `/dist` skips `dist/` and not `sub/dist/`. A dot path such as `.git/` needs no line: a change under one pushes no reload unless `serve_dotfiles` is set.
 
 ### CORS
 
@@ -227,9 +226,8 @@ All under the which-key group **`<leader>l`**:
 
 ## Troubleshooting
 
-* **"Port in use or failed to bind"**
-  Another process is using that port (or a previous server didn't exit cleanly). Pick a different port, or stop the other process.
-  You can stop live-server instances via `:LiveServerStop` or `:LiveServerStopAll`.
+* **"LiveServer did not start: Failed to bind 127.0.0.1:8000: EADDRINUSE: address already in use"**
+  Another program holds that port. A start is refused the same way, its message carrying `EADDRINUSE: address already in use`, when a `127.0.0.1` bind meets a program on the port at `0.0.0.0`, or a `0.0.0.0` bind meets one at `127.0.0.1`. Pick a different port, or stop the other program; `:LiveServerStop` or `:LiveServerStopAll` stops a server of this plugin. The notice shows even with `notify = false`.
 
 * **"start() bad argument #2 to 'start' (table expected, got number)"**
   An old copy of the plugin raised this, trying a two-argument `fs_event:start`; the plugin now calls the three-argument `fs_event:start(path, flags, cb)` alone, and a watcher that cannot start leaves the server serving with live reload off and a warning, so make sure you're on the **latest** plugin files.
