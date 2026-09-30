@@ -859,7 +859,10 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
                     ("OPTIONS %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://a.test\r\n"):format(path, inst.port)
                         .. "Access-Control-Request-Method: GET\r\n\r\n"
                 )
-                local label = ("a preflight for %s beside a link to %s"):format(path, c[1]:gsub("containment", "name"))
+                local label = ("a preflight for %s beside a link to %s"):format(
+                    path,
+                    (c[1]:gsub("containment", "name"))
+                )
                 eq(r.status, 404, label .. " is 404")
                 eq(r.headers["access-control-allow-origin"], nil, label .. " carries no ACAO")
             end
