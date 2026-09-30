@@ -7,7 +7,8 @@
 -- (a control byte in a value, two spellings of one name and the server's
 -- own fields among them), cors, allowed_hosts (a string, a map, a hole, a
 -- wildcard, an entry no Host can match), live and its debounce, features,
--- host, header_timeout_ms, sse_heartbeat_ms, max_connections, asset_root,
+-- host, header_timeout_ms, sse_heartbeat_ms, max_connections, asset_root
+-- (a string naming no directory among them),
 -- a port it cannot hold or a root that is no string, does not resolve or is no
 -- directory (a relative default_index is fixed at start); a bind to an
 -- address this machine lacks or to a port in use raises naming it and
@@ -248,6 +249,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         -- asset request then answered 404 without a word.
         { "asset_root", 42, "asset_root must be a directory or a function returning one, got number" },
         { "asset_root", true, "asset_root must be a directory or a function returning one, got boolean" },
+        -- A string naming no directory started too, with the same silent
+        -- 404 on every asset request.
+        { "asset_root", "", 'asset_root is not a directory: ""' },
+        { "asset_root", root .. "/missing", ('asset_root is not a directory: "%s/missing"'):format(root) },
+        { "asset_root", root .. "/content.md", ('asset_root is not a directory: "%s/content.md"'):format(root) },
         -- A flag turned off on exactly false, so 0 turned it on.
         { "notify_on_reload", 0, "notify_on_reload must be true or false, got number" },
         { "notify_on_reload", "no", "notify_on_reload must be true or false, got string" },

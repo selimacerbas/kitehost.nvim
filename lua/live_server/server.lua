@@ -1784,6 +1784,15 @@ local function handle_request(conn, req)
         if type(aroot) == "function" then
             local ok_root, res = pcall(aroot)
             aroot = ok_root and res or nil
+            -- A raise read as a root not set, with no word: vim.fn inside
+            -- this callback raises on every request.
+            if not ok_root then
+                warn_once(
+                    inst,
+                    "asset-root",
+                    ("asset_root raised (%s); the asset request was answered 404"):format(tostring(res))
+                )
+            end
         end
         -- A callback's table or number is no asset root: luv's realpath
         -- raised on it inside the read callback, and the peer waited.
@@ -2378,11 +2387,30 @@ local function check_start(cfg)
     then
         error("max_connections must be an integer at or above 1", 0)
     end
-    -- Read per request, where a number started and then answered every
-    -- asset request 404 without a word (measured).
+    -- A number, or a string naming no directory, started and then answered
+    -- every asset request 404 without a word (measured). A string is kept
+    -- as its real path, since a relative one followed a later :cd; a
+    -- function is left to each request, whose caller may retarget it.
     local asset_root = cfg.asset_root
     if asset_root ~= nil and type(asset_root) ~= "string" and type(asset_root) ~= "function" then
         error("asset_root must be a directory or a function returning one, got " .. type(asset_root), 0)
+    end
+    if type(asset_root) == "string" then
+        local real, real_err = uv.fs_realpath(asset_root)
+        local is_dir, dir_err = false, real_err
+        if real then
+            is_dir, dir_err = root_directory(real)
+        end
+        if not is_dir then
+            error(
+                ("asset_root is not a directory: %s%s"):format(
+                    vim.inspect(asset_root),
+                    dir_err and (" (" .. tostring(dir_err) .. ")") or ""
+                ),
+                0
+            )
+        end
+        asset_root = real
     end
     -- fs_realpath raised its own argument error for a nil root and read a
     -- number as a path under the working directory.

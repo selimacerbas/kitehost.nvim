@@ -8,6 +8,8 @@
 --     credential directory such as .ssh (Section 4)
 --   - sandboxes the HTML, SVG and XML documents it serves, never the root
 --     route's index (Section 5)
+--   - fixes a string root at start and reads a function per request, a
+--     raise warned once (Section 6)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -336,5 +338,76 @@ eq(
     "the server's sandbox comes after the caller's"
 )
 server.stop(inst)
+
+H.section("Section 6: a string root is fixed at start, a function is read per request")
+
+-- A relative string was resolved on every request, so a later :cd moved
+-- the served asset tree.
+local cwd = assert(uv.cwd())
+assert(uv.chdir(tmpdir))
+local started, res = pcall(asset_server, "src")
+assert(uv.chdir(cwd))
+eq(started, true, "a relative asset_root starts: " .. tostring(started or res))
+if started then
+    inst = res
+    base = ("http://127.0.0.1:%d"):format(inst.port)
+    eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 200, "a relative asset_root serves its asset")
+    assert(uv.chdir(tmpdir .. "/www"))
+    local after = http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN)
+    assert(uv.chdir(cwd))
+    eq(after.status, 200, "and still does after the working directory changes")
+    server.stop(inst)
+end
+-- A callback that raised answered 404 with no word, and vim.fn inside it
+-- raises on every request. Captured here, where the real notify would
+-- print to the run.
+local notes = {}
+local real_notify = vim.notify
+vim.notify = function(msg, level)
+    table.insert(notes, { msg = msg, level = level })
+end
+inst = asset_server(function()
+    error("boom\nline")
+end)
+base = ("http://127.0.0.1:%d"):format(inst.port)
+eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "a raising asset_root callback is 404")
+eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "and 404 again")
+H.wait_for(function()
+    return #notes >= 1
+end, 1000)
+-- A second warning scheduled by the later request would land here.
+vim.wait(100)
+H.ok(
+    #notes == 1
+        and notes[1].level == vim.log.levels.WARN
+        and notes[1].msg:find(("live-server: port %d asset_root raised ("):format(inst.port), 1, true) == 1
+        and notes[1].msg:find("boom?line", 1, true) ~= nil
+        and notes[1].msg:find("the asset request was answered 404", 1, true) ~= nil,
+    "two requests warn once, carrying the error's text marked: " .. vim.inspect(notes, { newline = " ", indent = "" })
+)
+server.stop(inst)
+-- A callback returning no string is a root not set, and says nothing.
+notes = {}
+for _, c in ipairs({
+    { "nil", function() end },
+    {
+        "a number",
+        function()
+            return 42
+        end,
+    },
+}) do
+    inst = asset_server(c[2])
+    base = ("http://127.0.0.1:%d"):format(inst.port)
+    eq(
+        http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status,
+        404,
+        "a callback returning " .. c[1] .. " is 404"
+    )
+    server.stop(inst)
+end
+vim.wait(100)
+eq(#notes, 0, "and a callback that returns no string warns nothing")
+vim.notify = real_notify
 
 H.finish()
