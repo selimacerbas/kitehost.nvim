@@ -823,11 +823,16 @@ end)
 -- directory's files under the reserved name, with the root route's
 -- origin line. The request's first segment is read in any case too, so
 -- the entry is refused whatever it resolves to; the directory it points
--- at is served by its own name.
+-- at is served by its own name. A link out of the root is refused by
+-- containment before its name is read, so its rows say so; the links to
+-- the root's own file and to the root itself are answered by the name.
 H.case("Section 13: a link named __live at the root is refused whatever it resolves to", function()
     local outside = H.tmpdir()
     H.write_file(outside .. "/x.txt", "OUTSIDE")
-    for _, c in ipairs({ { "an ordinary directory of the root", "real" }, { "a directory outside the root" } }) do
+    for _, c in ipairs({
+        { "an ordinary directory of the root", "real" },
+        { "a directory outside the root (refused by containment)" },
+    }) do
         local site = H.tmpdir()
         vim.fn.mkdir(site .. "/real", "p")
         H.write_file(site .. "/real/x.txt", "INROOT")
@@ -858,6 +863,35 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
                     ("the directory the link points at is served by its own name (got %d)"):format(r.status)
                 )
             end
+        else
+            H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], tostring(made_err)))
+        end
+    end
+    -- Each resolves to a name the disk rule passes: plain.txt, or the
+    -- root, whose files then sit under the reserved spelling.
+    for _, c in ipairs({
+        { "a file of the root", "plain.txt", false, { "/__Live", "/__LIVE" } },
+        { "the root itself", ".", true, { "/__Live/plain.txt", "/__LIVE/plain.txt" } },
+    }) do
+        local site = H.tmpdir()
+        H.write_file(site .. "/plain.txt", "PLAINFILE")
+        local target = site .. "/" .. c[2]
+        local flags = c[3] and { dir = true, junction = true } or nil
+        local made, made_err = uv.fs_symlink(target, site .. "/__Live", flags)
+        local inst = serve({ root = site, cors = true, features = { dirlist = { enabled = true } } })
+        if made and uv.fs_stat(site .. "/__Live") then
+            for _, path in ipairs(c[4]) do
+                local r = raw(inst.port, get(path, inst.port))
+                local label = ("%s through a link to %s"):format(path, c[1])
+                eq(r.status, 404, label .. " is 404")
+                ok(not r.body:find("PLAINFILE", 1, true), label .. " serves nothing")
+                eq(r.headers["access-control-allow-origin"], nil, label .. " carries no ACAO")
+            end
+            local r = raw(inst.port, get("/plain.txt", inst.port))
+            ok(
+                r.status == 200 and r.body == "PLAINFILE",
+                ("plain.txt is served by its own name beside a link to %s (got %d)"):format(c[1], r.status)
+            )
         else
             H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], tostring(made_err)))
         end
