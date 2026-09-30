@@ -1603,8 +1603,8 @@ end
 -- to, and absolute: a missing directory, a file or another type answered
 -- every request 404 without a word, and a relative path followed the
 -- working directory at each request. The real path, or nil and a warning
--- once per server naming the answer, marked by warn_once. nil is no root
--- yet, the caller's to say, and never reaches here.
+-- once per server naming the answer, cut to 300 bytes and marked. nil is
+-- no root yet, the caller's to say, and never reaches here.
 local function answered_root(inst, answer)
     local what, cause
     if type(answer) ~= "string" then
