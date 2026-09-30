@@ -5,7 +5,8 @@
 -- never with cors off or on /__live/*) and the request headers it allows,
 -- a cors list's echo of a listed Origin, a 404 that names the request,
 -- never a filesystem path or the query, the instance's header tables left
--- as start made them, and a /__live/ name that is no route answered 404.
+-- as start made them, and a /__live/ name that is no route answered 404,
+-- a preflight or any other method included.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -267,6 +268,17 @@ H.case("Section 4: a cors preflight is answered, a 405 names Allow", function()
         405,
         "a preflight on /__live/script.js is 405 too"
     )
+    -- The namespace's own path and a name under it that is no route are
+    -- the server's before the preflight: /__live and /__live/ were answered
+    -- as the root route, 204 with the cors origin, and a name that is no
+    -- route 405, where its GET is 404.
+    for _, target in ipairs({ "/__live", "/__live/", "/__live/other.txt", "/__live%2fother.txt", "/%5F_live" }) do
+        r = raw(port, ("OPTIONS %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(target, port, pre))
+        eq(r.status, 404, ("a preflight on %s is 404"):format(target))
+        eq(r.headers["access-control-allow-origin"], nil, ("with no origin line on %s"):format(target))
+    end
+    r = raw(port, ("POST /__live/other.txt HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))
+    eq(r.status, 404, "a POST to a name under /__live/ that is no route is 404, as its GET is")
     -- Only an OPTIONS is a preflight: a GET that carries the field is a GET.
     r = raw(port, ("GET /style.css HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n%s\r\n"):format(port, pre))
     eq(r.status, 200, "a GET carrying Access-Control-Request-Method is served as a GET")

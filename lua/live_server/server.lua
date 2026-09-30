@@ -1688,6 +1688,14 @@ local function root_headers(inst, req)
     return h
 end
 
+-- The four routes of the namespace, each answered by name below.
+local LIVE_ROUTES = {
+    ["/__live/events"] = true,
+    ["/__live/inject"] = true,
+    ["/__live/asset"] = true,
+    ["/__live/script.js"] = true,
+}
+
 -- Answers one parsed request: the token gate, the routes and every
 -- response. The connection's reader hands it a head read whole.
 local function handle_request(conn, req)
@@ -1713,15 +1721,19 @@ local function handle_request(conn, req)
     if not inst.serve_dotfiles and has_dot_segment(path_only) then
         return http_404(sock, path_only)
     end
+    -- The namespace is the server's (the rule below the routes): a name
+    -- in it that is no route is 404 for any method. A GET meets the token
+    -- gate first; any other method never reaches the gate, so it is
+    -- answered here, before the preflight, which answered /__live and
+    -- /__live/ (one canonical path) as the root route's, origin and all.
+    local namespaced = path_only == "/__live" or path_only:find("^/__live/") ~= nil
+    if namespaced and req.method ~= "GET" and not LIVE_ROUTES[path_only] then
+        return http_404(sock, path_only)
+    end
     -- A cors preflight for the root route; /__live/* answers no
     -- cross-origin read, so its preflight gets the 405 below. Both read the
     -- canonical path: /%5F_live/events is served as /__live/events.
-    if
-        req.method == "OPTIONS"
-        and inst.cors
-        and req.headers["access-control-request-method"]
-        and not path_only:find("^/__live/")
-    then
+    if req.method == "OPTIONS" and inst.cors and req.headers["access-control-request-method"] and not namespaced then
         -- A browser refuses a read that carries a header outside the
         -- safelist unless the preflight names it. The names asked for are
         -- echoed when every comma-separated item is a token, never as "*":
@@ -1924,7 +1936,7 @@ local function handle_request(conn, req)
     -- variant on a case-folding volume, a link), so refusal() reads the
     -- name the disk gives. Between the two, no file there is served with
     -- the root route's headers, the cors origin among them.
-    if path_only == "/__live" or path_only:find("^/__live/") then
+    if namespaced then
         return http_404(sock, path_only)
     end
 
