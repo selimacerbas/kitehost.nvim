@@ -638,4 +638,34 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
     end
 end)
 
+-- The listing named the __live directory and links into it, each 404 on
+-- a click. As with a name the dot rule refuses, it names none of them.
+H.case("Section 9: a listing names nothing behind /__live/", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/__live", "p")
+    H.write_file(site .. "/__live/other.txt", "USERFILE")
+    H.write_file(site .. "/plain.txt", "plain")
+    for _, l in ipairs({ { "__live/other.txt", site .. "/lo.txt" }, { "__live", site .. "/dl" } }) do
+        local made, err = uv.fs_symlink(l[1], l[2])
+        if not made or not uv.fs_stat(l[2]) then
+            local why = " (" .. tostring(err or "the link does not resolve") .. ")"
+            for _, row in ipairs({
+                "the root listing names plain.txt",
+                "and not the __live directory",
+                "nor a link to a file in it",
+                "nor a link to it",
+            }) do
+                H.skip(row .. why)
+            end
+            return
+        end
+    end
+    local inst = serve({ root = site, features = { dirlist = { enabled = true } } })
+    local listing = raw(inst.port, get("/", inst.port)).body
+    ok(listing:find('href="/plain.txt"', 1, true) ~= nil, "the root listing names plain.txt")
+    ok(not listing:find('href="/__live/"', 1, true), "and not the __live directory")
+    ok(not listing:find('href="/lo.txt"', 1, true), "nor a link to a file in it")
+    ok(not listing:find('href="/dl', 1, true), "nor a link to it")
+end)
+
 H.finish()

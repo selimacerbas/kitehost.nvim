@@ -499,6 +499,13 @@ local function has_dot_segment(p)
     return false
 end
 
+-- The directory behind the /__live/ namespace, read from a path under the
+-- real root as the disk spells it: a case variant or a link reaches it
+-- under another request spelling, so the request's own is not enough.
+local function in_live_dir(rel)
+    return rel == "/__live" or rel:find("^/__live/") ~= nil
+end
+
 local function read_file_all(abs_path)
     local fd = uv.fs_open(abs_path, "r", 438)
     if not fd then
@@ -1125,11 +1132,15 @@ local function dir_listing_html(inst, fs_path, req_path)
     -- flags; a dot name under the root (cfg -> .git) is 404 on click, so it
     -- is hidden unless serve_dotfiles, with which the rule refuses nothing.
     -- Without it no listed directory has a dot segment of its own (the gate
-    -- refused it), so the target's whole path is read.
+    -- refused it), so the target's whole path is read. A target in the
+    -- directory behind /__live/ is 404 on click whatever the flags.
     local function link_shown(name)
         local rel = root_rel(inst.root_real, util.joinpath(fs_path, name))
-        return rel ~= nil and (inst.serve_dotfiles or not has_dot_segment(rel))
+        return rel ~= nil and not in_live_dir(rel) and (inst.serve_dotfiles or not has_dot_segment(rel))
     end
+    -- That directory is refused by its name on disk, which only the root's
+    -- own listing can hold: every listing inside it is refused.
+    local at_root = fs_path == inst.root_real
     while true do
         local name, t = uv.fs_scandir_next(iter)
         if not name then
@@ -1137,7 +1148,7 @@ local function dir_listing_html(inst, fs_path, req_path)
         end
         -- A name the dot rule refuses is not shown: show_hidden alone
         -- named .env and .git to anyone the server answers, behind 404s.
-        local shown = show_all or name:sub(1, 1) ~= "."
+        local shown = (show_all or name:sub(1, 1) ~= ".") and not (at_root and name == "__live")
         -- luv gives no type for an entry a filesystem leaves untyped (XFS
         -- with ftype=0, some NFS and FUSE mounts), so anything not typed as
         -- a file or a directory is judged as a link; a plain entry so judged
@@ -1762,7 +1773,7 @@ local function handle_request(conn, req)
         end
         -- The directory behind the namespace, reached by a case variant or
         -- a link, is refused as the disk spells it (see the namespace rule).
-        if not own and (rel == "/__live" or rel:find("^/__live/")) then
+        if not own and in_live_dir(rel) then
             return 404
         end
     end
