@@ -1610,6 +1610,8 @@ local function answered_root(inst, answer)
     local what, cause
     if type(answer) ~= "string" then
         what = "no path"
+    elseif answer:find("%z") then
+        what = "a path holding a NUL byte"
     elseif not (answer:find("^[/\\]") or answer:find("^%a:[/\\]")) then
         what = "a relative path"
     else
@@ -2221,6 +2223,15 @@ local function check_ms(name, v)
     return v
 end
 
+-- libuv reads a path as a C string and cut it at a NUL, so a path holding
+-- one named another file; a token, a host and a pattern are held to the
+-- same rule. Raised naming the option, the value left out.
+local function no_nul(name, s)
+    if s:find("%z") then
+        error(name .. " holds a NUL byte", 0)
+    end
+end
+
 -- A FIFO root blocked the loop in the watcher's start, a file root 404ed.
 local function root_directory(real)
     local st, st_err = uv.fs_stat(real)
@@ -2368,6 +2379,9 @@ local function check_start(cfg)
     if token ~= nil and (type(token) ~= "string" or token == "") then
         error("token must be a non-empty string", 0)
     end
+    if token ~= nil then
+        no_nul("token", token)
+    end
     -- The stream refuses the encoded URL of a non-UTF-8 token (measured).
     if token ~= nil then
         local i = 1
@@ -2389,6 +2403,9 @@ local function check_start(cfg)
     local host = cfg.host
     if host ~= nil and type(host) ~= "string" then
         error("host must be a string", 0)
+    end
+    if host ~= nil then
+        no_nul("host", host)
     end
     -- libuv binds an IP literal alone, so a name, an empty string or a
     -- bracketed literal met no check here and was refused by the
@@ -2439,6 +2456,7 @@ local function check_start(cfg)
             if type(pat) ~= "string" then
                 error("protected_paths must be a list of Lua patterns", 0)
             end
+            no_nul("protected_paths pattern", pat)
             local at, why = pattern_fault(pat)
             if at then
                 error(("protected_paths pattern is malformed at byte %d (%s): %s"):format(at, why, pat), 0)
@@ -2462,6 +2480,7 @@ local function check_start(cfg)
             if type(iname) ~= "string" or iname == "" then
                 error("index_names must be a list of file names", 0)
             end
+            no_nul("index_names entry", iname)
             -- A name is joined to the directory it indexes, so a path in it
             -- read another directory's file as this one's index.
             if iname:find("[/\\]") or iname == "." or iname == ".." then
@@ -2587,6 +2606,9 @@ local function check_start(cfg)
     if default_index ~= nil and type(default_index) ~= "string" then
         error("default_index must be a string", 0)
     end
+    if default_index ~= nil then
+        no_nul("default_index", default_index)
+    end
     local index_err
     default_index, index_err = absolute_index(default_index)
     if index_err then
@@ -2623,6 +2645,7 @@ local function check_start(cfg)
         error("asset_root must be a directory or a function returning one, got " .. type(asset_root), 0)
     end
     if type(asset_root) == "string" then
+        no_nul("asset_root", asset_root)
         -- Named escaped, beside the error's name (asset_dir). A root inside
         -- a credential directory had that same silent 404 on every request.
         local real, what, cause = asset_dir(asset_root)
@@ -2640,6 +2663,7 @@ local function check_start(cfg)
     if type(root) ~= "string" then
         error("root must be a string", 0)
     end
+    no_nul("root", root)
     local root_real = uv.fs_realpath(root)
     if not root_real then
         error("Invalid root: " .. root, 0)

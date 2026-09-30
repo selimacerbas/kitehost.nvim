@@ -291,6 +291,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "token", "\237\160\128", "token must be valid UTF-8" },
         { "token", "\244\144\128\128", "token must be valid UTF-8" },
         { "token", "\195\40", "token must be valid UTF-8" },
+        -- libuv reads a path as a C string and cut it at a NUL, and LuaJIT
+        -- reads a pattern whole, so a NUL started a server whose option
+        -- meant another than the one written.
+        { "root", root .. "\0junk", "root holds a NUL byte" },
+        { "host", "127.0.0.1\0junk", "host holds a NUL byte" },
+        { "token", "ab\0cd", "token holds a NUL byte" },
+        { "default_index", root .. "/index.html\0junk", "default_index holds a NUL byte" },
+        { "asset_root", root .. "\0junk", "asset_root holds a NUL byte" },
+        { "index_names", { "index.html\0junk" }, "index_names entry holds a NUL byte" },
+        { "protected_paths", { "^/content%.md\0" }, "protected_paths pattern holds a NUL byte" },
+        { "headers", { ["X-A\0B"] = "1" }, "headers: a name must be a token and a value a line" },
         -- A key start does not read was dropped without a word, so a
         -- misspelled token or protected_paths started with nothing gated.
         { "tokn", "abc", "start does not read the key tokn" },

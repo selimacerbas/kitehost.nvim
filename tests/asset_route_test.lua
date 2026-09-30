@@ -459,6 +459,13 @@ for _, c in ipairs({
     { "a number", 42, "a number, which is no path" },
     { "a table", {}, "a table, which is no path" },
     { "a name with controls", "sr\27[2Jc", '"sr?[2Jc", which is a relative path' },
+    -- libuv reads a path as a C string, so the directory before the NUL
+    -- was served.
+    {
+        "a path holding a NUL",
+        tmpdir .. "/src\0junk",
+        ('"%s/src?junk", which is a path holding a NUL byte'):format(tmpdir),
+    },
 }) do
     notes = {}
     local answer = c[2]
