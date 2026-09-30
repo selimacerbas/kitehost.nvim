@@ -1486,10 +1486,11 @@ end
 
 -- Whether a path needs ?t=<token>: the live endpoints and any
 -- protected_paths pattern; the second value is true when a pattern could
--- not be read. The start check reads a pattern against the empty subject
--- only, so a malformed part after a literal ("/[") raises here, in the
--- read callback, where it left the request unanswered: a raise reads as a
--- match no token satisfies, since the gate cannot tell what it protects.
+-- not be read. Start refuses a malformed pattern, but a well-formed one
+-- can nest past LuaJIT's depth on a path ("pattern too complex") and
+-- raise here, in the read callback, where it left the request unanswered:
+-- a raise reads as a match no token satisfies, since the gate cannot tell
+-- what it protects.
 -- Every pattern is read, so the answer does not hang on the list's order.
 -- A 401 alone reads like a bad token, so the first pattern that raises is
 -- named once per instance (warn_once).
@@ -2241,6 +2242,92 @@ local function absolute_index(index)
     return util.joinpath(cwd, index)
 end
 
+-- Where a set opened at i ends, the byte after its "]", or nil: the first
+-- character after "[" or "[^" is the set's own, "]" included, and a "%"
+-- takes the next one with it, as LuaJIT reads a set.
+local function set_end(pat, i)
+    local j = i + 1
+    if pat:sub(j, j) == "^" then
+        j = j + 1
+    end
+    repeat
+        if j > #pat then
+            return nil
+        end
+        local c = pat:sub(j, j)
+        j = j + 1
+        if c == "%" and j <= #pat then
+            j = j + 1
+        end
+    until pat:sub(j, j) == "]"
+    return j + 1
+end
+
+-- The byte of a Lua pattern's first fault and what it is, or nil. The
+-- matcher reads a part only when a subject reaches it, so trying a pattern
+-- on one subject left a fault past its first literal to raise in the
+-- gate. A quantifier or an anchor never faults: out of place, each is a
+-- literal character. LuaJIT holds at most 32 captures.
+local function pattern_fault(pat)
+    local i, n = 1, #pat
+    local open, closed, count = {}, {}, 0
+    while i <= n do
+        local c = pat:sub(i, i)
+        if c == "(" then
+            count = count + 1
+            if count > 32 then
+                return i, "more than 32 captures"
+            end
+            table.insert(open, { count, i })
+            i = i + 1
+        elseif c == ")" then
+            local top = table.remove(open)
+            if not top then
+                return i, "a ) closes no capture"
+            end
+            closed[top[1]] = true
+            i = i + 1
+        elseif c == "[" then
+            local e = set_end(pat, i)
+            if not e then
+                return i, "a set is not closed"
+            end
+            i = e
+        elseif c == "%" then
+            local d = pat:sub(i + 1, i + 1)
+            if d == "" then
+                return i, "a % ends it"
+            elseif d == "b" then
+                if i + 3 > n then
+                    return i, "%b takes two characters"
+                end
+                i = i + 4
+            elseif d == "f" then
+                if pat:sub(i + 2, i + 2) ~= "[" then
+                    return i, "%f takes a set"
+                end
+                local e = set_end(pat, i + 2)
+                if not e then
+                    return i + 2, "a set is not closed"
+                end
+                i = e
+            elseif d:find("%d") then
+                if not closed[tonumber(d)] then
+                    return i, ("%%%s names no closed capture"):format(d)
+                end
+                i = i + 2
+            else
+                i = i + 2
+            end
+        else
+            i = i + 1
+        end
+    end
+    if #open > 0 then
+        return open[1][2], "a capture is not closed"
+    end
+end
+
 -- The keys start reads, a nested table for a section (util.unread_key).
 local START_KEYS = {
     token = true,
@@ -2352,8 +2439,9 @@ local function check_start(cfg)
             if type(pat) ~= "string" then
                 error("protected_paths must be a list of Lua patterns", 0)
             end
-            if not pcall(string.find, "", pat) then
-                error("protected_paths pattern is malformed: " .. pat, 0)
+            local at, why = pattern_fault(pat)
+            if at then
+                error(("protected_paths pattern is malformed at byte %d (%s): %s"):format(at, why, pat), 0)
             end
         end
     end

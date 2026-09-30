@@ -117,8 +117,8 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "protected_paths", { content = "^/content%.md$" } },
         { "protected_paths", { [1] = "^/a$", [3] = "^/b$" } },
         { "protected_paths", { 42 } },
-        { "protected_paths", { "(" }, "protected_paths pattern is malformed: (" },
-        { "protected_paths", { "^/a$", "%" }, "protected_paths pattern is malformed: %" },
+        { "protected_paths", { "(" }, "protected_paths pattern is malformed at byte 1 (a capture is not closed): (" },
+        { "protected_paths", { "^/a$", "%" }, "protected_paths pattern is malformed at byte 1 (a % ends it): %" },
         { "serve_dotfiles", 1, "serve_dotfiles must be true or false, got number" },
         { "protected_paths", { "^/secret" }, "protected_paths needs a token" },
         { "index_names", "index.html" },
@@ -512,10 +512,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             server.stop(res)
         end
     end
-    -- The start check reads a pattern against the empty subject, so a
-    -- malformed part after a literal ("/[") is never parsed there. The
-    -- request the pattern was asked about raised in the read callback and
+    -- A well-formed pattern can still raise at a request: each "x*" nests
+    -- one level, and past 200 LuaJIT answers "pattern too complex" for
+    -- any path under /. Such a request raised in the read callback and
     -- went unanswered; no token satisfies a pattern nobody can read.
+    local deep = "^/" .. string.rep("x*", 200)
     local function unreadable_server(patterns)
         local up, inst_or_err = pcall(server.start, {
             port = 0,
@@ -527,8 +528,8 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         })
         ok(
             up,
-            ("protected_paths = %s starts: the start check cannot read past the literal%s"):format(
-                vim.inspect(patterns, { newline = " ", indent = "" }),
+            ("protected_paths = %s starts: it is well-formed%s"):format(
+                #patterns == 1 and "{ deep }" or "{ ..., deep }",
                 up and "" or ": " .. tostring(inst_or_err)
             )
         )
@@ -555,9 +556,10 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         vim.notify = real_notify
     end)
     local function warning(url)
-        return ("live-server: port %d cannot read protected_paths pattern /[ (%s); the request was refused"):format(
+        return ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(url:match(":(%d+)/")),
-            "malformed pattern (missing ']')"
+            deep,
+            "pattern too complex"
         )
     end
     local function settled(count)
@@ -568,7 +570,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         vim.wait(100)
         return #notes
     end
-    local alone = unreadable_server({ "/[" })
+    local alone = unreadable_server({ deep })
     if alone then
         answers_401(alone, "/content.md under an unreadable pattern is 401 without the token, never unanswered")
         answers_401(
@@ -585,7 +587,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     end
     -- Every pattern is read, so a path an earlier pattern matches is asked
     -- about the unreadable one too.
-    local after = unreadable_server({ "^/content%.md$", "/[" })
+    local after = unreadable_server({ "^/content%.md$", deep })
     if after then
         answers_401(after .. "?t=" .. TOKEN, "an unreadable pattern after a matching one refuses the token too")
         local count = settled(2)
@@ -1720,6 +1722,76 @@ H.case("a start that cannot make its reload timer raises, naming it, and leaves 
         eq(after.tcp, before.tcp, label .. ", it leaves no socket")
         eq(after.timer, before.timer, label .. ", no timer")
         eq(after.fs_event, before.fs_event, label .. ", and no watcher")
+    end
+end)
+
+-- A pattern was tried against the empty subject alone, so a fault past
+-- its first literal started: "/[" and "a%" then answered every request
+-- 401 with a warning, and "^/x(" served until a path reached the "(".
+-- The check walks the grammar and names the byte the fault is at.
+H.case("start refuses a malformed pattern at its byte and takes a well-formed one", function()
+    local function start_with(pattern)
+        local started, res = pcall(server.start, {
+            port = 0,
+            root = root,
+            token = TOKEN,
+            protected_paths = { pattern },
+        })
+        if started then
+            server.stop(res)
+        end
+        return started, res
+    end
+    for _, c in ipairs({
+        { "/[", 2, "a set is not closed" },
+        { "a%", 2, "a % ends it" },
+        { "^/x(", 4, "a capture is not closed" },
+        { "^/x)", 4, "a ) closes no capture" },
+        { "^/(a(b)", 3, "a capture is not closed" },
+        { "%b", 1, "%b takes two characters" },
+        { "x%ba", 2, "%b takes two characters" },
+        { "%f", 1, "%f takes a set" },
+        { "%fx", 1, "%f takes a set" },
+        { "%f[a", 3, "a set is not closed" },
+        { "[]", 1, "a set is not closed" },
+        { "[a%", 1, "a set is not closed" },
+        { "[^", 1, "a set is not closed" },
+        { "%1", 1, "%1 names no closed capture" },
+        { "(a%1)", 3, "%1 names no closed capture" },
+        { "(a)%2", 4, "%2 names no closed capture" },
+        { "(a)%0", 4, "%0 names no closed capture" },
+        { string.rep("()", 33), 65, "more than 32 captures" },
+    }) do
+        local started, res = start_with(c[1])
+        eq(
+            not started and tostring(res) or "started",
+            ("protected_paths pattern is malformed at byte %d (%s): %s"):format(c[2], c[3], c[1]),
+            ("%s is refused, naming the byte"):format(vim.inspect(c[1]))
+        )
+    end
+    -- Each construct well-formed: a set with ] first, a negated set, an
+    -- escape in a set, classes, a capture and its back-reference, a
+    -- position capture, %b, %f, each quantifier, both anchors and an
+    -- anchor character inside the pattern, 32 captures, and a pattern
+    -- that nests too deep to match any path (the gate's own warning names
+    -- that one per request).
+    for _, pattern in ipairs({
+        "[]x]",
+        "[^/]+%.md$",
+        "[%]%-]",
+        "^/%a%d%l%s%u%w%x%p%c%z%A",
+        "^/(%w+)/%1$",
+        "()x",
+        "%bxy",
+        "%f[%w]word",
+        "a*b+c-d?",
+        "x$y^z",
+        "%%",
+        string.rep("()", 32),
+        "^/" .. string.rep("x*", 250),
+    }) do
+        local started, res = start_with(pattern)
+        ok(started, ("%s starts: %s"):format(vim.inspect(pattern), started and "" or tostring(res)))
     end
 end)
 
