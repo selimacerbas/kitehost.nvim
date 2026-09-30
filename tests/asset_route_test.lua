@@ -366,8 +366,11 @@ local real_notify = vim.notify
 vim.notify = function(msg, level)
     table.insert(notes, { msg = msg, level = level })
 end
+-- The text is cut as a request's fault is: its first line, 300 bytes, a
+-- control byte marked, so a long or multi-line raise reaches no notifier
+-- whole.
 inst = asset_server(function()
-    error("boom\nline")
+    error("boom\27[2J" .. string.rep("L", 5000) .. "\nsecond line")
 end)
 base = ("http://127.0.0.1:%d"):format(inst.port)
 eq(http_get(base .. "/__live/asset?p=pic.png&t=" .. TOKEN).status, 404, "a raising asset_root callback is 404")
@@ -377,13 +380,20 @@ H.wait_for(function()
 end, 1000)
 -- A second warning scheduled by the later request would land here.
 vim.wait(100)
+local head = ("live-server: port %d asset_root raised ("):format(inst.port)
+local tail = "); the asset request was answered 404"
+local msg = notes[1] and notes[1].msg or ""
 H.ok(
     #notes == 1
         and notes[1].level == vim.log.levels.WARN
-        and notes[1].msg:find(("live-server: port %d asset_root raised ("):format(inst.port), 1, true) == 1
-        and notes[1].msg:find("boom?line", 1, true) ~= nil
-        and notes[1].msg:find("the asset request was answered 404", 1, true) ~= nil,
+        and msg:find(head, 1, true) == 1
+        and msg:find("boom?[2J", 1, true) ~= nil
+        and msg:sub(-#tail) == tail,
     "two requests warn once, carrying the error's text marked: " .. vim.inspect(notes, { newline = " ", indent = "" })
+)
+H.ok(
+    not msg:find("second line", 1, true) and #msg <= #head + 300 + #tail,
+    ("the warning holds the raise's first line, cut to 300 bytes (%d bytes)"):format(#msg)
 )
 server.stop(inst)
 -- A callback returning no string is a root not set, and says nothing.

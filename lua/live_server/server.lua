@@ -217,9 +217,14 @@ end
 -- the path. A control in the line is a mark: Neovim shows one as a
 -- caret pair, but a notifier that forwards to a terminal or a desktop
 -- would pass an escape a peer wrote. Scheduled: a request runs in a fast
--- event, where vim.notify raises.
+-- event, where vim.notify raises. A caller's callback that raised is told
+-- through raise_line too, cut the same way.
+local function raise_line(raised)
+    return util.marked(tostring(raised):match("^[^\n]*"), 300)
+end
+
 local function report_raise(path, raised)
-    local cause = util.marked(tostring(raised):match("^[^\n]*"), 300)
+    local cause = raise_line(raised)
     local shown = util.marked(path:match("^[^?#]*"), 200)
     local line = ("live-server: %s failed: %s"):format(shown, cause)
     vim.schedule(function()
@@ -1795,7 +1800,7 @@ local function handle_request(conn, req)
                 warn_once(
                     inst,
                     "asset-root",
-                    ("asset_root raised (%s); the asset request was answered 404"):format(tostring(res))
+                    ("asset_root raised (%s); the asset request was answered 404"):format(raise_line(res))
                 )
             end
         end
