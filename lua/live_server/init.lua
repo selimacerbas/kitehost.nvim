@@ -423,7 +423,7 @@ function M.status()
     for _, port in ipairs(ports) do
         local s = M.state.servers[port]
         local live = server.is_live_enabled(s) and "ON" or "OFF"
-        local clients = #s.sse_clients
+        local clients = server.connected_client_count(s)
         local uptime = os.time() - s.started_at
         table.insert(
             lines,

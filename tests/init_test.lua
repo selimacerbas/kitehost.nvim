@@ -707,6 +707,24 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
     )
 end)
 
+-- The status list counted the instance's own client table, which the
+-- documentation tells every caller to read through the public counter.
+H.case("Section 10: the status list counts clients through the public counter", function()
+    local _, _, inst = start_with({ notify = true })
+    local real_count = server.connected_client_count
+    H.defer(function()
+        server.connected_client_count = real_count
+    end)
+    server.connected_client_count = function(s)
+        return s == inst and 7 or real_count(s)
+    end
+    notices = {}
+    require("live_server").status()
+    server.connected_client_count = real_count
+    local shown = table.concat(notices, "\n")
+    ok(shown:find("clients:7", 1, true) ~= nil, "the status list reads connected_client_count: " .. shown)
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then
