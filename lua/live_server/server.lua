@@ -1642,6 +1642,32 @@ local function answered_root(inst, answer)
     )
 end
 
+-- A string asset_root, kept at start as the real path it named, read
+-- again per request: a link put at that path after start (the directory
+-- moved away, a link in its place) was followed with no word. The path
+-- must still resolve to itself; otherwise nil and a warning once per
+-- server, under the kind a function's faults share.
+local function kept_root(inst, kept)
+    local fault
+    local now, now_err = uv.fs_realpath(kept)
+    if not now then
+        fault = ("does not resolve (%s)"):format(tostring(now_err):match("^[^:]*"))
+    elseif now ~= kept then
+        fault = ('resolves to "%s"'):format(util.marked(now, 300))
+    else
+        local real, what, cause = asset_dir(kept)
+        if real then
+            return real
+        end
+        fault = ("is %s%s"):format(what, cause and (" (" .. cause .. ")") or "")
+    end
+    warn_once(
+        inst,
+        "asset-root",
+        ('asset_root "%s" %s since start; the asset request was answered 404'):format(util.marked(kept, 300), fault)
+    )
+end
+
 local function asset_denied(rel)
     if in_credential_dir(rel) then
         return true
@@ -1914,7 +1940,7 @@ local function handle_request(conn, req)
                 aroot_real = answered_root(inst, res)
             end
         elseif aroot then
-            aroot_real = asset_dir(aroot)
+            aroot_real = kept_root(inst, aroot)
         end
         local rel = qparam("p")
         rel = rel and util.url_decode(rel) or ""

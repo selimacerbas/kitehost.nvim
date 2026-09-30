@@ -508,6 +508,61 @@ for _, c in ipairs(answers) do
     )
     server.stop(inst)
 end
+-- A string root is kept as its real path at start and read again at each
+-- request, where a link put at that path after start (the directory
+-- moved away) was followed with no word. The path must still resolve to
+-- itself; otherwise the request is 404 and the fault is told once.
+for _, c in ipairs({
+    { "a link put at the kept path", true },
+    { "the kept directory removed", false },
+}) do
+    local kept = tmpdir .. "/kept"
+    vim.fn.mkdir(kept, "p")
+    write_file(kept .. "/a.txt", "KEPT")
+    vim.fn.mkdir(tmpdir .. "/elsewhere", "p")
+    write_file(tmpdir .. "/elsewhere/a.txt", "ELSEWHERE")
+    local kept_real = assert(uv.fs_realpath(kept))
+    notes = {}
+    inst = asset_server(kept)
+    local url = ("http://127.0.0.1:%d/__live/asset?p=a.txt&t=%s"):format(inst.port, TOKEN)
+    eq(http_get(url).status, 200, "a string root serves its file before " .. c[1])
+    assert(uv.fs_rename(kept, tmpdir .. "/kept-moved"))
+    local fault, linked, link_err = "does not resolve (ENOENT)", true, nil
+    if c[2] then
+        linked, link_err = uv.fs_symlink(tmpdir .. "/elsewhere", kept, { dir = true, junction = true })
+        fault = ('resolves to "%s"'):format(assert(uv.fs_realpath(tmpdir .. "/elsewhere")))
+    end
+    local rows = {
+        "and after " .. c[1] .. " is 404",
+        "and 404 again after " .. c[1],
+        "and warns once after " .. c[1] .. ", naming the kept path",
+    }
+    if linked then
+        eq(http_get(url).status, 404, rows[1])
+        eq(http_get(url).status, 404, rows[2])
+        H.wait_for(function()
+            return #notes >= 1
+        end, 1000)
+        vim.wait(100)
+        local want = ('live-server: port %d asset_root "%s" %s since start; the asset request was answered 404'):format(
+            inst.port,
+            kept_real,
+            fault
+        )
+        H.ok(
+            #notes == 1 and notes[1].msg == want and notes[1].level == vim.log.levels.WARN,
+            ("%s: %s"):format(rows[3], vim.inspect(notes, { newline = " ", indent = "" }))
+        )
+    else
+        for _, row in ipairs(rows) do
+            H.skip(row .. " (" .. tostring(link_err) .. ")")
+        end
+    end
+    server.stop(inst)
+    vim.fn.delete(kept)
+    vim.fn.delete(tmpdir .. "/kept-moved", "rf")
+    vim.fn.delete(tmpdir .. "/elsewhere", "rf")
+end
 vim.notify = real_notify
 
 H.finish()
