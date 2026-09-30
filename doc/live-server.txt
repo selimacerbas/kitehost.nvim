@@ -382,9 +382,11 @@ difference; for two strings of one length, its time does not depend on
 where they differ.
 
 `server.wildcard_loopback()` answers `"127.0.0.1"` for `"0.0.0.0"`,
-`"::1"` for `"::"` and nil for any other address. A plugin may replace
-it: `start` reads it through the module to probe the address the URL
-names, so a replaced rule moves the probe and the URL together.
+`"::1"` for `"::"` and nil for any other address; a plugin calls it to
+show the address a wildcard bind's URL names. Replacing it is not
+supported: `start` reads it through the module table, which every plugin
+in the process shares, so one plugin's replacement would move every other
+plugin's probe and URL.
 
 `server.features` holds the flags a plugin checks before it relies on a
 capability: `token_auth` (the `token` option and the gated routes),
@@ -398,8 +400,15 @@ serve).
 The `reload` event's data is JSON,
 `{"ts":<seconds>,"path":<string>,"css":<boolean>}`, keys in that order;
 Neovim 0.10 writes a slash as `\/`, so a reader decodes it and never
-compares its bytes. The `start` keys, the routes with their token gating
-and refusals, and the event framing are the README's list.
+compares its bytes. The README's section holds the rest of the promise:
+the `start` keys, which of them are required and what one left out
+means; how `asset_root` is read, as a string at start and as a function
+on every asset request, inside a fast event where `vim.fn` and `vim.api`
+raise; the order a request is checked in, from the 400 for a head the
+server cannot read to the 404 for a path under `/__live/` that is no
+route; the routes with their token gating and refusals, the asset
+route's deny list and sandbox among them; and the event framing, with
+when a stream that falls behind is dropped.
 
 A plugin that sends its own HTTP to the server sends a Host the server
 can read: every bind answers 400 to a Host that is no host. An IPv6
