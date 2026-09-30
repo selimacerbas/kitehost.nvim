@@ -2476,7 +2476,7 @@ local function check_start(cfg)
             -- A wildcard reads as a reg-name and matches no subdomain, only
             -- that literal name.
             if name:find("*", 1, true) then
-                error("allowed_hosts takes exact names, no wildcard: " .. name, 0)
+                error("allowed_hosts takes exact names, no wildcard: " .. util.marked(name, 300), 0)
             end
             -- The check reads a Host through host_name, so an entry must be
             -- what host_name would return for it: a port, brackets or a
@@ -2484,7 +2484,7 @@ local function check_start(cfg)
             local key = (name:lower():gsub("%.$", ""))
             local read = host_name(name) or host_name("[" .. name .. "]")
             if read ~= key then
-                error("allowed_hosts entry is not a hostname: " .. name, 0)
+                error("allowed_hosts entry is not a hostname: " .. util.marked(name, 300), 0)
             end
             allowed_set[key] = true
         end

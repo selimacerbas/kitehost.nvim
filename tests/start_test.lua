@@ -719,6 +719,25 @@ H.case("start refuses allowed_hosts but true or a list of hostnames", function()
         ok(named, case[2] .. ": " .. tostring(res))
         eq(after, before, case[2] .. ", before any socket opens")
     end
+    -- An entry is shown as a notice shows a caller's text: a control
+    -- byte, a NUL among them, as ?, cut at 300 bytes. It went out raw.
+    local long = string.rep("a", 10240)
+    for _, case in ipairs({
+        { "a\0.test", "allowed_hosts entry is not a hostname: a?.test" },
+        { "a\27[2J.test", "allowed_hosts entry is not a hostname: a?[2J.test" },
+        { long .. " b", "allowed_hosts entry is not a hostname: " .. long:sub(1, 300) },
+        { "*.\27[2J", "allowed_hosts takes exact names, no wildcard: *.?[2J" },
+    }) do
+        local refused, res = pcall(server.start, { port = 0, root = root, allowed_hosts = { case[1] } })
+        if refused then
+            server.stop(res)
+        end
+        eq(
+            not refused and tostring(res) or "started",
+            case[2],
+            ("allowed_hosts = { %s } is refused, the entry marked"):format(vim.inspect(case[1]:sub(1, 40)))
+        )
+    end
 end)
 
 H.case("a bind that fails and a port start cannot hold raise, leaving no socket", function()
