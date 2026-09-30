@@ -349,7 +349,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             end
         end
     end
-    local accepted = { "localhost", "127.0.0.1", "::FFFF:127.0.0.1" }
+    local accepted = { "localhost", "127.0.0.1" }
+    -- The v4-mapped spelling needs a dual-stack socket, which a machine may
+    -- lack, as the wildcard rows below measure.
+    local mapped = assert(vim.uv.new_tcp())
+    local mapped_ok = mapped:bind("::ffff:127.0.0.1", 0) and mapped:getsockname()
+    mapped:close()
+    if mapped_ok then
+        table.insert(accepted, "::FFFF:127.0.0.1")
+    else
+        H.skip('host = "::FFFF:127.0.0.1" starts (this machine binds no v4-mapped address)')
+    end
     if zone then
         vim.list_extend(accepted, { "::1", "::1%" .. zone })
     else

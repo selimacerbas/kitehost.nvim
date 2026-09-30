@@ -475,16 +475,19 @@ H.case("Section 7: a dot path's change sends no reload", function()
     end
     local on = server.enable_live(per, true)
     uv.os_uname = real_uname
-    local dirs, spent = {}, false
+    -- Each watched directory is read by its segments under the root: a
+    -- Windows path joins them with a backslash.
+    local dirs, spent, sub_c = {}, false, false
     for dir in pairs(per._fs_events or {}) do
-        dirs[#dirs + 1] = dir
-        spent = spent or dir:find("/__live", 1, true) ~= nil
+        local segs = vim.split(dir:sub(#per.root_real + 1):gsub("\\", "/"), "/", { trimempty = true })
+        dirs[#dirs + 1] = table.concat(segs, "/")
+        spent = spent or segs[1] == "__live"
+        sub_c = sub_c or (#segs == 2 and segs[1] == "sub" and segs[2] == "c")
     end
     table.sort(dirs)
-    local shown = table.concat(dirs, " ")
     ok(
-        on and #dirs > 0 and shown:find("/sub/c", 1, true) ~= nil and not spent,
-        "the per-directory watcher watches sub/c and nothing under <root>/__live/: " .. shown
+        on and sub_c and not spent,
+        "the per-directory watcher watches sub/c and nothing under <root>/__live/: " .. table.concat(dirs, " ")
     )
 end)
 
