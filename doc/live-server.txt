@@ -106,10 +106,11 @@ Options:
     Default port suggestion in the port picker.
 
 `host` (string, default `"127.0.0.1"`)
-    Bind address; `"0.0.0.0"` serves every file under the root, except a
-    dot path unless `serve_dotfiles` is set, and the file you started on,
-    at `/`, to anyone who can reach the port; set `token` there and read
-    SECURITY.md first.
+    Bind address, an IP address or `"localhost"`, which binds
+    `127.0.0.1`; a start refuses any other string. `"0.0.0.0"` serves
+    every file under the root, except a dot path unless `serve_dotfiles`
+    is set, and the file you started on, at `/`, to anyone who can reach
+    the port; set `token` there and read SECURITY.md first.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
@@ -156,10 +157,12 @@ gates `/__live/asset` too.
     Show the informational notices (a start, a retarget, a live-reload
     toggle, a stop). `false` silences those alone: a warning or an error,
     a start that failed among them, is always shown, and
-    |:LiveServerStatus| always prints.
+    |:LiveServerStatus| always prints. `notify_on_reload` is its own
+    switch, which `false` here leaves as it is.
 
 `notify_on_reload` (boolean, default false)
-    Show a notification on every live-reload event.
+    Show a notification on every live-reload event, whatever `notify`
+    says.
 
 `headers` (table, default `{ ["Cache-Control"] = "no-cache" }`)
     Extra HTTP response headers, added to every file, listing, asset and
@@ -190,17 +193,23 @@ gates `/__live/asset` too.
     per directory (no duplicates). >lua
         auto_start = { filetypes = { "html" }, port = 8000 }
 <
-    Opening a matching file in a directory no running server serves
-    starts one on `port`, or, when a server already runs on that port,
-    retargets it to that directory: the root follows the files you open,
-    and with `host = "0.0.0.0"` it is the network-reachable root that
-    moves.
-    Fields:
-    - `filetypes` (string[]): filetype names to trigger on, each made of
-      letters, digits, `_`, `.`, `+` and `-`; `"*"`, an empty string or a
-      comma is refused. A later `filetypes` list replaces the earlier one
-      whole, and a later call that names none keeps it.
-    - `port` (number, optional): Port to use. Falls back to `default_port`.
+    Opening a matching file on disk in a directory no running server
+    serves starts one on `port`, or, when a server already runs on that
+    port, retargets it to that directory: the root follows the files you
+    open, and with `host = "0.0.0.0"` it is the network-reachable root
+    that moves. A new file not yet on disk starts nothing (the notice
+    reads `Path not found`), and writing it does not either; |:edit| it
+    once it is written. A start that fails, a taken port among them, lets
+    the file open and shows its notice after it.
+
+`auto_start.filetypes` (string[])
+    Filetype names to trigger on, each made of letters, digits, `_`, `.`
+    and `-`; `"*"`, a `+`, an empty string or a comma is refused. A later
+    `filetypes` list replaces the earlier one whole, and a later call
+    that names none keeps it.
+
+`auto_start.port` (number, optional)
+    Port to use. Falls back to `default_port`.
 
 `live_reload` (table|boolean, default the fields below)
     `false` turns the section off and `true` on, keeping its other
@@ -209,8 +218,9 @@ gates `/__live/asset` too.
 `live_reload.enabled` (boolean, default true)
     Watch files under the served root and push SSE reload events. A
     change under a dot path pushes none unless `serve_dotfiles` is set,
-    the file you started on excepted, and |live-server-liveignore|
-    patterns match the path relative to the root.
+    nor does one under an entry named `__live` at the root, the file you
+    started on excepted, and |live-server-liveignore| patterns match the
+    path relative to the root.
 
 `live_reload.inject_script` (boolean, default true)
     Inject `<script src="/__live/script.js">` into HTML a browser navigates
@@ -331,7 +341,10 @@ release: every other field of the instance table (read
 `sse_clients`) and the wording of a message, except the `EADDRINUSE`
 text below. A minor release may still refuse a
 request the server admits today when refusing it closes a security hole;
-the requests the README lists as admitted stay admitted.
+the requests the README lists as admitted stay admitted. A minor release
+may also change how a method other than GET is answered (a `HEAD` among
+them, and the `Allow` field), how a request line naming `HTTP/1.2` to
+`HTTP/1.9` is answered, and the 64 KiB cap on a request head.
 
 Below Neovim 0.10 `live_server.server` and `live_server.util` raise on
 every `require`, so a plugin that also runs on an older Neovim loads them
@@ -426,13 +439,17 @@ serve).
 The `reload` event's data is JSON,
 `{"ts":<seconds>,"path":<string>,"css":<boolean>}`, keys in that order;
 Neovim 0.10 writes a slash as `\/`, so a reader decodes it and never
-compares its bytes. The README's section holds the rest of the promise:
-the `start` keys, which of them are required and what one left out
-means; how `asset_root` is read, as a string at start and as a function
-on every asset request, inside a fast event where `vim.fn` and `vim.api`
-raise; the order a request is checked in, from the 400 for a head the
-server cannot read to the 404 for a path under `/__live/` that is no
-route; the routes with their token gating and refusals, the asset
+compares its bytes. The watcher sends no reload for a change under a
+dot path while `serve_dotfiles` is off or under the `__live` entry at
+the root, the file the server was started on excepted, nor for one the
+root's `.liveignore` matches. The README's section holds the rest of the
+promise: the `start` keys, which of them are required, what one left
+out means and the values each takes; how `asset_root` is read, as a
+string at start and as a function on every asset request, inside a fast
+event where `vim.fn` and `vim.api` raise, its answer held to the
+string's rule; the order a request is checked in, from the 400 for a
+head the server cannot read to the 404 for a path under `/__live/` that
+is no route; the routes with their token gating and refusals, the asset
 route's deny list and sandbox among them; and the event framing, with
 when a stream that falls behind is dropped.
 
