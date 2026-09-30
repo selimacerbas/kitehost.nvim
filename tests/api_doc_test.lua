@@ -227,8 +227,8 @@ end)
 
 -- :help is the other place a plugin author reads the API, so its section
 -- holds the surface the README does. SECURITY.md's exposure section states
--- the Host check's claims while the server has the check, each on its own
--- row, so dropping one of them reds.
+-- the Host check this release holds, so the flag must be on and each claim
+-- has its own row, and dropping either reds.
 H.case("Section 3: :help names the same surface, SECURITY.md the Host check", function()
     local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
     local api = help:match("%*live%-server%-server%-api%*\n(.-)\n=====") or ""
@@ -256,16 +256,15 @@ H.case("Section 3: :help names the same surface, SECURITY.md the Host check", fu
         or security:match("\n## What the server exposes\n(.*)$")
         or ""
     ok(exposes ~= "", "SECURITY.md has its exposure section")
-    if server.features.host_check then
-        for _, claim in ipairs({
-            "421",
-            "`*.localhost`",
-            "`allowed_hosts`",
-            "`allowed_hosts = true`",
-            "`0.0.0.0` included, has none",
-        }) do
-            ok(exposes:find(claim, 1, true) ~= nil, "SECURITY.md states the Host check: " .. claim)
-        end
+    ok(server.features.host_check == true, "features.host_check is on, as SECURITY.md states")
+    for _, claim in ipairs({
+        "421",
+        "`*.localhost`",
+        "`allowed_hosts`",
+        "`allowed_hosts = true`",
+        "`0.0.0.0` included, has none",
+    }) do
+        ok(exposes:find(claim, 1, true) ~= nil, "SECURITY.md states the Host check: " .. claim)
     end
 end)
 
