@@ -1605,14 +1605,23 @@ end
 -- every request 404 without a word, and a relative path followed the
 -- working directory at each request. The real path, or nil and a warning
 -- once per server naming the answer, cut to 300 bytes and marked. nil is
--- no root yet, the caller's to say, and never reaches here.
+-- no root yet, the caller's to say, and never reaches here. Absolute is
+-- read per OS: a drive letter or a leading backslash is a relative name
+-- on macOS and Linux, which followed the working directory there.
+local WINDOWS = package.config:sub(1, 1) == "\\"
+local function is_absolute(path)
+    if WINDOWS then
+        return path:find("^[/\\]") ~= nil or path:find("^%a:[/\\]") ~= nil
+    end
+    return path:sub(1, 1) == "/"
+end
 local function answered_root(inst, answer)
     local what, cause
     if type(answer) ~= "string" then
         what = "no path"
     elseif answer:find("%z") then
         what = "a path holding a NUL byte"
-    elseif not (answer:find("^[/\\]") or answer:find("^%a:[/\\]")) then
+    elseif not is_absolute(answer) then
         what = "a relative path"
     else
         local real

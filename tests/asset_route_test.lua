@@ -447,7 +447,7 @@ eq(#notes, 0, "and warns nothing")
 -- and warns once per server, naming the answer marked.
 vim.fn.mkdir(tmpdir .. "/.git/imgs", "p")
 write_file(tmpdir .. "/.git/imgs/pic.png", "PNGDATA")
-for _, c in ipairs({
+local answers = {
     { "a relative path", "src", '"src", which is a relative path' },
     { "a missing directory", tmpdir .. "/missing", ('"%s/missing", which is not a directory (ENOENT)'):format(tmpdir) },
     { "a file", tmpdir .. "/secret.txt", ('"%s/secret.txt", which is not a directory'):format(tmpdir) },
@@ -466,7 +466,22 @@ for _, c in ipairs({
         tmpdir .. "/src\0junk",
         ('"%s/src?junk", which is a path holding a NUL byte'):format(tmpdir),
     },
-}) do
+}
+-- A drive letter or a leading backslash is absolute on Windows alone; on
+-- macOS and Linux each is a relative name, which followed the working
+-- directory at each request, served with no word (the cwd here holds
+-- both, a picture in each).
+if vim.fn.has("win32") == 0 then
+    vim.fn.mkdir(tmpdir .. "/C:/src", "p")
+    vim.fn.mkdir(tmpdir .. "/\\src", "p")
+    write_file(tmpdir .. "/C:/src/pic.png", "PNGDATA")
+    write_file(tmpdir .. "/\\src/pic.png", "PNGDATA")
+    table.insert(answers, { "a drive-letter path", "C:/src", '"C:/src", which is a relative path' })
+    table.insert(answers, { "a backslash path", "\\src", '"\\src", which is a relative path' })
+else
+    H.skip("a drive-letter or backslash answer is relative on macOS and Linux (this is Windows)")
+end
+for _, c in ipairs(answers) do
     notes = {}
     local answer = c[2]
     inst = asset_server(function()
