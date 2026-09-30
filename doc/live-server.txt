@@ -155,9 +155,12 @@ gates `/__live/asset` too.
 `index_names` (string[], default `{ "index.html", "index.htm" }`)
     Index file names to try when serving a directory, in order.
 
-`auto_start` (table|nil, default nil)                   *live-server-auto-start*
+`auto_start` (table|false, default off)                 *live-server-auto-start*
     Automatically start a server when a matching filetype is opened.
-    The server starts once per directory (no duplicates). >lua
+    `false` turns it off, one an earlier |live_server.setup()| call set
+    included, since each call merges into the options before it; any
+    other value that is not a table is refused. The server starts once
+    per directory (no duplicates). >lua
         auto_start = { filetypes = { "html" }, port = 8000 }
 <
     Fields:
@@ -177,8 +180,10 @@ gates `/__live/asset` too.
     Metadata; a page at a plain-http LAN address sends none, and its
     fetches get the script.
 
-`live_reload.debounce` (number, default 120)
-    Milliseconds to debounce rapid file changes before reloading.
+`live_reload.debounce` (integer, default 120)
+    Milliseconds to debounce rapid file changes before reloading, from 0
+    to 2147483647; a start refuses any other value, naming
+    `live.debounce`.
 
 `live_reload.css_inject` (boolean, default true)        *live-server-css-inject*
     When a `.css` file changes, hot-swap stylesheets in the browser
@@ -259,6 +264,107 @@ live_server.stop_one()                          *live_server.stop_one()*
 
 live_server.stop_all()                          *live_server.stop_all()*
     Stop all running servers and clear state.
+
+===============================================================================
+SERVER API                                      *live-server-server-api*
+
+For plugins that run their own server. `require("live_server.server")`
+and `require("live_server.util")` hold the public API that SemVer covers,
+as the README's "Server-level API (for plugin authors)" section lists it:
+the calls and what they answer, the `start` keys, the two instance fields,
+the capability flags, the HTTP routes with their gating and refusals, and
+the event framing. A release that breaks any of it is a major release.
+Everything else is internal and may change in any release: every other
+field of the instance table (read `server.connected_client_count(inst)`,
+never the event-stream list `sse_clients`) and the wording of a message,
+except the `EADDRINUSE` text below. A minor release may still refuse a
+request the server admits today when refusing it closes a security hole;
+the requests the README lists as admitted stay admitted.
+
+Below Neovim 0.10 both modules raise on every `require`, so a plugin that
+also runs on an older Neovim loads them under `pcall`.
+
+    server.start({cfg})          start a server and return the instance
+    server.stop({inst})          close the listener, every connection,
+                                 stream, timer and watcher; a second stop
+                                 does nothing
+    server.update_target({inst}, {root}, {index})
+                                 serve another root without a restart
+    server.reload({inst}, {path})
+                                 broadcast a reload event; {path} is a
+                                 string or nil
+    server.send_event({inst}, {name}, {data})
+                                 broadcast an event; {data} is a string,
+                                 or nil for `{}`
+    server.enable_live({inst}, {on})
+                                 start or stop watching files
+    server.is_live_enabled({inst})
+                                 true while files are watched
+    server.connected_client_count({inst})
+                                 open event streams
+    server.wildcard_loopback({ip})
+                                 the loopback address a wildcard bind's
+                                 URL shows, or nil
+    util.random_token({n})       hex token of {n} bytes (2n characters),
+                                 {n} from 1 to 1024, 16 when omitted
+    util.secure_compare({a}, {b})
+                                 whether two strings are equal
+
+`server.start()` checks every option before it opens a socket and returns
+the instance, or raises at level 0 (a message for the user, with no file
+position) and leaves no socket, timer or watcher behind when it cannot
+serve: an option it refuses, named in the message; a root that does not
+resolve or is not a directory; a host that is not an address of this
+machine (`EADDRNOTAVAIL`); a port another socket holds; a probe that
+cannot check the loopback address a wildcard bind's URL names, or a
+wildcard address a specific bind would shadow; a failed listen; a reload
+or heartbeat timer it cannot make. Call it under `pcall`. A refusal for a
+taken port carries the text `EADDRINUSE: address already in use` in each
+of its shapes, and a plugin may match that text to name the port. A root
+whose watcher cannot start is served with live reload off and a warning.
+
+The instance has two public fields: `inst.port`, the port the socket
+holds, and `inst.host`, the address the socket is bound to as the OS
+reports it (a configured `"localhost"` reads `"127.0.0.1"`).
+
+A call made wrongly raises at level 2, so the message names the calling
+line: `reload` with a path that is not a string, `send_event` with a name
+or payload that is not a string or a name holding a line break,
+`enable_live` with a flag that is not a boolean, `update_target` with a
+root or index that is not a string or, on a running server, a root it
+cannot serve, changing nothing, and `util.random_token` with a length
+outside 1 to 1024. `util.random_token` also raises when the OS offers no
+random source.
+
+`update_target` returns true when the server serves the root asked, and
+false with the cause when live reload is on and the new root cannot be
+watched (the root moves and live reload turns off); on a stopped server
+it returns false. `enable_live(inst, true)` returns true, or false with
+the cause when the watcher cannot start; `enable_live(inst, false)`
+returns false, as does `enable_live` on a stopped server.
+
+`util.secure_compare()` returns false at once for a non-string or a length
+difference; for two strings of one length, its time does not depend on
+where they differ.
+
+`server.wildcard_loopback()` answers `"127.0.0.1"` for `"0.0.0.0"`,
+`"::1"` for `"::"` and nil for any other address. A plugin may replace
+it: `start` reads it through the module to probe the address the URL
+names, so a replaced rule moves the probe and the URL together.
+
+`server.features` holds the flags a plugin checks before it relies on a
+capability: `token_auth` (the `token` option and the gated routes),
+`host_binding` (the `host` option), `asset_route` (`asset_root` and
+`/__live/asset`), `host_check` (a loopback bind answers only loopback
+Host names, 421 otherwise), `cors_list` (`cors` takes a list of origins)
+and `start_raises` (`start` raises at level 0 when it cannot serve).
+
+The `reload` event's data is JSON,
+`{"ts":<seconds>,"path":<string>,"css":<boolean>}`, keys in that order;
+Neovim 0.10 writes a slash as `\/`, so a reader decodes it and never
+compares its bytes. The `start` keys, the routes (`/__live/events`,
+`/__live/inject`, `/__live/asset`, `/__live/script.js`) with their token
+gating and refusals, and the event framing are the README's list.
 
 ===============================================================================
 KEYMAPS                                         *live-server-keymaps*

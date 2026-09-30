@@ -199,4 +199,29 @@ H.case("Section 2: every setup() option is in README Options", function()
     end
 end)
 
+-- :help is the other place a plugin author reads the API, so its section
+-- names every export and flag the module holds, as the README does, and
+-- SECURITY.md states the Host check a reporter tests against.
+H.case("Section 3: :help names the same surface, SECURITY.md the Host check", function()
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
+    local api = help:match("%*live%-server%-server%-api%*\n(.-)\n=====") or ""
+    ok(api ~= "", "doc/live-server.txt has the live-server-server-api section")
+    for _, name in ipairs(sorted_keys(server)) do
+        local shown = type(server[name]) == "function" and ("server." .. name .. "(") or ("server." .. name)
+        ok(api:find(shown, 1, true) ~= nil, (":help names server.%s"):format(name))
+    end
+    for _, flag in ipairs(sorted_keys(server.features)) do
+        ok(api:find("`" .. flag .. "`", 1, true) ~= nil, (":help names features.%s"):format(flag))
+    end
+    for _, name in ipairs({ "random_token", "secure_compare" }) do
+        ok(api:find("util." .. name .. "(", 1, true) ~= nil, (":help names util.%s"):format(name))
+    end
+    for _, field in ipairs({ "host", "port" }) do
+        ok(api:find("inst%." .. field .. "%f[^%w_]") ~= nil, (":help names inst.%s"):format(field))
+    end
+    ok(api:find("SemVer", 1, true) ~= nil, ":help says SemVer covers it")
+    local security = table.concat(vim.fn.readfile(H.root .. "/SECURITY.md"), "\n")
+    ok(security:find("Host check", 1, true) ~= nil, "SECURITY.md states the Host check")
+end)
+
 H.finish()
