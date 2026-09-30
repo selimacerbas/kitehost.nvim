@@ -165,12 +165,14 @@ function M.setup(opts)
     -- Each entry becomes an autocmd pattern, which reads "" as every
     -- filetype and a comma as two, and refuses a brace or a line break only
     -- after the options below are replaced and the earlier autocmd cleared,
-    -- so an entry is a filetype name or refused here.
+    -- so an entry is a filetype name or refused here. Neovim refuses a plus
+    -- in 'filetype', so an entry holding one armed an autocmd that never
+    -- fired.
     if type(auto) == "table" and auto.filetypes ~= nil then
         local fts = auto.filetypes
         local listed = type(fts) == "table" and vim.islist(fts)
         for _, ft in ipairs(listed and fts or {}) do
-            listed = listed and type(ft) == "string" and ft:find("^[%w_.+-]+$") ~= nil
+            listed = listed and type(ft) == "string" and ft:find("^[%w_.-]+$") ~= nil
         end
         if not listed then
             error("auto_start.filetypes must be a list of filetype names", 0)

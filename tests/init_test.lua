@@ -459,8 +459,11 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     end
     -- The autocmd API reads an empty pattern as every filetype and a comma
     -- as two, and it refused a brace or a line break with a file position
-    -- after the options were replaced and the earlier autocmd cleared.
-    for _, bad in ipairs({ "", "html,css", "{a", "a\nb" }) do
+    -- after the options were replaced and the earlier autocmd cleared. A
+    -- pattern character armed every filetype or many; Neovim refuses a
+    -- plus in 'filetype' (E474), so an entry holding one armed an autocmd
+    -- no buffer could fire.
+    for _, bad in ipairs({ "", "html,css", "{a", "a\nb", "*", "?", "h?ml", "c++" }) do
         local shown = vim.inspect(bad)
         pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
         package.loaded["live_server"] = nil
@@ -487,15 +490,15 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     end
     pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
     -- Names of the accepted shape are taken: Neovim ships bicep-params,
-    -- lsp_markdown and 8th; a dot joins a compound filetype (c.doxygen),
-    -- and no shipped name holds a plus, which is left for a user's own.
+    -- lsp_markdown and 8th, and a dot joins a compound filetype
+    -- (c.doxygen).
     package.loaded["live_server"] = nil
     local named = require("live_server")
     local took, took_err = pcall(named.setup, {
         notify = false,
-        auto_start = { filetypes = { "html", "bicep-params", "lsp_markdown", "8th", "c.doxygen", "my+ft" } },
+        auto_start = { filetypes = { "html", "bicep-params", "lsp_markdown", "8th", "c.doxygen" } },
     })
-    ok(took, "names of the accepted shape (letters, digits, _ . + -) are taken: " .. tostring(took_err))
+    ok(took, "names of the accepted shape (letters, digits, _ . -) are taken: " .. tostring(took_err))
     pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
     -- false is off, as for a section, and an empty list starts nothing:
     -- neither arms the FileType autocmd.
