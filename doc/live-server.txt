@@ -107,8 +107,9 @@ Options:
 
 `host` (string, default `"127.0.0.1"`)
     Bind address; `"0.0.0.0"` serves every file under the root, except a
-    dot path unless `serve_dotfiles` is set, to anyone who can reach the
-    port.
+    dot path unless `serve_dotfiles` is set, and the file you started on,
+    at `/`, to anyone who can reach the port; set `token` there and read
+    SECURITY.md first.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
@@ -119,7 +120,13 @@ Options:
 `protected_paths` (string[], default `{}`)
     Lua patterns of request paths that also require the token; the
     injected client, `/__live/script.js`, which holds no secret, is never
-    gated.
+    gated. A pattern is matched against the request path and against the
+    file's path under the root as the disk spells its name, so spell a
+    name as the disk does: on a case-insensitive file system, a pattern
+    cased otherwise gates only the spellings it matches, and a request in
+    the disk's spelling is served without the token. A hard link to a
+    protected file under another name is not gated. A non-empty list
+    needs `token`.
 
 `asset_root` is not a setup option: a plugin that calls
 `require("live_server.server").start()` passes it, and the token then

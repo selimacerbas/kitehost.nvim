@@ -20,6 +20,11 @@
 --   tables (opts, state) are the module's state and are not read.
 -- Section 10: :help's server API names the surface the README does, and
 --   SECURITY.md states the Host check the code holds.
+-- Section 11: each SECURITY.md claim a request can check is checked
+--   beside its sentence: the asset route's reach, list and sandbox, the
+--   listing, a headers origin line, the started-on dot file, a pattern's
+--   spelling and a hard link. A claim about what a program or a browser
+--   does later (the start probe, where the token travels) has no row.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
 
@@ -375,6 +380,107 @@ H.case("Section 10: :help names the same surface, SECURITY.md the Host check", f
     }) do
         ok(exposes:find(claim, 1, true) ~= nil, "SECURITY.md states the Host check: " .. claim)
     end
+end)
+
+-- SECURITY.md states only what the code holds, so each claim a request
+-- can check is checked here beside its sentence: a change to either
+-- reds the row, and the two are brought back together.
+local function exposes()
+    local security = table.concat(vim.fn.readfile(H.root .. "/SECURITY.md"), "\n")
+    return security:match("\n## What the server exposes\n(.-)\n## ")
+        or security:match("\n## What the server exposes\n(.*)$")
+        or ""
+end
+
+local function get(port, path, extra)
+    local data = H.raw_request(port, ("GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\n%s\r\n"):format(path, extra or ""))
+    return data and H.response(data) or { status = 0, headers = {}, body = "" }
+end
+
+local function states(claim, what)
+    ok(exposes():find(claim, 1, true) ~= nil, ("SECURITY.md states %s: %s"):format(what, claim))
+end
+
+H.case("Section 11: SECURITY.md states what the server serves, as it serves it", function()
+    local root, assets = H.tmpdir(), H.tmpdir()
+    H.write_file(root .. "/secret.txt", "SECRET")
+    H.write_file(root .. "/.draft.html", "DRAFT")
+    H.write_file(root .. "/pic.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>")
+    H.write_file(assets .. "/.notes", "NOTES")
+    H.write_file(assets .. "/.env", "KEY=1")
+    H.write_file(assets .. "/pic.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>")
+
+    -- The asset route serves a dot file its list does not hold, refuses
+    -- one it does, and sandboxes a document the root route does not.
+    local inst = server.start({ port = 0, root = root, asset_root = assets })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local notes = get(inst.port, "/__live/asset?p=.notes")
+    ok(notes.status == 200 and notes.body == "NOTES", "the asset route serves a dot file it does not list")
+    ok(get(inst.port, "/__live/asset?p=.env").status == 404, "the asset route refuses a name on its list")
+    states("dot files included", "the asset route's reach")
+    states("that list is no guarantee", "the asset route's deny list")
+    local sandboxed = get(inst.port, "/__live/asset?p=pic.svg").headers["content-security-policy"]
+    ok(sandboxed == "sandbox", "the asset route sends an SVG with a sandbox")
+    local plain = get(inst.port, "/pic.svg")
+    ok(plain.status == 200 and plain.headers["content-security-policy"] == nil, "the root route sends none")
+    states("`Content-Security-Policy: sandbox`", "the asset route's sandbox")
+    states("script in the server's origin", "what the root route runs")
+
+    -- The listing, on by default, names a file the token gates.
+    local gated = server.start({ port = 0, root = root, token = "tok", protected_paths = { "^/secret%.txt$" } })
+    H.defer(function()
+        server.stop(gated)
+    end)
+    ok(get(gated.port, "/secret.txt").status == 401, "the protected file needs the token")
+    ok(get(gated.port, "/").body:find("secret.txt", 1, true) ~= nil, "the listing names it without one")
+    states("the files `protected_paths` gates included", "what the listing names")
+
+    -- cors = false keeps an Access-Control-Allow-Origin passed in headers.
+    local acao = server.start({ port = 0, root = root, headers = { ["Access-Control-Allow-Origin"] = "*" } })
+    H.defer(function()
+        server.stop(acao)
+    end)
+    local read = get(acao.port, "/secret.txt", "Origin: http://other.example\r\n")
+    ok(read.headers["access-control-allow-origin"] == "*", "a headers origin line reaches the root route")
+    states("With `cors = false`, an `Access-Control-Allow-Origin` you pass in `headers`", "the headers origin line")
+
+    -- The file the user started on is served at / though it is a dot file.
+    local draft = server.start({ port = 0, root = root, default_index = root .. "/.draft.html" })
+    H.defer(function()
+        server.stop(draft)
+    end)
+    ok(get(draft.port, "/").body == "DRAFT", "the started-on dot file is served at /")
+    ok(get(draft.port, "/.draft.html").status == 404, "and by its own name is 404")
+    states("even when it is a dot file", "the started-on file's exception")
+
+    -- A pattern matches the name as the disk spells it; a hard link is
+    -- another name.
+    H.write_file(root .. "/content.md", "CONTENT")
+    local linked, link_err = vim.uv.fs_link(root .. "/content.md", root .. "/alias.md")
+    local cased = server.start({ port = 0, root = root, token = "tok", protected_paths = { "^/CONTENT%.MD$" } })
+    H.defer(function()
+        server.stop(cased)
+    end)
+    if vim.uv.fs_stat(root .. "/CONTENT.MD") then
+        ok(get(cased.port, "/CONTENT.MD").status == 401, "the pattern's own spelling needs the token")
+        ok(get(cased.port, "/content.md").status == 200, "the disk's spelling is served without it")
+    else
+        H.skip("this volume keeps case, so a pattern cased otherwise gates no file")
+    end
+    states("cased otherwise than the name on disk", "the pattern's spelling")
+    if linked then
+        local exact = server.start({ port = 0, root = root, token = "tok", protected_paths = { "^/content%.md$" } })
+        H.defer(function()
+            server.stop(exact)
+        end)
+        ok(get(exact.port, "/content.md").status == 401, "the protected name needs the token")
+        ok(get(exact.port, "/alias.md").status == 200, "a hard link to it is served without")
+    else
+        H.skip("no hard link could be made: " .. tostring(link_err))
+    end
+    states("a hard link to a protected file under another name is not gated", "the hard link")
 end)
 
 H.finish()
