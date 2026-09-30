@@ -532,12 +532,20 @@ end)
 -- so a user's own <root>/__live/ file was served with the cors origin the
 -- namespace never carries. The namespace is the server's: such a name is
 -- 404 under every configuration and the disk is never read, while the four
--- routes answer as they did.
+-- routes answer as they did. The rule reads the path as normalized, so an
+-- escaped, doubled or dotted spelling of the namespace is held too; a FIFO
+-- there answers at once, since opening one blocks the editor's loop.
 H.case("Section 8: a /__live/ name that is no route is 404", function()
     local site = H.tmpdir()
     H.write_file(site .. "/index.html", "<html><body>ok</body></html>")
     vim.fn.mkdir(site .. "/__live", "p")
     H.write_file(site .. "/__live/other.txt", "USERFILE")
+    local fifo, fifo_why = false, "mkfifo is not on PATH"
+    if vim.fn.executable("mkfifo") == 1 then
+        local made = vim.system({ "mkfifo", site .. "/__live/x" }):wait()
+        fifo = made.code == 0
+        fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. tostring(made.stderr)
+    end
     for _, c in ipairs({
         { "no cors, no token", {} },
         { "cors", { cors = true } },
@@ -548,11 +556,47 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
         local inst = serve(cfg)
         local port = inst.port
         local q = cfg.token and "?t=tok" or ""
-        for _, target in ipairs({ "/__live/other.txt", "/__live/other.txt?t=tok", "/__live/", "/__live" }) do
-            local r = raw(port, get(target, port))
+        for _, target in ipairs({
+            "/__live/other.txt",
+            "/__live/other.txt?t=tok",
+            "/__live/",
+            "/__live",
+            "/__live%2fother.txt",
+            "//__live/other.txt",
+            "/./__live/other.txt",
+            "/%5F_live/other.txt",
+        }) do
+            -- The server shares this process's vim.uv, so a filesystem call
+            -- naming the directory is seen here.
+            local touched = {}
+            local real_fs = {}
+            for _, fn in ipairs({ "fs_stat", "fs_lstat", "fs_realpath", "fs_open", "fs_scandir" }) do
+                real_fs[fn] = uv[fn]
+                uv[fn] = function(p, ...)
+                    if type(p) == "string" and p:lower():find("__live", 1, true) then
+                        table.insert(touched, fn .. " " .. p)
+                    end
+                    return real_fs[fn](p, ...)
+                end
+            end
+            local sent, r = pcall(raw, port, get(target, port))
+            for fn, f in pairs(real_fs) do
+                uv[fn] = f
+            end
+            assert(sent, r)
+            eq(#touched, 0, ("under %s, %s reads no disk: %s"):format(c[1], target, table.concat(touched, ", ")))
             eq(r.status, 404, ("under %s, %s is 404"):format(c[1], target))
             ok(not r.body:find("USERFILE", 1, true), ("under %s, %s never serves the file"):format(c[1], target))
             eq(r.headers["access-control-allow-origin"], nil, ("under %s, %s carries no ACAO"):format(c[1], target))
+        end
+        if fifo then
+            local t0 = uv.hrtime()
+            local r = raw(port, get("/__live/x", port))
+            local ms = (uv.hrtime() - t0) / 1e6
+            eq(r.status, 404, ("under %s, a FIFO at /__live/x is 404"):format(c[1]))
+            ok(ms < 1000, ("under %s, and answers at once, never opened (%d ms)"):format(c[1], ms))
+        else
+            H.skip(("under %s, a FIFO at /__live/x is 404 at once (%s)"):format(c[1], fifo_why))
         end
         eq(raw(port, get("/__live/script.js", port)).status, 200, "under " .. c[1] .. ", the client script is 200")
         eq(stream_head(port, "/__live/events" .. q).status, 200, "under " .. c[1] .. ", the event stream is 200")
