@@ -20,7 +20,7 @@ Start a server on any file or folder, auto-reload the browser on save, and quick
 
 ## Requirements
 
-* Neovim **0.10+** (on Neovim 0.8 or 0.9, pin the plugin to v1.5.0, the last release that runs there; from the next release on, v1.5.0 receives no fixes).
+* Neovim **0.10+** (on Neovim 0.8 or 0.9, pin the plugin to v1.5.0, the last release that runs there, which receives no fixes and keeps every hole the CHANGELOG's Security entries close).
 * Linux, macOS, or Windows.
 * [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) **recommended** for the best picking UX (falls back to `vim.ui.select/input` if missing).
 * [which-key.nvim](https://github.com/folke/which-key.nvim) recommended.
