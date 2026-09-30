@@ -1755,6 +1755,11 @@ local function handle_request(conn, req)
         if not authorized(rel) or (kind == "dir" and rel ~= "/" and not authorized(rel .. "/")) then
             return 401
         end
+        -- The directory behind the namespace, reached by a case variant or
+        -- a link, is refused as the disk spells it (see the namespace rule).
+        if not own and (rel == "/__live" or rel:find("^/__live/")) then
+            return 404
+        end
     end
     local function refuse(status)
         if status == 401 then
@@ -1846,8 +1851,11 @@ local function handle_request(conn, req)
         return stream_file(sock, real, asset_headers(inst, real), "/__live/asset")
     end
     -- The namespace is the server's: a name under it that is no route never
-    -- reaches the disk, so a user's own <root>/__live/ file cannot answer
-    -- with the root route's headers, the cors origin among them.
+    -- reaches the disk. This reads the request's spelling; the directory
+    -- behind it, <root>/__live/, is reached by other spellings too (a case
+    -- variant on a case-folding volume, a link), so refusal() reads the
+    -- name the disk gives. Between the two, no file there is served with
+    -- the root route's headers, the cors origin among them.
     if path_only == "/__live" or path_only:find("^/__live/") then
         return http_404(sock, path_only)
     end

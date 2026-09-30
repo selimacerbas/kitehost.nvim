@@ -546,6 +546,19 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
         fifo = made.code == 0
         fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. tostring(made.stderr)
     end
+    -- The directory behind the namespace is reached under other request
+    -- spellings too: a case variant on a case-folding volume, a link to a
+    -- file in it and a link to it. Each is read by the name the disk gives
+    -- it, as the dot rule reads one. A link that cannot be made, or a
+    -- volume that keeps case, skips its row with the reason.
+    local file_link, file_link_err = uv.fs_symlink("__live/other.txt", site .. "/link.txt")
+    local dir_link, dir_link_err = uv.fs_symlink("__live", site .. "/dirlink")
+    local resolved = {
+        { "/__LIVE/other.txt", uv.fs_stat(site .. "/__LIVE/other.txt") ~= nil, "this volume keeps case" },
+        { "/link.txt", file_link, "no link: " .. tostring(file_link_err) },
+        { "/dirlink/other.txt", dir_link, "no link: " .. tostring(dir_link_err) },
+        { "/dirlink/", dir_link, "no link: " .. tostring(dir_link_err) },
+    }
     for _, c in ipairs({
         { "no cors, no token", {} },
         { "cors", { cors = true } },
@@ -588,6 +601,17 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
             eq(r.status, 404, ("under %s, %s is 404"):format(c[1], target))
             ok(not r.body:find("USERFILE", 1, true), ("under %s, %s never serves the file"):format(c[1], target))
             eq(r.headers["access-control-allow-origin"], nil, ("under %s, %s carries no ACAO"):format(c[1], target))
+        end
+        for _, t in ipairs(resolved) do
+            local label = ("under %s, %s, which resolves under __live/, is 404"):format(c[1], t[1])
+            if t[2] then
+                local r = raw(port, get(t[1] .. q, port))
+                eq(r.status, 404, label)
+                ok(not r.body:find("USERFILE", 1, true), ("under %s, %s never serves the file"):format(c[1], t[1]))
+                eq(r.headers["access-control-allow-origin"], nil, ("under %s, %s carries no ACAO"):format(c[1], t[1]))
+            else
+                H.skip(label .. " (" .. t[3] .. ")")
+            end
         end
         if fifo then
             local t0 = uv.hrtime()
