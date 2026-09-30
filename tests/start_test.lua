@@ -1840,12 +1840,16 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         { "(a)%2", 4, "%2 names no closed capture" },
         { "(a)%0", 4, "%0 names no closed capture" },
         { string.rep("()", 33), 65, "more than 32 captures" },
+        -- The pattern is shown as a notice shows a caller's text: a
+        -- control byte as ?, cut at 300 bytes. It went out raw, whole.
+        { "^/a[\27[2J", 4, "a set is not closed", "^/a[?[2J" },
+        { string.rep("a", 10240) .. "[", 10241, "a set is not closed", string.rep("a", 300) },
     }) do
         local started, res = start_with(c[1])
         eq(
             not started and tostring(res) or "started",
-            ("protected_paths pattern is malformed at byte %d (%s): %s"):format(c[2], c[3], c[1]),
-            ("%s is refused, naming the byte"):format(vim.inspect(c[1]))
+            ("protected_paths pattern is malformed at byte %d (%s): %s"):format(c[2], c[3], c[4] or c[1]),
+            ("%s is refused, naming the byte"):format(vim.inspect(c[1]:sub(1, 40)))
         )
     end
     -- Each construct well-formed: a set with ] first, a negated set, an

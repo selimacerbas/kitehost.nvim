@@ -2506,7 +2506,10 @@ local function check_start(cfg)
             no_nul("protected_paths pattern", pat)
             local at, why = pattern_fault(pat)
             if at then
-                error(("protected_paths pattern is malformed at byte %d (%s): %s"):format(at, why, pat), 0)
+                error(
+                    ("protected_paths pattern is malformed at byte %d (%s): %s"):format(at, why, util.marked(pat, 300)),
+                    0
+                )
             end
         end
     end
