@@ -574,6 +574,48 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         directory_listing = { enabled = false, show_hidden = true },
     })
     ok(set, "every flag given as a boolean is taken: " .. tostring(err))
+    -- A key setup does not read was merged and never read, so a misspelled
+    -- token or protected_paths started every server with nothing gated.
+    for _, c in ipairs({
+        { { tokn = "abc" }, "tokn" },
+        { { protected_path = { "^/secret" } }, "protected_path" },
+        { { live_reload = { debounc = 50 } }, "live_reload.debounc" },
+        { { directory_listing = { show_hiden = true } }, "directory_listing.show_hiden" },
+        { { auto_start = { filetype = { "html" } } }, "auto_start.filetype" },
+    }) do
+        local shown = vim.inspect(c[1], { newline = " ", indent = "" })
+        package.loaded["live_server"] = nil
+        local configured = require("live_server")
+        local refused, why = pcall(configured.setup, vim.tbl_extend("force", { default_port = 9000 }, c[1]))
+        eq(
+            not refused and tostring(why) or "setup took it",
+            "setup does not read the key " .. c[2],
+            ("setup refuses %s, naming the key"):format(shown)
+        )
+        eq(configured.opts.default_port, 8000, ("and a refused %s keeps every option it had"):format(shown))
+    end
+    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    package.loaded["live_server"] = nil
+    local every = require("live_server")
+    set, err = pcall(every.setup, {
+        default_port = 9000,
+        host = "127.0.0.1",
+        open_on_start = false,
+        notify = false,
+        notify_on_reload = false,
+        headers = { ["X-Custom"] = "1" },
+        cors = false,
+        index_names = { "index.html" },
+        auto_start = { filetypes = {}, port = 9001 },
+        token = "abc",
+        protected_paths = { "^/secret" },
+        allowed_hosts = { "dev.test" },
+        serve_dotfiles = false,
+        live_reload = { enabled = true, inject_script = true, debounce = 50, css_inject = true },
+        directory_listing = { enabled = true, show_hidden = false },
+    })
+    ok(set, "every key setup reads is taken: " .. tostring(err))
+    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
 end)
 
 -- update_target raises on a root it cannot serve, and the retarget called

@@ -2241,6 +2241,28 @@ local function absolute_index(index)
     return util.joinpath(cwd, index)
 end
 
+-- The keys start reads, a nested table for a section (util.unread_key).
+local START_KEYS = {
+    token = true,
+    port = true,
+    host = true,
+    allowed_hosts = true,
+    protected_paths = true,
+    index_names = true,
+    serve_dotfiles = true,
+    headers = true,
+    cors = true,
+    live = { enabled = true, inject_script = true, css_inject = true, debounce = true },
+    features = { dirlist = { enabled = true, show_hidden = true } },
+    notify_on_reload = true,
+    default_index = true,
+    header_timeout_ms = true,
+    sse_heartbeat_ms = true,
+    max_connections = true,
+    asset_root = true,
+    root = true,
+}
+
 -- Start's options, each read from the caller's table once and checked
 -- before any handle opens, so a refusal leaks nothing; start reads only the
 -- copy returned. A table that computes a field could otherwise pass a check
@@ -2249,6 +2271,10 @@ end
 local function check_start(cfg)
     if type(cfg) ~= "table" then
         error("start takes a table of options", 0)
+    end
+    local unread = util.unread_key(cfg, START_KEYS)
+    if unread then
+        error("start does not read the key " .. unread, 0)
     end
     -- An empty token is truthy and would pass the gate with no t= at all.
     local token = cfg.token

@@ -291,6 +291,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "token", "\237\160\128", "token must be valid UTF-8" },
         { "token", "\244\144\128\128", "token must be valid UTF-8" },
         { "token", "\195\40", "token must be valid UTF-8" },
+        -- A key start does not read was dropped without a word, so a
+        -- misspelled token or protected_paths started with nothing gated.
+        { "tokn", "abc", "start does not read the key tokn" },
+        { "protected_path", { "^/content%.md$" }, "start does not read the key protected_path" },
+        { "live", { debounc = 50 }, "start does not read the key live.debounc" },
+        { "features", { dir_list = {} }, "start does not read the key features.dir_list" },
+        {
+            "features",
+            { dirlist = { show_hiden = true } },
+            "start does not read the key features.dirlist.show_hiden",
+        },
     }
     -- Each millisecond option is refused the same values the same way.
     for _, v in ipairs({ "soon", true, -1, 1.5, 0 / 0, math.huge, 2 ^ 31 }) do
@@ -1710,6 +1721,51 @@ H.case("a start that cannot make its reload timer raises, naming it, and leaves 
         eq(after.timer, before.timer, label .. ", no timer")
         eq(after.fs_event, before.fs_event, label .. ", and no watcher")
     end
+end)
+
+-- The misspelled keys of a gated server: each dropped, the file started
+-- and served to any request. The first unread key in sorted order is
+-- named, so the refusal reads the same on every run.
+H.case("start refuses a key it does not read and takes every key it reads", function()
+    local started, res = pcall(server.start, {
+        port = 0,
+        root = root,
+        tokn = TOKEN,
+        protected_path = { "^/content%.md$" },
+    })
+    if started then
+        server.stop(res)
+    end
+    eq(
+        not started and tostring(res) or "started",
+        "start does not read the key protected_path",
+        "a misspelled token and protected_paths are refused, the first named"
+    )
+    local every = {
+        port = 0,
+        host = "127.0.0.1",
+        root = root,
+        default_index = vim.fs.joinpath(root, "index.html"),
+        token = TOKEN,
+        protected_paths = { "^/content%.md$" },
+        allowed_hosts = { "dev.test" },
+        index_names = { "index.html" },
+        serve_dotfiles = false,
+        headers = { ["X-Custom"] = "1" },
+        cors = { "http://a.example" },
+        live = { enabled = false, inject_script = false, debounce = 50, css_inject = false },
+        features = { dirlist = { enabled = false, show_hidden = false } },
+        notify_on_reload = false,
+        asset_root = root,
+        header_timeout_ms = 5000,
+        sse_heartbeat_ms = 20000,
+        max_connections = 64,
+    }
+    started, res = pcall(server.start, every)
+    if started then
+        server.stop(res)
+    end
+    ok(started, ("a table naming every key start reads starts: %s"):format(started and "" or tostring(res)))
 end)
 
 -- A table that computes a field could pass a check with one value and

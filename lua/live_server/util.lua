@@ -543,4 +543,26 @@ function U.match_ignore(path, patterns)
     return false
 end
 
+-- The first key of given that known does not hold, dotted under its
+-- sections (a nested known table), in sorted order so a refusal reads the
+-- same on every run; a section of another type is its own check's to
+-- refuse. A key nobody reads was dropped without a word, so a misspelled
+-- token or protected_paths served with nothing gated. Read with pairs,
+-- which reads no computed field, so each option is still read once.
+function U.unread_key(given, known, prefix)
+    local names = {}
+    prefix = prefix or ""
+    for k, v in pairs(given) do
+        local sub = known[k]
+        local name = prefix .. ((type(k) == "string" and k:find("^[%a_][%w_]*$")) and k or vim.inspect(k))
+        if not sub then
+            table.insert(names, name)
+        elseif type(sub) == "table" and type(v) == "table" then
+            table.insert(names, U.unread_key(v, sub, name .. "."))
+        end
+    end
+    table.sort(names)
+    return names[1]
+end
+
 return U

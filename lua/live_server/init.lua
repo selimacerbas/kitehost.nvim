@@ -116,7 +116,31 @@ local function fold_headers(current, given)
     return out
 end
 
+-- The keys setup reads, a nested table for a section (util.unread_key);
+-- headers is the caller's own map.
+local SETUP_KEYS = {
+    default_port = true,
+    host = true,
+    open_on_start = true,
+    notify = true,
+    notify_on_reload = true,
+    headers = true,
+    cors = true,
+    index_names = true,
+    auto_start = { filetypes = true, port = true },
+    token = true,
+    protected_paths = true,
+    allowed_hosts = true,
+    serve_dotfiles = true,
+    live_reload = { enabled = true, inject_script = true, debounce = true, css_inject = true },
+    directory_listing = { enabled = true, show_hidden = true },
+}
+
 function M.setup(opts)
+    local unread = type(opts) == "table" and util.unread_key(opts, SETUP_KEYS)
+    if unread then
+        error("setup does not read the key " .. unread, 0)
+    end
     local before = M.opts
     local merged = vim.tbl_deep_extend("force", before, opts or {})
     if type(before.headers) == "table" and type(opts) == "table" and type(opts.headers) == "table" then
