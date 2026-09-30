@@ -807,7 +807,10 @@ end)
 -- picker's or a plugin's vim.cmd.edit failed with a traceback, and the
 -- buffer's later FileType autocmds never ran. The stub raises an error
 -- notice sent while the edit runs, as Neovim does, and records the rest.
-H.case("Section 12: a refused auto-start never raises out of the edit", function()
+-- Each notice the auto-start can send is driven: a refused start, a file
+-- not yet on disk and a retarget the server refuses (stubbed, since no
+-- real directory both resolves for the autocmd and fails the retarget).
+H.case("Section 12: no auto-start notice raises out of the edit", function()
     local held = assert(vim.uv.new_tcp())
     H.defer(function()
         held:close()
@@ -834,49 +837,92 @@ H.case("Section 12: a refused auto-start never raises out of the edit", function
         end
         table.insert(after, { msg = msg, level = level })
     end
-    local dir = H.tmpdir()
-    for _, notify in ipairs({ false, true }) do
-        package.loaded["live_server"] = nil
-        local ls = require("live_server")
-        ls.setup({
-            notify = notify,
-            open_on_start = false,
-            auto_start = { filetypes = { "lsautoft" }, port = held_port },
-        })
-        local later = 0
-        vim.api.nvim_create_autocmd("FileType", {
-            group = vim.api.nvim_create_augroup("LiveServerLaterFileType", { clear = true }),
-            pattern = "lsautoft",
-            callback = function()
-                later = later + 1
+    local dir, other = H.tmpdir(), H.tmpdir()
+    local real_update = server.update_target
+    H.defer(function()
+        server.update_target = real_update
+    end)
+    -- { what the edit meets, the port auto_start names, whether the file
+    -- is written first, the notice's start }
+    local shapes = {
+        {
+            "a refused start",
+            function()
+                return held_port
             end,
-        })
-        local page = ("%s/page%s.lsautoft"):format(dir, notify and "on" or "off")
-        H.write_file(page, "x")
-        during, after = {}, {}
-        editing = true
-        local edited, edit_err = pcall(vim.cmd.edit, page)
-        editing = false
-        local label = ("under notify = %s"):format(tostring(notify))
-        ok(
-            edited,
-            ("a refused auto-start leaves the edit whole %s: %s"):format(label, tostring(edit_err):match("^[^\n]*"))
-        )
-        eq(later, 1, "and the buffer's later FileType autocmd runs " .. label)
-        eq(#during, 0, "no notice is sent while the edit runs " .. label .. ": " .. table.concat(during, " | "))
-        H.wait_for(function()
-            return #after > 0
-        end, 1000)
-        local note = after[1] or {}
-        ok(
-            note.msg ~= nil and note.msg:find("^LiveServer did not start: ") ~= nil and #after == 1,
-            ("the notice is sent once the edit is done %s: %s"):format(
-                label,
-                vim.inspect(after, { newline = " ", indent = "" })
+            true,
+            "^LiveServer did not start: ",
+        },
+        {
+            "a file not yet on disk",
+            function()
+                return held_port
+            end,
+            false,
+            "^Path not found: ",
+        },
+        {
+            "a refused retarget",
+            function(ls)
+                local inst = server.start({ port = 0, root = other, live = { enabled = false } })
+                H.defer(function()
+                    server.stop(inst)
+                end)
+                ls.state.servers[inst.port] = inst
+                server.update_target = function()
+                    error("update_target: stubbed", 0)
+                end
+                return inst.port
+            end,
+            true,
+            "^LiveServer could not retarget: update_target: stubbed$",
+        },
+    }
+    for i, shape in ipairs(shapes) do
+        for _, notify in ipairs({ false, true }) do
+            package.loaded["live_server"] = nil
+            local ls = require("live_server")
+            ls.setup({
+                notify = notify,
+                open_on_start = false,
+                auto_start = { filetypes = { "lsautoft" }, port = 0 },
+            })
+            ls.opts.auto_start.port = shape[2](ls)
+            local later = 0
+            vim.api.nvim_create_autocmd("FileType", {
+                group = vim.api.nvim_create_augroup("LiveServerLaterFileType", { clear = true }),
+                pattern = "lsautoft",
+                callback = function()
+                    later = later + 1
+                end,
+            })
+            local page = ("%s/page%d%s.lsautoft"):format(dir, i, notify and "on" or "off")
+            if shape[3] then
+                H.write_file(page, "x")
+            end
+            during, after = {}, {}
+            editing = true
+            local edited, edit_err = pcall(vim.cmd.edit, page)
+            editing = false
+            server.update_target = real_update
+            local label = ("on %s under notify = %s"):format(shape[1], tostring(notify))
+            ok(edited, ("the edit is left whole %s: %s"):format(label, tostring(edit_err):match("^[^\n]*")))
+            eq(later, 1, "and the buffer's later FileType autocmd runs " .. label)
+            eq(#during, 0, "no notice is sent while the edit runs " .. label .. ": " .. table.concat(during, " | "))
+            H.wait_for(function()
+                return #after > 0
+            end, 1000)
+            local note = after[1] or {}
+            ok(
+                note.msg ~= nil and note.msg:find(shape[4]) ~= nil and #after == 1,
+                ("the notice is sent once the edit is done %s: %s"):format(
+                    label,
+                    vim.inspect(after, { newline = " ", indent = "" })
+                )
             )
-        )
-        eq(note.level, vim.log.levels.ERROR, "as an error " .. label)
-        vim.cmd("bwipeout!")
+            eq(note.level, vim.log.levels.ERROR, "as an error " .. label)
+            vim.cmd("bwipeout!")
+        end
     end
 end)
 
