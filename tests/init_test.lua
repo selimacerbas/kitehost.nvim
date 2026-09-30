@@ -745,6 +745,84 @@ H.case("Section 11: :LiveServerStatus prints under notify = false", function()
     eq(table.concat(notices, "\n"), "No running servers.", "with none it says so")
 end)
 
+-- A refused auto-start sent its error notice inside the FileType autocmd,
+-- where Neovim raises one out of the :edit that fired it (Vim(append)): a
+-- picker's or a plugin's vim.cmd.edit failed with a traceback, and the
+-- buffer's later FileType autocmds never ran. The stub raises an error
+-- notice sent while the edit runs, as Neovim does, and records the rest.
+H.case("Section 12: a refused auto-start never raises out of the edit", function()
+    local held = assert(vim.uv.new_tcp())
+    H.defer(function()
+        held:close()
+    end)
+    assert(held:bind("127.0.0.1", 0))
+    assert(held:listen(1, function() end))
+    local held_port = assert(held:getsockname()).port
+    vim.cmd("filetype on")
+    vim.filetype.add({ extension = { lsautoft = "lsautoft" } })
+    local suite_notify = vim.notify
+    H.defer(function()
+        vim.notify = suite_notify
+        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerLaterFileType")
+    end)
+    local editing, during, after = false, {}, {}
+    vim.notify = function(msg, level)
+        if editing then
+            table.insert(during, msg)
+            if level == vim.log.levels.ERROR then
+                error(msg, 0)
+            end
+            return
+        end
+        table.insert(after, { msg = msg, level = level })
+    end
+    local dir = H.tmpdir()
+    for _, notify in ipairs({ false, true }) do
+        package.loaded["live_server"] = nil
+        local ls = require("live_server")
+        ls.setup({
+            notify = notify,
+            open_on_start = false,
+            auto_start = { filetypes = { "lsautoft" }, port = held_port },
+        })
+        local later = 0
+        vim.api.nvim_create_autocmd("FileType", {
+            group = vim.api.nvim_create_augroup("LiveServerLaterFileType", { clear = true }),
+            pattern = "lsautoft",
+            callback = function()
+                later = later + 1
+            end,
+        })
+        local page = ("%s/page%s.lsautoft"):format(dir, notify and "on" or "off")
+        H.write_file(page, "x")
+        during, after = {}, {}
+        editing = true
+        local edited, edit_err = pcall(vim.cmd.edit, page)
+        editing = false
+        local label = ("under notify = %s"):format(tostring(notify))
+        ok(
+            edited,
+            ("a refused auto-start leaves the edit whole %s: %s"):format(label, tostring(edit_err):match("^[^\n]*"))
+        )
+        eq(later, 1, "and the buffer's later FileType autocmd runs " .. label)
+        eq(#during, 0, "no notice is sent while the edit runs " .. label .. ": " .. table.concat(during, " | "))
+        H.wait_for(function()
+            return #after > 0
+        end, 1000)
+        local note = after[1] or {}
+        ok(
+            note.msg ~= nil and note.msg:find("^LiveServer did not start: ") ~= nil and #after == 1,
+            ("the notice is sent once the edit is done %s: %s"):format(
+                label,
+                vim.inspect(after, { newline = " ", indent = "" })
+            )
+        )
+        eq(note.level, vim.log.levels.ERROR, "as an error " .. label)
+        vim.cmd("bwipeout!")
+    end
+end)
+
 local errors = 0
 for _, level in ipairs(levels) do
     if level >= vim.log.levels.ERROR then

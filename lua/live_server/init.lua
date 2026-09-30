@@ -205,18 +205,30 @@ function M.setup(opts)
                         end
                     end
                     local port = M.opts.auto_start.port or M.opts.default_port
-                    start_for_path(file, port)
+                    start_for_path(file, port, true)
                 end,
             })
         end
     end
 end
 
--- Start server for a path (file or directory) on a port
-function start_for_path(path, port)
+-- Start server for a path (file or directory) on a port. From the
+-- FileType autocmd (in_autocmd) every notice waits for the loop, as the
+-- floor notice above does: an error notice sent there is raised out of
+-- the :edit that fired it, which stopped a picker's or a plugin's edit
+-- and every later autocmd of the buffer.
+function start_for_path(path, port, in_autocmd)
+    local function say(msg, level)
+        if not in_autocmd then
+            return util.notify(msg, M.opts, level)
+        end
+        vim.schedule(function()
+            util.notify(msg, M.opts, level)
+        end)
+    end
     local stat = vim.uv.fs_stat(path)
     if not stat then
-        return util.notify("Path not found: " .. path, M.opts, "ERROR")
+        return say("Path not found: " .. path, "ERROR")
     end
     local root, index = path, nil
     if stat.type == "file" then
@@ -231,22 +243,21 @@ function start_for_path(path, port)
         -- By pcall itself, so a refused root is a notice with no position.
         local retargeted, answer = pcall(server.update_target, s, root, index)
         if not retargeted then
-            return util.notify("LiveServer could not retarget: " .. tostring(answer), M.opts, "ERROR")
+            return say("LiveServer could not retarget: " .. tostring(answer), "ERROR")
         end
         -- The retarget read as done while its live reload went off unsaid;
         -- the server's own warning names the cause, and a root may carry
         -- a peer's bytes, so the line is marked.
         if answer == false then
             local off = ("LiveServer %d retargeted to %s; live reload is off"):format(port, root)
-            util.notify(util.marked(off), M.opts, "WARN")
+            say(util.marked(off), "WARN")
         else
-            util.notify(
+            say(
                 ("LiveServer %d retargeted → %s%s"):format(
                     port,
                     root,
                     index and (" (index " .. util.basename(index) .. ")") or ""
-                ),
-                M.opts
+                )
             )
         end
     else
@@ -280,7 +291,7 @@ function start_for_path(path, port)
             -- The server's message names the cause; this names what failed,
             -- since :messages shows the notice without its title. A bind
             -- prefix here read a refused option as a busy port.
-            return util.notify("LiveServer did not start: " .. tostring(inst_or_err), M.opts, "ERROR")
+            return say("LiveServer did not start: " .. tostring(inst_or_err), "ERROR")
         end
         active_port = inst_or_err.port
         M.state.servers[active_port] = inst_or_err
@@ -293,7 +304,7 @@ function start_for_path(path, port)
     local s = M.state.servers[active_port]
     local url = browser_url(s.host, active_port, s.token)
     if started_here then
-        util.notify(("LiveServer %d started → %s at %s"):format(active_port, root, url), M.opts)
+        say(("LiveServer %d started → %s at %s"):format(active_port, root, url))
     end
     if M.opts.open_on_start then
         util.open_browser(url)
