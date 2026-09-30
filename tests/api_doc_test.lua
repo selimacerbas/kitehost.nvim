@@ -35,10 +35,12 @@
 --   root) has no row.
 -- Section 12: the README's request order, where a request can check it:
 --   the 400 for a method, a header name and a value, and the namespace's
---   404 before the method check. The order of the other steps is read,
+--   404 before the method check. The order of the other checks is read,
 --   not checked.
--- Sections 10 to 12 pin a phrase: a reworded claim reds, a reversed one
---   that keeps the phrase does not.
+-- Sections 10 to 12 hold phrase rows, labelled "... states ..." or "the
+--   README states ...", beside rows that check the server: a reworded
+--   claim reds a phrase row, a reversed one that keeps the phrase does
+--   not.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/api_doc_test.lua"
 
@@ -132,8 +134,9 @@ end)
 -- off, and every option set, a function asset_root and a cors list among
 -- them. A section (a map keyed by Lua names, or an empty table) is read
 -- through a proxy of its own, so its keys are recorded too; a list, and
--- the headers map, whose keys are header names, are handed over as they
--- are, since start walks them with ipairs or pairs, which read no proxy.
+-- a map with a key that is no Lua name (the headers map's X-Test), are
+-- handed over as they are, since start walks them with ipairs or pairs,
+-- which read no proxy.
 local function names_only(t)
     for k in pairs(t) do
         if type(k) ~= "string" or not k:find("^[%a_][%w_]*$") then
@@ -533,7 +536,8 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     ok(get(live.port, "/secret.txt", origin).headers["access-control-allow-origin"] == "*", "the root route does")
     states("no `/__live/` route carries an `Access-Control-Allow-Origin` header", "the live routes' origin line")
 
-    -- Another Access-Control header set in headers reaches every route.
+    -- Another Access-Control header set in headers reaches the answers
+    -- that carry the caller's headers, and not the client or an error.
     local credentials = server.start({
         port = 0,
         root = root,
@@ -549,7 +553,16 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
             and cred.headers["access-control-allow-origin"] == nil,
         "an asset carries a headers Access-Control-Allow-Credentials and no origin line"
     )
-    states("reaches every route", "the other Access-Control headers")
+    local served = get(credentials.port, "/secret.txt")
+    ok(served.headers["access-control-allow-credentials"] == "true", "a file the root route serves carries it")
+    local client = get(credentials.port, "/__live/script.js")
+    ok(client.status == 200 and client.headers["access-control-allow-credentials"] == nil, "the client does not")
+    local missing = get(credentials.port, "/missing.txt")
+    ok(missing.status == 404 and missing.headers["access-control-allow-credentials"] == nil, "nor does a 404")
+    states(
+        "reaches the files and listings the root route serves, the event stream and the asset route",
+        "the other Access-Control headers"
+    )
 
     -- With the Host check off, a page under a name that rebinds to this
     -- machine is answered as the server's own origin; with it on, 421.
@@ -659,8 +672,8 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     states("a hard link to a protected file under another name is not gated", "the hard link")
 end)
 
--- The README's request order is part of the promise, so the steps a
--- request can check are checked beside a phrase of their sentence.
+-- The README's request order is part of the promise, so the checks a
+-- request can make are made beside a phrase of their sentence.
 H.case("Section 12: the README's request order holds as the server answers", function()
     local order = readme:match("\nThe HTTP surface is part of the same promise[^\n]*") or ""
     ok(order ~= "", "the README has the request-order paragraph")
