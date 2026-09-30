@@ -302,6 +302,15 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         eq(after, tcps, ("%s opens no socket"):format(shown))
         eq(fds_after, fds, ("%s opens no descriptor"):format(shown))
     end
+    -- libuv's own text repeats the path raw, a control byte included, so
+    -- the refusal names it once, escaped, and keeps the error's name.
+    local odd = root .. "/mi\27[2Jss\nx"
+    local refused, why = pcall(server.start, { port = 0, root = root, asset_root = odd })
+    eq(
+        not refused and tostring(why) or "started",
+        ("asset_root is not a directory: %s (ENOENT)"):format(vim.inspect(odd)),
+        "a missing asset_root is named once, escaped, with the error's name"
+    )
     -- A cfg that is no table raised at the server's own line, naming
     -- nothing a user could act on.
     for _, cfg in ipairs({ { "nil", nil }, { "5", 5 }, { '"x"', "x" } }) do

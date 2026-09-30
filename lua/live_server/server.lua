@@ -2414,11 +2414,13 @@ local function check_start(cfg)
         if real then
             is_dir, dir_err = root_directory(real)
         end
+        -- libuv's text repeats the path raw after the error's name, so the
+        -- name alone is kept beside the escaped copy.
         if not is_dir then
             error(
                 ("asset_root is not a directory: %s%s"):format(
                     vim.inspect(asset_root),
-                    dir_err and (" (" .. tostring(dir_err) .. ")") or ""
+                    dir_err and (" (" .. tostring(dir_err):match("^[^:]*") .. ")") or ""
                 ),
                 0
             )
