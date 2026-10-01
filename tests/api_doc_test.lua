@@ -34,20 +34,21 @@
 --   rebound page with the Host check off, /.well-known/, strict-origin
 --   replacing a weaker policy, the started-on dot file, the reserved
 --   __live entry (a link of that name into the root and a link elsewhere
---   into it refused, a hard link elsewhere served), a pattern's spelling
---   and a hard link; setup() refusing the two connection keys is checked
---   by a call. The other clauses are read, not checked: that header on a
---   listing or the event stream, a kept no-referrer, the inject
---   endpoint's rules (a page under an allowed_hosts name among them),
---   what a cors list admits, the event stream naming a changed file, the
---   connection pool's defaults and who holds its places, the plain HTTP,
---   a request spelling the entry's name in another case, the cost a
---   pattern spends on the editor's loop, what a program, a browser or a
---   DNS server does later (the start probe, a file swapped between the
---   check and the open, a directory put at the root's path or at
---   asset_root's or one of its parents', an allowed_hosts name's
---   records, the opener's arguments, the history) and what the editor
---   does (auto_start moving the root).
+--   into it refused, the latter for a cors preflight too, a hard link
+--   elsewhere served), a pattern's spelling and a hard link, and the token
+--   compared before any pattern; setup() refusing the two connection keys
+--   is checked by a call. The other clauses are read, not checked: that
+--   header on a listing or the event stream, a kept no-referrer, the
+--   inject endpoint's rules (a page under an allowed_hosts name among
+--   them), what a cors list admits, the event stream naming a changed
+--   file, the connection pool's defaults and who holds its places, the
+--   plain HTTP, a request spelling the entry's name in another case, the
+--   cost a pattern spends on the editor's loop and who can impose it,
+--   what a program, a browser or a DNS server does later (the start
+--   probe, a file swapped between the check and the open, a directory put
+--   at the root's path or at asset_root's or one of its parents', an
+--   allowed_hosts name's records, the opener's arguments, the history)
+--   and what the editor does (auto_start moving the root).
 -- Section 12: the README's request order, where a request can check it:
 --   the 400 for a first byte, a method, a header name and a value, the
 --   414 for a target over 8 KiB (its query counted) before the Host check
@@ -748,11 +749,37 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
         )
         ok(get(alias.port, "/pub/page.txt").status == 200, "and that directory is served by its own name")
         ok(get(held.port, "/into.txt").status == 404, "a link elsewhere in the root into the entry is not served")
+        -- A preflight through that link is refused as a GET is, where one
+        -- on a served file is answered.
+        local opened = server.start({ port = 0, root = reserved, cors = { "http://app.test" } })
+        H.defer(function()
+            server.stop(opened)
+        end)
+        local asked = "Origin: http://app.test\r\nAccess-Control-Request-Method: GET\r\n"
+        local function preflight(path)
+            local head = ("OPTIONS %s HTTP/1.1\r\nHost: 127.0.0.1\r\n%s\r\n"):format(path, asked)
+            local data = H.raw_request(opened.port, head)
+            return data and H.response(data) or { status = 0, headers = {} }
+        end
+        local through, beside = preflight("/into.txt"), preflight("/plain.txt")
+        ok(
+            through.status == 404 and through.headers["access-control-allow-origin"] == nil,
+            "a preflight through that link is 404 with no origin line"
+        )
+        ok(
+            beside.status == 204 and beside.headers["access-control-allow-origin"] == "http://app.test",
+            "where a preflight on a served file is answered"
+        )
     else
         H.skip("no symbolic link could be made: " .. tostring(named_err or into_err))
+        H.skip("a preflight through a link into the entry is 404 (no symbolic link)")
     end
     states("or a link of that name to anything", "the reserved entry's link")
     states("nor a file a link elsewhere in the root resolves into it", "a link elsewhere into the entry")
+    states(
+        "for any method, a `cors` preflight included, which gets a 404 and no origin line",
+        "a link elsewhere into the entry, any method"
+    )
     if hard then
         local twin = get(held.port, "/hard.txt")
         ok(twin.status == 200 and twin.body == "RESERVED", "a hard link elsewhere to a file in the entry is served")
@@ -790,6 +817,27 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
         H.skip("no hard link could be made: " .. tostring(link_err))
     end
     states("a hard link to a protected file under another name is not gated", "the hard link")
+
+    -- The token is compared first: a request carrying it reads no pattern,
+    -- one without it reads each.
+    local counted_pattern, reads = "^/content%.md$", 0
+    local first = server.start({ port = 0, root = root, token = "tok", protected_paths = { counted_pattern } })
+    local real_find = string.find
+    H.defer(function()
+        string.find = real_find
+        server.stop(first)
+    end)
+    string.find = function(s, pat, ...)
+        reads = reads + (pat == counted_pattern and 1 or 0)
+        return real_find(s, pat, ...)
+    end
+    local held_token = get(first.port, "/content.md?t=tok")
+    local with_reads = reads
+    local without = get(first.port, "/content.md")
+    string.find = real_find
+    ok(held_token.status == 200 and with_reads == 0, "a request carrying the token is served and reads no pattern")
+    ok(without.status == 401 and reads > 0, "one without it reads the pattern and is 401")
+    states("a request carrying the token runs no pattern", "the token compared first")
 
     -- setup() refuses the two connection keys, so every server the
     -- commands open runs with the defaults.
