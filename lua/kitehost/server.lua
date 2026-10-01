@@ -884,8 +884,8 @@ local function schedule_reload(inst, changed_path, events)
     -- kept, as a file's would be.
     local changed_dir = events and events.change and not events.rename and rel and rel ~= "" and rel ~= "/"
     -- Beside a child named as the root, changed_rel reads the root's own
-    -- change as the child's, so that one name is kept, but on Windows,
-    -- which reports no change of the watched root itself (measured).
+    -- change as the child's, so that one name is kept off Windows, which
+    -- reports no change of the watched root itself (measured).
     if changed_dir and (WINDOWS or rel ~= util.basename(inst.root_real)) then
         local st = uv.fs_lstat(util.joinpath(inst.root_real, rel))
         if st and st.type == "directory" then

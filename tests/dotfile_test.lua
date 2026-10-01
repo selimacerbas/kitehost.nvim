@@ -548,7 +548,11 @@ end)
 -- of Neovim 0.10 on macOS reports no such event (measured), so the rows
 -- are read where a watcher sees one.
 H.case("Section 7b: a change to the root itself reloads, naming /", function()
+    -- The probe watches as the server does: one recursive watcher on macOS
+    -- and Windows, the directory alone elsewhere.
     local function own_event_seen()
+        local sys = uv.os_uname().sysname
+        local recursive = sys == "Darwin" or sys:find("Windows") ~= nil
         local dir = H.tmpdir()
         local ev = assert(uv.new_fs_event())
         H.defer(function()
@@ -557,7 +561,7 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
             end
         end)
         local seen = false
-        assert(ev:start(dir, {}, function()
+        assert(ev:start(dir, { recursive = recursive }, function()
             seen = true
         end))
         vim.wait(300)
