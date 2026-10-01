@@ -30,7 +30,7 @@
 -- is refused by its byte unless a literal its item cannot match sits
 -- right before it, as is an unbounded quantifier in a pattern not
 -- anchored with ^ unless the pattern starts with a literal its item
--- cannot match, as are more than eight ? items, and one that nests too
+-- cannot match, as are more than two ? items, and one that nests too
 -- deep for LuaJIT on a path answers that path 401 without the token with
 -- one warning (the token's holder served), a zoned host reports the
 -- address it bound (a zone of digits, as Windows spells one, among them,
@@ -2089,12 +2089,12 @@ end)
 -- cost 0.2 ms; it is taken unanchored only when the pattern starts with
 -- a literal its first such item cannot match, which ends each run at the
 -- next start (the same consumer pattern). Each ? item doubles the ways a
--- path is tried, so eight are taken and a ninth refused.
+-- path is tried, so two are taken and a third refused.
 H.case("start refuses a second unbounded quantifier that can run on", function()
     local second = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
     local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
         .. " so a request path costs the square of its length"
-    local optional = "more than eight ? items double a request path's cost with each one"
+    local optional = "more than two ? items double a request path's cost with each one"
     for _, c in ipairs({
         { "^/.*/.*%.md$", 7, second },
         { "^[^/]*[^/]*x", 11, second },
@@ -2110,7 +2110,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         { "(.*)/(%d+)$", 3, unanchored },
         { "/x.*", 4, unanchored },
         { "a*b", 2, unanchored },
-        { "^/" .. ("a?"):rep(9), 20, optional },
+        { "^/" .. ("a?"):rep(3), 8, optional },
     }) do
         local started, res = pcall(server.start, {
             port = 0,
@@ -2137,7 +2137,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         "^(.*)/(%d+)$",
         "^/[^/]*/[^/]*%.md$",
         "^/x%-*y",
-        "^/" .. ("a?"):rep(8),
+        "^/" .. ("a?"):rep(2),
         "^/" .. ("x*/"):rep(200),
     }) do
         local started, res = pcall(server.start, {

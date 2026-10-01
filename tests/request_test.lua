@@ -823,13 +823,13 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     -- The cost the start rules leave, measured on this machine, not a
     -- promise. Anchored, this pattern costs 0.1 ms on the longest path the
     -- cap lets through; unanchored, which start refuses, it cost 300 to
-    -- 535 ms. A costly shape start takes, one wildcard and eight ? items
-    -- before a literal tail, tries 2^8 ways at every split of 8 KiB, each
-    -- as long as the tail: with eight a's of tail, about 175 ms of CPU
-    -- time on 0.12.5 and 155 on 0.10.0 (1000 a's took 14 s). Its calls
-    -- are timed by os.clock, so the row reads their work and not the
-    -- machine's load beside it.
-    local costly = "^/.*" .. ("a?"):rep(8) .. ("a"):rep(8) .. "b"
+    -- 535 ms. The costliest shape the caps take, one wildcard and two ?
+    -- items before a literal tail filling the pattern's 256 bytes, tries
+    -- 2^2 ways at every split of 8 KiB, each as long as the tail: about
+    -- 58 ms of CPU time on 0.12.5 and 40 on 0.10.0. Its calls are timed
+    -- by os.clock, so the row reads their work and not the machine's load
+    -- beside it.
+    local costly = "^/.*" .. ("a?"):rep(2) .. ("a"):rep(247) .. "b"
     local worst = serve({ token = "tok", protected_paths = { costly } })
     local spent, calls = 0, 0
     string.find = function(s, pat, ...)
@@ -847,7 +847,7 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     -- no part of the loop's.
     local got = H.http_get(("http://127.0.0.1:%d%s"):format(worst.port, a_path))
     string.find = real_find
-    eq(got.status, 404, "an 8 KiB path of a's is answered under a costly shape start takes")
+    eq(got.status, 404, "an 8 KiB path of a's is answered under the costliest shape the caps take")
     eq(calls, 1, "which the gate matched once")
     ok(spent > 0 and spent < 1, ("and the pattern held the loop under 1 s of CPU time (%d ms)"):format(spent * 1000))
 end)

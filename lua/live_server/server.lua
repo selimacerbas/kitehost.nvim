@@ -2466,11 +2466,12 @@ end
 --     pattern starts with a literal that item cannot match, which ends
 --     each run at the next place a match can start (the same pattern).
 --   * Each ? item doubles the ways a path is tried: twenty-four took 1 s
---     on a 26-byte path, so eight are taken.
+--     on a 26-byte path, and eight after a wildcard 175 ms on 8 KiB, so
+--     two are taken.
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
     .. " so a request path costs the square of its length"
-local OPTIONAL = "more than eight ? items double a request path's cost with each one"
+local OPTIONAL = "more than two ? items double a request path's cost with each one"
 local function pattern_cost(pat)
     if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
         return nil
@@ -2507,7 +2508,7 @@ local function pattern_cost(pat)
                 i = stop + 1
             elseif q == "?" then
                 optional = optional + 1
-                if optional > 8 then
+                if optional > 2 then
                     return stop, OPTIONAL
                 end
                 before, first = nil, first == nil and false or first
