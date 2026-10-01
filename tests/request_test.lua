@@ -838,7 +838,7 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     -- of CPU time on either binary, a reading moving with the machine's
     -- load (33 to 59 ms measured); the costliest shape found, two ? items
     -- before 32 nested captures and a literal tail filling the 256 bytes,
-    -- about 105 ms, the figure the README states. Its calls are timed by
+    -- at most about 105 ms, the README's figure. Its calls are timed by
     -- os.clock, so the row reads their work and not the machine's load
     -- beside it.
     local costly = "^/.*" .. ("a?"):rep(2) .. ("a"):rep(247) .. "b"

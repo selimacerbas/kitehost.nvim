@@ -360,8 +360,9 @@ local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Mode" }
 -- The longest request target read. The gate matches every protected_paths
 -- pattern against the path on the loop, so the path's length multiplies
 -- each pattern's cost: under the rules start holds a pattern to
--- (pattern_cost), the costliest shape found costs about 105 ms for one
--- read of the 8 KiB this takes, the figure the README states.
+-- (pattern_cost), the costliest shape found, two ? items before 32
+-- nested captures and a literal tail filling 256 bytes, costs at most
+-- about 105 ms for one read of the 8 KiB this takes, the README's figure.
 -- The cap bounds the request's spelling; the name on disk the gate reads
 -- second is bounded by the OS's path limit.
 local MAX_TARGET = 8 * 1024
@@ -2509,9 +2510,9 @@ end
 --     multiplies the cost: a wildcard, eight ? items and a 1000-byte tail
 --     took 14 s. 256 bytes are taken. The costliest shape found that the
 --     rules then take, two ? items before 32 nested captures and a
---     literal tail filling the 256 bytes, costs about 105 ms for one read
---     of an 8 KiB path, the figure the README states below its start-key
---     table beside how many reads a request makes.
+--     literal tail filling the 256 bytes, costs at most about 105 ms for
+--     one read of an 8 KiB path, the figure the README states below its
+--     start-key table beside how many reads a request makes.
 -- One rule here is no cost: a - after a single character is a name's
 -- hyphen read as a lazy repetition, so ^/my-notes%.md$ and
 -- ^/draft-%d%d%.md$ found no hyphen and served the file without the
