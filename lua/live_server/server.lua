@@ -1670,16 +1670,19 @@ end
 
 -- A string asset_root, kept at start as the real path it named, read
 -- again per request: a link put at that path after start (the directory
--- moved away, a link in its place) was followed with no word. The path
--- must still resolve to itself; otherwise nil and a warning once per
--- server, under the kind a function's faults share.
-local function kept_root(inst, kept)
+-- moved away, a link in its place) was followed with no word, and so
+-- was a link given as the root and repointed, since the kept path was
+-- what the check resolved. The string given, made absolute at start,
+-- must still resolve to the path kept; otherwise nil and a warning once
+-- per server, naming the string, under the kind a function's faults
+-- share.
+local function kept_root(inst, given, kept)
     local fault
-    local now, now_err = uv.fs_realpath(kept)
+    local now, now_err = uv.fs_realpath(given)
     if not now then
         fault = ("does not resolve (%s)"):format(tostring(now_err):match("^[^:]*"))
     elseif now ~= kept then
-        fault = ('resolves to "%s"'):format(util.marked(now, 300))
+        fault = ('resolves to "%s"'):format(shown(now))
     else
         local real, what, cause = asset_dir(kept)
         if real then
@@ -1690,7 +1693,7 @@ local function kept_root(inst, kept)
     warn_once(
         inst,
         "asset-root",
-        ('asset_root "%s" %s since start; the asset request was answered 404'):format(util.marked(kept, 300), fault)
+        ('asset_root "%s" %s since start; the asset request was answered 404'):format(shown(given), fault)
     )
 end
 
@@ -1973,7 +1976,7 @@ local function handle_request(conn, req)
                 aroot_real = answered_root(inst, res)
             end
         elseif aroot then
-            aroot_real = kept_root(inst, aroot)
+            aroot_real = kept_root(inst, inst.asset_given, aroot)
         end
         local rel = qparam("p")
         rel = rel and util.url_decode(rel) or ""
@@ -2312,17 +2315,18 @@ local function root_directory(real)
     return st.type == "directory"
 end
 
--- Read per request, a relative index followed a later :cd to another file.
--- Absolute is read per OS (is_absolute), as the asset route reads it.
-local function absolute_index(index)
-    if index == nil or index == "" or is_absolute(index) then
-        return index
+-- Read per request, a relative index or asset_root followed a later :cd
+-- to another file. Absolute is read per OS (is_absolute), as the asset
+-- route reads it.
+local function absolute_path(path)
+    if path == nil or path == "" or is_absolute(path) then
+        return path
     end
     local cwd, cwd_err = uv.cwd()
     if not cwd then
         return nil, cwd_err
     end
-    return util.joinpath(cwd, index)
+    return util.joinpath(cwd, path)
 end
 
 -- Where a set opened at i ends, the byte after its "]", or nil: the first
@@ -2719,7 +2723,7 @@ local function check_start(cfg)
         no_nul("default_index", default_index)
     end
     local index_err
-    default_index, index_err = absolute_index(default_index)
+    default_index, index_err = absolute_path(default_index)
     if index_err then
         error("default_index is relative and the working directory is unknown: " .. tostring(index_err), 0)
     end
@@ -2749,7 +2753,7 @@ local function check_start(cfg)
     -- every asset request 404 without a word (measured). A string is kept
     -- as its real path, since a relative one followed a later :cd; a
     -- function is left to each request, whose caller may retarget it.
-    local asset_root = cfg.asset_root
+    local asset_root, asset_given = cfg.asset_root, nil
     if asset_root ~= nil and type(asset_root) ~= "string" and type(asset_root) ~= "function" then
         error("asset_root must be a directory or a function returning one, got " .. type(asset_root), 0)
     end
@@ -2763,6 +2767,14 @@ local function check_start(cfg)
                 ('asset_root is %s: "%s"%s'):format(what, shown(asset_root), cause and (" (" .. cause .. ")") or ""),
                 0
             )
+        end
+        -- The string is kept too, made absolute, since each request
+        -- resolves it again (kept_root) and a relative one followed a
+        -- later :cd.
+        local given_err
+        asset_given, given_err = absolute_path(asset_root)
+        if not asset_given then
+            error("asset_root is relative and the working directory is unknown: " .. tostring(given_err), 0)
         end
         asset_root = real
     end
@@ -2815,6 +2827,7 @@ local function check_start(cfg)
         dir_show_hidden = show_hidden == true,
         notify_on_reload = notify_on_reload == true,
         asset_root = asset_root,
+        asset_given = asset_given,
         header_timeout = header_timeout or 10000,
         heartbeat_ms = heartbeat or 20000,
         max_connections = max_conns or 64,
@@ -3027,6 +3040,8 @@ function S.start(cfg)
         -- (e.g. images referenced from markdown) without serving that
         -- directory as the root. Token-gated whenever token is set.
         asset_root = checked.asset_root,
+        -- A string asset_root as given, made absolute (kept_root).
+        asset_given = checked.asset_given,
     }
     read_liveignore(inst)
 
@@ -3213,7 +3228,7 @@ function S.update_target(inst, new_root, new_index)
         local cause = dir_err and (" (" .. tostring(dir_err):match("^[^:]*") .. ")") or ""
         error(("update_target: root %s is not a directory%s"):format(shown(new_root), cause), 2)
     end
-    local index, index_err = absolute_index(new_index)
+    local index, index_err = absolute_path(new_index)
     if index_err then
         error(
             ("update_target: index %s is relative and the working directory is unknown (%s)"):format(

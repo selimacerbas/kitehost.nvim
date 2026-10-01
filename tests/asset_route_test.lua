@@ -9,9 +9,13 @@
 --     whose function form serves nothing there (Section 4)
 --   - sandboxes the HTML, SVG and XML documents it serves, never the root
 --     route's index (Section 5)
---   - fixes a string root at start and reads a function per request, a
---     raise or an answer that is no absolute directory outside the
---     credential directories warned once, nil a silent 404 (Section 6)
+--   - fixes a string root at start (a relative one needs the working
+--     directory then) and resolves the string given again per request,
+--     which must still name the real path kept: a link put at the kept
+--     path, the root removed or a link given as the root and repointed
+--     is 404 and warned once; reads a function per request, a raise or
+--     an answer that is no absolute directory outside the credential
+--     directories warned once, nil a silent 404 (Section 6)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -381,6 +385,24 @@ if started then
     eq(after.status, 200, "and still does after the working directory changes")
     server.stop(inst)
 end
+-- The string is kept made absolute for the per-request check, so a
+-- relative one needs the working directory at start.
+local real_cwd = uv.cwd
+assert(uv.chdir(tmpdir))
+uv.cwd = function()
+    return nil, "ENOENT: stubbed"
+end
+started, res = pcall(asset_server, "src")
+uv.cwd = real_cwd
+assert(uv.chdir(cwd))
+if started then
+    server.stop(res)
+end
+eq(
+    not started and tostring(res) or "started",
+    "asset_root is relative and the working directory is unknown: ENOENT: stubbed",
+    "a relative asset_root with the working directory unknown is refused"
+)
 -- A caller retargets its function between requests and may have no root
 -- yet when the server starts, so start never calls it; each request does.
 local calls = 0
@@ -510,8 +532,9 @@ for _, c in ipairs(answers) do
 end
 -- A string root is kept as its real path at start and read again at each
 -- request, where a link put at that path after start (the directory
--- moved away) was followed with no word. The path must still resolve to
--- itself; otherwise the request is 404 and the fault is told once.
+-- moved away) was followed with no word. The string given must still
+-- resolve to the path kept; otherwise the request is 404 and the fault
+-- is told once, naming the root as given.
 for _, c in ipairs({
     { "a link put at the kept path", true },
     { "the kept directory removed", false },
@@ -521,7 +544,6 @@ for _, c in ipairs({
     write_file(kept .. "/a.txt", "KEPT")
     vim.fn.mkdir(tmpdir .. "/elsewhere", "p")
     write_file(tmpdir .. "/elsewhere/a.txt", "ELSEWHERE")
-    local kept_real = assert(uv.fs_realpath(kept))
     notes = {}
     inst = asset_server(kept)
     local url = ("http://127.0.0.1:%d/__live/asset?p=a.txt&t=%s"):format(inst.port, TOKEN)
@@ -535,7 +557,7 @@ for _, c in ipairs({
     local rows = {
         "and after " .. c[1] .. " is 404",
         "and 404 again after " .. c[1],
-        "and warns once after " .. c[1] .. ", naming the kept path",
+        "and warns once after " .. c[1] .. ", naming the root as given",
     }
     if linked then
         eq(http_get(url).status, 404, rows[1])
@@ -546,7 +568,7 @@ for _, c in ipairs({
         vim.wait(100)
         local want = ('live-server: port %d asset_root "%s" %s since start; the asset request was answered 404'):format(
             inst.port,
-            kept_real,
+            kept,
             fault
         )
         H.ok(
@@ -562,6 +584,55 @@ for _, c in ipairs({
     vim.fn.delete(kept)
     vim.fn.delete(tmpdir .. "/kept-moved", "rf")
     vim.fn.delete(tmpdir .. "/elsewhere", "rf")
+end
+-- A link given as the root was read through once, at start, and the
+-- per-request check read the real path kept then, so a link repointed
+-- after start was not seen and the old target served on with no word.
+-- The string given is resolved again at each request and must still
+-- name the real path kept at start.
+do
+    local first, second, link = tmpdir .. "/first", tmpdir .. "/second", tmpdir .. "/current"
+    vim.fn.mkdir(first, "p")
+    vim.fn.mkdir(second, "p")
+    write_file(first .. "/a.txt", "FIRST")
+    write_file(second .. "/a.txt", "SECOND")
+    local rows = {
+        "a link given as asset_root serves its target",
+        "and once repointed after start is 404",
+        "and 404 again",
+        "and warns once, naming the link and where it resolves now",
+    }
+    local made, made_err = uv.fs_symlink(first, link, { dir = true, junction = true })
+    if not made then
+        for _, row in ipairs(rows) do
+            H.skip(row .. " (" .. tostring(made_err) .. ")")
+        end
+    else
+        notes = {}
+        inst = asset_server(link)
+        local url = ("http://127.0.0.1:%d/__live/asset?p=a.txt&t=%s"):format(inst.port, TOKEN)
+        local served = http_get(url)
+        eq(served.status == 200 and served.body or served.status, "FIRST", rows[1])
+        assert(uv.fs_unlink(link))
+        assert(uv.fs_symlink(second, link, { dir = true, junction = true }))
+        eq(http_get(url).status, 404, rows[2])
+        eq(http_get(url).status, 404, rows[3])
+        H.wait_for(function()
+            return #notes >= 1
+        end, 1000)
+        vim.wait(100)
+        local want = ('live-server: port %d asset_root "%s" resolves to "%s" since start; the asset request was answered 404'):format(
+            inst.port,
+            link,
+            assert(uv.fs_realpath(second))
+        )
+        H.ok(
+            #notes == 1 and notes[1].msg == want and notes[1].level == vim.log.levels.WARN,
+            ("%s: %s"):format(rows[4], vim.inspect(notes, { newline = " ", indent = "" }))
+        )
+        server.stop(inst)
+        vim.fn.delete(link)
+    end
 end
 vim.notify = real_notify
 
