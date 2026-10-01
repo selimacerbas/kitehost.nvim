@@ -23,6 +23,9 @@
 -- Section 9: every function of require("kitehost") is named in the
 --   README's "API (for lua configs)" and in :help's API section. Its
 --   tables (opts, state) are the module's state and are not read.
+-- Section 9b: each :KiteHost subcommand the plugin file defines has its
+--   :help tag, and each command it replaced keeps its tag in :help's
+--   deprecated section, pointing at that subcommand.
 -- Section 10: :help's server API names the surface the README does, and
 --   SECURITY.md states the Host check the code holds.
 -- Section 11: these SECURITY.md claims are checked by a request beside a
@@ -448,6 +451,27 @@ H.case("Section 9: every function of kitehost is in README's and :help's API", f
         end
     end
     ok(names > 0, 'require("kitehost") returns functions')
+end)
+
+-- The subcommands are the plugin file's SUBCOMMANDS rows, read from its
+-- source, since the table is local to the file; a :help tag that a user
+-- of a former command reaches must lead to the subcommand that replaced it.
+H.case("Section 9b: :help tags each subcommand and points each former command at it", function()
+    local source = table.concat(vim.fn.readfile(H.root .. "/plugin/kitehost.lua"), "\n")
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/kitehost.txt"), "\n")
+    local deprecated = help:match("%*kitehost%-deprecated%*\n(.-)\n%-%-%-%-") or ""
+    ok(deprecated ~= "", "doc/kitehost.txt has the kitehost-deprecated section")
+    local rows = 0
+    for name, former in source:gmatch('{ name = "([%w-]+)", run = "[%w_]+", former = "(%w+)" }') do
+        rows = rows + 1
+        ok(help:find("*:KiteHost-" .. name .. "*", 1, true) ~= nil, (":help tags :KiteHost-%s"):format(name))
+        ok(
+            deprecated:find("%*:" .. former .. "%*%s*\n[^\n]*|:KiteHost%-" .. vim.pesc(name) .. "|") ~= nil,
+            (":help's deprecated section tags :%s and points it at |:KiteHost-%s|"):format(former, name)
+        )
+    end
+    local formers = select(2, source:gsub('former = "', ""))
+    ok(rows > 0 and rows == formers, ("every SUBCOMMANDS row is read: %d of %d"):format(rows, formers))
 end)
 
 -- :help is the other place a plugin author reads the API, so its section
