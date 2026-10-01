@@ -2135,6 +2135,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         { "/x.*", 4, unanchored },
         { "a*b", 2, unanchored },
         { "^/" .. ("a?"):rep(3), 8, optional },
+        { "^/%d?[ab]?%d?", 13, optional },
         { chain85, 257, long, chain85:sub(217, 257), "bytes 217 to 257" },
         { ("a"):rep(257), 257, long, ("a"):rep(41), "bytes 217 to 257" },
         { "^/a%b()", 4, balanced },
