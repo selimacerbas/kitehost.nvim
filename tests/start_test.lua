@@ -1627,7 +1627,7 @@ end)
 -- Windows lets a :: start bind beside another program's :: IPv6-only
 -- listener, which then took the [::1] requests the URL sends, token and
 -- all (measured on the hosted runner); macOS and Linux refuse the bind.
-H.case("a :: start beside a :: IPv6-only listener raises", function()
+H.case("a :: start beside a :: IPv6-only listener raises, a 127.0.0.1 one serves", function()
     local only = assert(vim.uv.new_tcp())
     H.defer(function()
         if not only:is_closing() then
@@ -1643,6 +1643,7 @@ H.case("a :: start beside a :: IPv6-only listener raises", function()
         local why = (" (no IPv6-only listener here: %s)"):format(tostring(listen_err))
         H.skip("a :: start beside a :: IPv6-only listener raises, naming its port" .. why)
         H.skip("leaving no socket" .. why)
+        H.skip("a 127.0.0.1 start beside a :: IPv6-only listener serves" .. why)
         return
     end
     local port = only:getsockname().port
@@ -1667,6 +1668,17 @@ H.case("a :: start beside a :: IPv6-only listener raises", function()
     end
     ok(refused, ("a :: start beside a :: IPv6-only listener raises, %s: %s"):format(how, res))
     eq(open, 0, "leaving no socket")
+    -- An IPv6-only listener answers no IPv4 address, so a 127.0.0.1 start
+    -- beside it shadows nothing and no probe may refuse it: every system
+    -- binds it there and each probe finds its mode free (measured).
+    local v4_started, v4_res = pcall(server.start, { port = port, root = root })
+    if v4_started then
+        server.stop(v4_res)
+    end
+    ok(
+        v4_started,
+        "a 127.0.0.1 start beside a :: IPv6-only listener serves: " .. (v4_started and "started" or tostring(v4_res))
+    )
 end)
 
 -- A listener in the one mode a Windows probe adds cannot be made beside
@@ -1811,7 +1823,10 @@ H.case("read as Windows, a bind probes :: in the mode its own does not meet", fu
     end
 
     if binds("::") then
-        up, res, sockets = start_as("Windows_NT", "::", true, "free")
+        -- Answered free on macOS alone, so a Windows or Linux run makes the
+        -- IPv6-only probe beside its real :: start.
+        local on_mac = real_uname().sysname == "Darwin"
+        up, res, sockets = start_as("Windows_NT", "::", true, on_mac and "free" or nil)
         ok(up, "a :: start read as Windows serves where :: IPv6-only is free: " .. res)
         eq(sockets, 3, "with its socket, the ::1 probe and the :: IPv6-only one")
         up, res, sockets, open = start_as("Windows_NT", "::", true, held)
