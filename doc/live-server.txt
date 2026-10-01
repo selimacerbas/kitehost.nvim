@@ -322,14 +322,14 @@ a plugin rely on: the |live-server-options|, the `:LiveServer*`
 commands, the functions below and |live-server-server-api|; a release
 that breaks any of it is a major release, while the wording of a notice,
 the statusline's text and anything these do not name may change in any
-release. From the release after this one, an option a minor release
-adds comes with a `server.features` flag (|live-server-server-api|),
-which a configuration shared across installs checks before it sets the
-option, since this release refuses an option `setup()` does not read;
-an option is removed only in a major release. Of the options this
-release adds, `allowed_hosts` comes with `host_check` and
-`serve_dotfiles` with no flag; v1.5.0 ignored an option it did not
-read, so a configuration may set them there.
+release. A new option comes with a `server.features` flag
+(|live-server-server-api|), which a configuration shared across installs
+checks before it sets the option, since `setup()` refuses an option it
+does not read; an option is removed only in a major release. The options
+added in the release that followed v1.5.0 are the exception:
+`allowed_hosts` comes with `host_check` and `serve_dotfiles` with no
+flag; v1.5.0 ignored an option it did not read, so a configuration may
+set them there.
 
 live_server.setup({opts})                       *live_server.setup()*
     Merge {opts} with defaults and apply configuration.
@@ -375,12 +375,12 @@ that SemVer covers, as the README's "Server-level API (for plugin
 authors)" section lists it: the calls and what they answer, the `start`
 keys, the two instance fields, the capability flags, the HTTP routes with
 their gating and refusals, and the event framing. A release that breaks
-any of it is a major release. From the release after this one, a key a
-minor release adds comes with a `server.features` flag, which a plugin
-checks before it sets the key, since this release refuses a key
-`start` does not read; a key is removed only in a major release. Of
-the keys this release adds, `allowed_hosts` comes with `host_check`,
-and `serve_dotfiles`, `header_timeout_ms`, `max_connections` and
+any of it is a major release. A new `start` key comes with a
+`server.features` flag, which a plugin checks before it sets the key,
+since `start` refuses a key it does not read; a key is removed only in a
+major release. The keys added in the release that followed v1.5.0 are
+the exception: `allowed_hosts` comes with `host_check`, and
+`serve_dotfiles`, `header_timeout_ms`, `max_connections` and
 `sse_heartbeat_ms` with no flag; v1.5.0 ignored a key it did not read,
 so a plugin may set them there.
 Everything else in these two modules is internal and may change in any
