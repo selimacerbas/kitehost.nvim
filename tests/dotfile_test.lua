@@ -1093,6 +1093,17 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
         end
     end
     eq(table.concat(differ, ", "), "", "every line matches the paths its pattern finds, and no other")
+    -- A line's blanks were trimmed by a lazy capture with a greedy tail,
+    -- which rescans an inner run of blanks from every position: 60000 of
+    -- them took 16.8 s of CPU time at every start and retarget.
+    local site = H.tmpdir()
+    H.write_file(site .. "/.liveignore", "a" .. (" "):rep(60000) .. "b\n")
+    local c0 = os.clock()
+    local wide = assert(util.parse_liveignore(site))
+    local spent = (os.clock() - c0) * 1000
+    ok(spent < 50, ("a line with 60000 inner blanks is read in under 50 ms of CPU time (%.1f ms)"):format(spent))
+    eq(wide[1], "a" .. (" "):rep(60000) .. "b", "and keeps its inner blanks")
+    eq(rule(" \t dist \t "), "dist", "a line's outer blanks and tabs are trimmed")
 end)
 
 -- Two changes inside one debounce window kept the last path alone, so
