@@ -352,9 +352,12 @@ live_server.setup({opts})                       *live_server.setup()*
     does not read, a misspelled one among them, is refused, naming it
     (`setup does not read the key live_reload.debounc`), and the options
     stay as they were. It checks the table's own keys alone: a key a
-    metatable supplies through `__index` is never refused, and is read
-    or not as the merge reaches it (a whole `auto_start` table is read
-    through it), so give it a plain table.
+    metatable supplies through `__index` is never refused, and the merge
+    does not read it: of {opts}'s own options only `headers` is read
+    through it, and inside a section only an `auto_start` table's
+    fields, that table being kept as given, while any other (`notify`,
+    `auto_start` itself, a `live_reload` field) is left out without a
+    word, so give it a plain table.
 
 live_server.start_picker()                      *live_server.start_picker()*
     UI flow: pick a path (Telescope or vim.ui), pick a port, start.
