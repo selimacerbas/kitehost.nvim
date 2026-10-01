@@ -2468,6 +2468,10 @@ end
 --   * Each ? item doubles the ways a path is tried: twenty-four took 1 s
 --     on a 26-byte path, and eight after a wildcard 175 ms on 8 KiB, so
 --     two are taken.
+--   * A balanced match (%bxy) scans to the path's end wherever it cannot
+--     balance, a scan neither rule above counts: unanchored, %b() cost
+--     30 ms on 8 KiB of ( and .?.?%b() 132 ms. No path rule needs one, so
+--     it is refused; a frontier (%f) reads two bytes and is taken.
 --   * Every try reads as much of the pattern as matches, so its length
 --     multiplies the cost: a wildcard, eight ? items and a 1000-byte tail
 --     took 14 s. 256 bytes are taken; the costliest shape the rules then
@@ -2478,6 +2482,7 @@ local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tri
     .. " so a request path costs the square of its length"
 local OPTIONAL = "more than two ? items double a request path's cost with each one"
 local LONG = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
+local BALANCED = "a balanced match (%b) scans a request path without bound and has no place in a path rule"
 local function pattern_cost(pat)
     if #pat > 256 then
         return 257, LONG
@@ -2496,10 +2501,12 @@ local function pattern_cost(pat)
             i = i + 1
         elseif c == "$" and i == n then
             break
-        elseif c == "%" and (d == "b" or d == "f" or d:find("%d")) then
+        elseif c == "%" and d == "b" then
+            return i, BALANCED
+        elseif c == "%" and (d == "f" or d:find("%d")) then
             before = nil
             first = first == nil and false or first
-            i = d == "b" and i + 4 or d == "f" and set_end(pat, i + 2) or i + 2
+            i = d == "f" and set_end(pat, i + 2) or i + 2
         else
             local stop = c == "%" and i + 2 or c == "[" and set_end(pat, i) or i + 1
             local item, q = pat:sub(i, stop - 1), pat:sub(stop, stop)

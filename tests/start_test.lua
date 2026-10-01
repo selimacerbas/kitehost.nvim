@@ -30,15 +30,16 @@
 -- is refused by its byte unless a literal its item cannot match sits
 -- right before it, as is an unbounded quantifier in a pattern not
 -- anchored with ^ unless the pattern starts with a literal its item
--- cannot match, as are more than two ? items and a pattern over 256
--- bytes, and one LuaJIT cannot read on a path (its raise stubbed, since
--- none start takes nests that deep) answers that path 401 without the
--- token with one warning (the token's holder served), a zoned host
--- reports the address it bound (a zone of digits, as Windows spells one,
--- among them, and the loopback's own name skipped where it is no zone the
--- host takes), a table naming every key start reads starts, START_KEYS
--- names the keys check_start and S.start read in the source and no other,
--- and each option is read from the caller's table once.
+-- cannot match, as are more than two ? items, a balanced match (%b) and
+-- a pattern over 256 bytes, and one LuaJIT cannot read on a path (its
+-- raise stubbed, since none start takes nests that deep) answers that
+-- path 401 without the token with one warning (the token's holder
+-- served), a zoned host reports the address it bound (a zone of digits,
+-- as Windows spells one, among them, and the loopback's own name skipped
+-- where it is no zone the host takes), a table naming every key start
+-- reads starts, START_KEYS names the keys check_start and S.start read in
+-- the source and no other, and each option is read from the caller's
+-- table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -2067,9 +2068,10 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
     eq(http_get(base .. "/draft").status, 404, "and no path it does not hold")
     -- Each construct well-formed: a set with ] first, a negated set, an
     -- escape in a set, classes, a capture and its back-reference, a
-    -- position capture, %b, %f, each quantifier, both anchors and an
-    -- anchor character inside the pattern, 32 captures, and a chain of 84
-    -- x*/ items, as many as 256 bytes hold.
+    -- position capture, %f, each quantifier, both anchors and an anchor
+    -- character inside the pattern, 32 captures, and a chain of 84 x*/
+    -- items, as many as 256 bytes hold. A %b is well-formed too, and its
+    -- cost refuses it (below).
     for _, pattern in ipairs({
         "[]x]",
         "/[^/]+%.md$",
@@ -2079,7 +2081,6 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "^/%a%d%l%s%u%w%x%p%c%z%A",
         "^/(%w+)/%1$",
         "()x",
-        "%bxy",
         "%f[%w]word",
         "^a*b",
         "^c-d?",
@@ -2105,13 +2106,18 @@ end)
 -- a literal its first such item cannot match, which ends each run at the
 -- next start (the same consumer pattern). Each ? item doubles the ways a
 -- path is tried, so two are taken and a third refused, and the pattern's
--- own length multiplies every try, so 256 bytes are taken.
+-- own length multiplies every try, so 256 bytes are taken. A balanced
+-- match (%b) scans to the path's end wherever it cannot balance, which no
+-- quantifier rule counts: on 8 KiB of ( unanchored %b() cost 30 ms and
+-- .?.?%b() 132 ms, so it is refused; a frontier (%f) reads two bytes and
+-- is taken.
 H.case("start refuses a second unbounded quantifier that can run on", function()
     local second = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
     local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
         .. " so a request path costs the square of its length"
     local optional = "more than two ? items double a request path's cost with each one"
     local long = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
+    local balanced = "a balanced match (%b) scans a request path without bound and has no place in a path rule"
     local chain85 = "^/" .. ("x*/"):rep(85)
     for _, c in ipairs({
         { "^/.*/.*%.md$", 7, second },
@@ -2131,6 +2137,9 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         { "^/" .. ("a?"):rep(3), 8, optional },
         { chain85, 257, long, chain85:sub(217, 257), "bytes 217 to 257" },
         { ("a"):rep(257), 257, long, ("a"):rep(41), "bytes 217 to 257" },
+        { "^/a%b()", 4, balanced },
+        { "%b()", 1, balanced },
+        { "^.*.?.?%b()", 8, balanced },
     }) do
         local started, res = pcall(server.start, {
             port = 0,
@@ -2165,6 +2174,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         "^/" .. ("a?"):rep(2),
         "^/" .. ("x*/"):rep(84),
         ("a"):rep(256),
+        "^/%f[%w]x",
     }) do
         local started, res = pcall(server.start, {
             port = 0,
