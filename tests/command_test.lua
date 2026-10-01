@@ -42,8 +42,8 @@ end
 local sourced, source_err = pcall(vim.cmd, "runtime plugin/kitehost.lua")
 ok(sourced, "the plugin file sources: " .. tostring(source_err))
 local kitehost = require("kitehost")
--- stop_all notifies at exit, after the ruling and with no newline, where
--- its line fuses with the runner's next one, as floor_guard_test says.
+-- stop_all notifies at exit, after the Results line and with no newline,
+-- where its line fuses with the runner's next one, as floor_guard_test says.
 H.defer(function()
     pcall(vim.api.nvim_clear_autocmds, { group = "KiteHostExit" })
 end)
