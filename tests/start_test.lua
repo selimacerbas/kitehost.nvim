@@ -3,11 +3,12 @@
 -- naming what it refused, at level 0: options that are no table, a key
 -- start does not read (a misspelled token or protected_paths, a nested
 -- key of live or features), a bad token (one that is no UTF-8 among
--- them), default_index, a live, dirlist or notify_on_reload flag that is
--- no boolean, protected_paths (patterns with no token among them, and a
--- malformed pattern named by the byte of its fault wherever it sits and
--- shown in at most 40 bytes either side of it),
--- serve_dotfiles, index_names, headers (a control byte in a value, two
+-- them), default_index (an empty one among them), a live, dirlist or
+-- notify_on_reload flag that is no boolean, protected_paths (patterns
+-- with no token among them, and a malformed pattern named by the byte of
+-- its fault wherever it sits and shown in at most 40 bytes either side
+-- of it), serve_dotfiles, index_names, headers (a control byte in a
+-- value, two
 -- spellings of one name, the server's own fields and false among them),
 -- cors, allowed_hosts (a string, a map, a hole, a wildcard, an entry no
 -- Host can match), live and its debounce, features, host (a name, an
@@ -267,8 +268,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "features", false, "features must be a table" },
         -- A default_index that is no string started, and every GET / then
         -- answered 500.
-        { "default_index", true, "default_index must be a string" },
-        { "default_index", { "index.html" }, "default_index must be a string" },
+        { "default_index", true, "default_index must be a non-empty string" },
+        { "default_index", { "index.html" }, "default_index must be a non-empty string" },
+        -- An empty one started and named no file, so / fell to the index
+        -- names with no word, where an empty token is refused.
+        { "default_index", "", "default_index must be a non-empty string" },
         -- An asset_root that is no path or function started, and every
         -- asset request then answered 404 without a word.
         { "asset_root", 42, "asset_root must be a directory or a function returning one, got number" },
@@ -1664,10 +1668,6 @@ H.case("a relative default_index names the file it named at start", function()
         ("a relative default_index serves the file it named at start after a :cd (%d): %s"):format(r.status, r.body)
     )
     ok(H.same_path(inst.default_index, vim.fs.joinpath(here, "page.html")), "and is held as that file's absolute path")
-    -- An empty index is none: the directory's own index answers.
-    local none = serve({ default_index = "" })
-    eq(none.default_index, "", "an empty default_index is kept as it is")
-    eq(http_get(("http://127.0.0.1:%d/"):format(none.port)).status, 200, "and / serves the root's index.html")
     -- A drive letter or a leading backslash is absolute on Windows alone;
     -- on macOS and Linux each is a relative name, which was kept as given
     -- and followed the working directory at each request. Compared as

@@ -2729,10 +2729,12 @@ local function check_start(cfg)
     local dir_on = flag("features.dirlist.enabled", dirlist and dirlist.enabled)
     local show_hidden = flag("features.dirlist.show_hidden", dirlist and dirlist.show_hidden)
     local notify_on_reload = flag("notify_on_reload", cfg.notify_on_reload)
-    -- Every GET / reads it as a path, where any other type answered 500.
+    -- Every GET / reads it as a path, where any other type answered 500;
+    -- an empty one named no file, so / fell to the index names with no
+    -- word.
     local default_index = cfg.default_index
-    if default_index ~= nil and type(default_index) ~= "string" then
-        error("default_index must be a string", 0)
+    if default_index ~= nil and (type(default_index) ~= "string" or default_index == "") then
+        error("default_index must be a non-empty string", 0)
     end
     if default_index ~= nil then
         no_nul("default_index", default_index)
