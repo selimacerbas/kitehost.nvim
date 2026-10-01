@@ -516,7 +516,7 @@ function U.parse_liveignore(root)
     end
     local patterns = {}
     for line in content:gmatch("[^\r\n]+") do
-        -- Two one-pass trims, as parse_head's: a lazy capture with a
+        -- Two anchored trims, as parse_head's: a lazy capture with a
         -- greedy tail rescans an inner run of blanks from every position,
         -- and 60000 of them took 16.8 s of CPU time.
         line = line:gsub("^%s+", "")

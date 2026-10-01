@@ -2448,7 +2448,7 @@ end
 -- literal the item cannot match, which ends each of its runs there:
 -- /%.[^/]+%.%d+%.tmp$ cost 0.2 ms on every 8 KiB path tried. The items
 -- are read as LuaJIT's matcher reads them; a capture's parenthesis is
--- passed over, and any other element before an item is no literal.
+-- skipped, and any other element before an item is no literal.
 local function second_quantifier(pat)
     if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
         return nil
