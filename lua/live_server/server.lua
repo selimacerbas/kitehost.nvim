@@ -2439,6 +2439,57 @@ local function pattern_fault(pat)
     end
 end
 
+-- The byte of a well-formed pattern's second unbounded quantifier (*, +
+-- or - after an item) that can run on, or nil. The gate matches every
+-- pattern on the loop, and two such runs split a path in more ways than
+-- its length: /.*/.*%.md$ cost 4.2 s of CPU time on a 2 KiB path and
+-- 42.7 s on 4 KiB, where /.*%.md$ costs 270 ms on 8 KiB (measured). A
+-- later one is taken when the character right before its item is a
+-- literal the item cannot match, which ends each of its runs there:
+-- /%.[^/]+%.%d+%.tmp$ cost 0.2 ms on every 8 KiB path tried. The items
+-- are read as LuaJIT's matcher reads them; a capture's parenthesis is
+-- passed over, and any other element before an item is no literal.
+local function second_quantifier(pat)
+    if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
+        return nil
+    end
+    local i, n = pat:sub(1, 1) == "^" and 2 or 1, #pat
+    local seen, before = false, nil
+    while i <= n do
+        local c, d = pat:sub(i, i), pat:sub(i + 1, i + 1)
+        if c == "(" or c == ")" then
+            i = i + 1
+        elseif c == "$" and i == n then
+            break
+        elseif c == "%" and (d == "b" or d == "f" or d:find("%d")) then
+            before = nil
+            i = d == "b" and i + 4 or d == "f" and set_end(pat, i + 2) or i + 2
+        else
+            local stop = c == "%" and i + 2 or c == "[" and set_end(pat, i) or i + 1
+            local item, q = pat:sub(i, stop - 1), pat:sub(stop, stop)
+            if q == "*" or q == "+" or q == "-" then
+                -- "$" alone reads as an anchor in a pattern of its own.
+                local runs_on = before == nil
+                    or (item == "$" and before == "$")
+                    or (item ~= "$" and before:find("^" .. item) ~= nil)
+                if seen and runs_on then
+                    return stop
+                end
+                seen, before = true, nil
+                i = stop + 1
+            elseif q == "?" then
+                before = nil
+                i = stop + 1
+            else
+                -- A literal: one character but ".", or "%" and a character
+                -- that is no letter or digit.
+                before = (#item == 1 and item ~= ".") and item or (c == "%" and not d:find("%w") and d) or nil
+                i = stop
+            end
+        end
+    end
+end
+
 -- A malformed pattern's bytes around its fault, at most 40 each side, and
 -- the first and last byte shown. The refusal named a byte of the pattern
 -- and showed it marked and cut at 300 bytes, so a fault past the cut was
@@ -2584,6 +2635,13 @@ local function check_start(cfg)
                 local text, lo, hi = fault_window(pat, at)
                 local span = (lo > 1 or hi < #pat) and (", bytes %d to %d"):format(lo, hi) or ""
                 error(("protected_paths pattern is malformed at byte %d (%s)%s: %s"):format(at, why, span, text), 0)
+            end
+            at = second_quantifier(pat)
+            if at then
+                local text, lo, hi = fault_window(pat, at)
+                local span = (lo > 1 or hi < #pat) and (", bytes %d to %d"):format(lo, hi) or ""
+                why = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
+                error(("protected_paths pattern is refused at byte %d (%s)%s: %s"):format(at, why, span, text), 0)
             end
         end
     end

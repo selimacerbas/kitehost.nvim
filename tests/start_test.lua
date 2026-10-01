@@ -27,13 +27,14 @@
 -- address is never left open; a loopback bind raises when a wildcard
 -- listener holds its port. Each construct of a well-formed pattern starts,
 -- a pattern LuaJIT reads as plain text starts and gates its path (a lone
--- ) included), each malformed shape is one LuaJIT raises on, and one
--- that nests too deep for LuaJIT on a path gates every path it is
--- asked about without the token with one warning (the token's holder
--- served), a zoned host reports the address it
--- bound (a zone of digits, as Windows spells one, among them, and the
--- loopback's own name skipped where it is no zone the host takes), a
--- table naming every key start reads starts, START_KEYS names
+-- ) included), each malformed shape is one LuaJIT raises on, a second
+-- unbounded quantifier is refused by its byte unless a literal its item
+-- cannot match sits right before it, and one that nests too deep for
+-- LuaJIT on a path gates every path it is asked about without the token
+-- with one warning (the token's holder served), a zoned host reports the
+-- address it bound (a zone of digits, as Windows spells one, among them,
+-- and the loopback's own name skipped where it is no zone the host
+-- takes), a table naming every key start reads starts, START_KEYS names
 -- the keys check_start and S.start read in the source and no other, and
 -- each option is read from the caller's table once.
 --
@@ -587,11 +588,13 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             server.stop(res)
         end
     end
-    -- A well-formed pattern can still raise at a request: each "x*" nests
-    -- one level, and past 200 LuaJIT answers "pattern too complex" for
-    -- any path under /. Such a request raised in the read callback and
-    -- went unanswered; no token satisfies a pattern nobody can read.
-    local deep = "^/" .. string.rep("x*", 200)
+    -- A well-formed pattern can still raise at a request: each "x?" nests
+    -- one level when it matches, and past 200 LuaJIT answers "pattern too
+    -- complex" for a path of 200 x's. Such a request raised in the read
+    -- callback and went unanswered; it reads as a match, which only the
+    -- token opens.
+    local deep = "^/" .. string.rep("x?", 200)
+    local xs = "/" .. ("x"):rep(200)
     local function unreadable_server(patterns)
         local up, inst_or_err = pcall(server.start, {
             port = 0,
@@ -612,7 +615,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             H.defer(function()
                 server.stop(inst_or_err)
             end)
-            return ("http://127.0.0.1:%d/content.md"):format(inst_or_err.port)
+            return ("http://127.0.0.1:%d%s"):format(inst_or_err.port, xs)
         end
     end
     local function answers_401(url, label)
@@ -649,12 +652,12 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     end
     local alone = unreadable_server({ deep })
     if alone then
-        answers_401(alone, "/content.md under an unreadable pattern is 401 without the token, never unanswered")
+        answers_401(alone, "a path an unreadable pattern raises on is 401 without the token, never unanswered")
         answers_401(alone, "and 401 again: a pattern nobody can read gates every path it is asked about")
         -- The token opens every path and runs no pattern, so its holder is
         -- served what the pattern cannot be read on.
         local held = http_get(alone .. "?t=" .. TOKEN)
-        eq(held.status, 200, "and the token's holder is served it")
+        eq(held.status, 404, "and the token's holder is answered as for any path, 404 for no file")
         local count = settled(1)
         ok(
             count == 1 and notes[1].level == vim.log.levels.WARN and notes[1].msg == warning(alone),
@@ -665,7 +668,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     end
     -- Every pattern is read, so a path an earlier pattern matches is asked
     -- about the unreadable one too.
-    local after = unreadable_server({ "^/content%.md$", deep })
+    local after = unreadable_server({ "^/x", deep })
     if after then
         answers_401(after, "an unreadable pattern after a matching one is read too")
         local count = settled(2)
@@ -677,13 +680,13 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- A control byte in the pattern is a ? in the warning, which a
     -- notifier would otherwise carry raw to a terminal.
     local seen = #notes
-    local escaped = unreadable_server({ "^/\27?" .. string.rep("x*", 200) })
+    local escaped = unreadable_server({ "^/\27?" .. string.rep("x?", 200) })
     if escaped then
         answers_401(escaped, "an unreadable pattern holding an escape is 401")
         local count = settled(seen + 1)
         local want = ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(escaped:match(":(%d+)/")),
-            ("^/??" .. string.rep("x*", 200)):sub(1, 300),
+            ("^/??" .. string.rep("x?", 200)):sub(1, 300),
             "pattern too complex"
         )
         ok(
@@ -2040,8 +2043,8 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
     -- escape in a set, classes, a capture and its back-reference, a
     -- position capture, %b, %f, each quantifier, both anchors and an
     -- anchor character inside the pattern, 32 captures, and a pattern
-    -- that nests too deep to match any path (the gate's own warning names
-    -- that one per request).
+    -- that nests too deep to match a path of x's (the gate's own warning
+    -- names that one per request).
     for _, pattern in ipairs({
         "[]x]",
         "[^/]+%.md$",
@@ -2053,14 +2056,70 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "()x",
         "%bxy",
         "%f[%w]word",
-        "a*b+c-d?",
+        "a*b",
+        "c-d?",
         "x$y^z",
         "%%",
         string.rep("()", 32),
-        "^/" .. string.rep("x*", 250),
+        "^/" .. string.rep("x?", 250),
     }) do
         local started, res = start_with(pattern)
         ok(started, ("%s starts: %s"):format(vim.inspect(pattern), started and "" or tostring(res)))
+    end
+end)
+
+-- The gate matches each pattern on the loop, and a second unbounded
+-- quantifier multiplies the ways a path splits between them:
+-- /.*/.*%.md$ cost 4.2 s of CPU time on a 2 KiB path and 42.7 s on 4
+-- KiB, where /.*%.md$ costs 270 ms on 8 KiB (measured). A second one
+-- is taken only when the character right before its item is a literal
+-- the item cannot match, which ends each of its runs there:
+-- /%.[^/]+%.%d+%.tmp$ cost 0.2 ms on every 8 KiB path tried.
+H.case("start refuses a second unbounded quantifier that can run on", function()
+    local why = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
+    for _, c in ipairs({
+        { "/.*/.*%.md$", 6 },
+        { "[^/]*[^/]*x", 10 },
+        { "%d+%d+x", 6 },
+        { "a*b+c-d?", 4 },
+        { "(.*)(.*)", 7 },
+        { ".*a.-b", 5 },
+        { "^/x.*%d+", 8 },
+    }) do
+        local started, res = pcall(server.start, {
+            port = 0,
+            root = root,
+            token = TOKEN,
+            protected_paths = { c[1] },
+        })
+        if started then
+            server.stop(res)
+        end
+        eq(
+            not started and tostring(res) or "started",
+            ("protected_paths pattern is refused at byte %d (%s): %s"):format(c[2], why, c[1]),
+            ("%s is refused at its second unbounded quantifier"):format(c[1])
+        )
+    end
+    for _, pattern in ipairs({
+        "/.*%.md$",
+        "^/docs/.+$",
+        "^/a%.md$",
+        "/%.[^/]+%.%d+%.tmp$",
+        "(.*)/(%d+)$",
+        "^/[^/]*/[^/]*%.md$",
+        "^/x%-*y",
+    }) do
+        local started, res = pcall(server.start, {
+            port = 0,
+            root = root,
+            token = TOKEN,
+            protected_paths = { pattern },
+        })
+        if started then
+            server.stop(res)
+        end
+        ok(started, ("%s starts: %s"):format(pattern, started and "" or tostring(res)))
     end
 end)
 
