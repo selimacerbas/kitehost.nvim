@@ -7,7 +7,7 @@
 -- Sections 6 and 7 read the index and listing routes, 6 through curl and
 -- 7 over raw TCP; Section 8 forces a raise inside the handler; Section 9
 -- refuses a target over 8 KiB (414) before the Host check, the gate or
--- any pattern reads it, and measures the loop's hold under the cap.
+-- any pattern reads it, and times the pattern's CPU cost under the cap.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/request_test.lua"
 
@@ -770,7 +770,6 @@ end)
 -- 8 KiB is refused before the Host check, the gate or any pattern reads
 -- it; the 64 KiB head cap stays for the whole head.
 H.case("Section 9: a target over 8 KiB is 414 before any check reads it", function()
-    local uv = vim.uv
     local pattern = "/.*%.md$"
     local inst = serve({ token = "tok", protected_paths = { pattern } })
     local port = inst.port
@@ -808,31 +807,30 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     eq(res[1] and res[1].status, 414, "and one with no Host is 414, never 400")
     eq(runs, 0, "and none of them reached a pattern")
     string.find = real_find
-    -- The bound the cap buys, measured on this machine, not a promise: the
-    -- pattern on the longest path the cap lets through, 8 KiB of a/a/...,
-    -- held the loop about 200 ms of CPU time (0.2 to 1 s wall, the more
-    -- the busier the machine), where 16 KiB held it 4.7 s. A timer every
-    -- 10 ms reads the longest gap while the request is answered.
-    local last, gap = uv.hrtime(), 0
-    local tick = assert(uv.new_timer())
-    H.defer(function()
-        if not tick:is_closing() then
-            tick:close()
+    -- The cost the cap leaves, measured on this machine, not a promise:
+    -- the pattern on the longest path the cap lets through, 8 KiB of
+    -- a/a/..., cost about 270 ms of CPU time on 0.12.5 and 160 ms on
+    -- 0.10.0, where 16 KiB cost 880 and 620 ms. The pattern's own calls
+    -- are timed by os.clock, so the row reads their work and not the
+    -- machine's load beside it, which a wall-clock gap read as seconds.
+    local spent = 0
+    string.find = function(s, pat, ...)
+        if pat ~= pattern then
+            return real_find(s, pat, ...)
         end
-    end)
-    assert(tick:start(10, 10, function()
-        local now = uv.hrtime()
-        gap = math.max(gap, (now - last) / 1e6)
-        last = now
-    end))
+        local c0 = os.clock()
+        local first, last = real_find(s, pat, ...)
+        spent = spent + os.clock() - c0
+        return first, last
+    end
     local slashed = "/" .. ("a/"):rep(4095) .. "x"
     eq(#slashed, 8 * 1024, "the slashed path is 8 KiB")
-    -- Asked through curl, another process: the raw client shares this
-    -- loop, so its own write timed out while the pattern held it.
+    -- Asked through curl, another process, so the client's own work is
+    -- no part of the loop's.
     local got = H.http_get(("http://127.0.0.1:%d%s"):format(port, slashed))
-    tick:close()
+    string.find = real_find
     eq(got.status, 404, "the slashed 8 KiB path is answered")
-    ok(gap < 1000, ("and the loop was held under 1 s while the pattern read it (%d ms)"):format(gap))
+    ok(spent > 0 and spent < 1, ("and the pattern held the loop under 1 s of CPU time (%d ms)"):format(spent * 1000))
 end)
 
 H.finish()
