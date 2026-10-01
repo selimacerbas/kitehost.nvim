@@ -501,29 +501,35 @@ H.case("Section 6: a directory's index resolves inside the root", function()
     local linked, link_err = uv.fs_symlink(outward, link)
     local both = base .. "/site/both/index.html"
     local blinked, blink_err = uv.fs_symlink(outward, both)
-    local link_why = unresolved(linked, link_err, link, secret) or unresolved(blinked, blink_err, both, secret)
+    -- The first three rows read sub/'s link alone and the last both/'s,
+    -- so a link that does not resolve skips its own rows alone.
+    local link_why = unresolved(linked, link_err, link, secret)
+    local both_why = unresolved(blinked, blink_err, both, secret)
+    local inst = serve({ root = base .. "/site" })
     if link_why then
         local why = " (" .. link_why .. ")"
         H.skip("/sub/ whose index links outside the root is 404" .. why)
         H.skip("and its body is not the outside file" .. why)
         H.skip("the link asked for by name stays 404" .. why)
-        H.skip("an index.htm beside an index.html linked out of the root is served" .. why)
-        return
+    else
+        r = H.http_get(("http://127.0.0.1:%d/sub/"):format(inst.port))
+        eq(r.status, 404, "/sub/ whose index links outside the root is 404")
+        ok(not r.body:find("OUTSIDE", 1, true), "and its body is not the outside file")
+        eq(
+            H.http_get(("http://127.0.0.1:%d/sub/index.html"):format(inst.port)).status,
+            404,
+            "the link asked for by name stays 404"
+        )
     end
-    local inst = serve({ root = base .. "/site" })
-    r = H.http_get(("http://127.0.0.1:%d/sub/"):format(inst.port))
-    eq(r.status, 404, "/sub/ whose index links outside the root is 404")
-    ok(not r.body:find("OUTSIDE", 1, true), "and its body is not the outside file")
-    eq(
-        H.http_get(("http://127.0.0.1:%d/sub/index.html"):format(inst.port)).status,
-        404,
-        "the link asked for by name stays 404"
-    )
-    r = H.http_get(("http://127.0.0.1:%d/both/"):format(inst.port))
-    ok(
-        r.status == 200 and r.body:find("beside the link", 1, true) ~= nil,
-        ("an index.htm beside an index.html linked out of the root is served (got %d)"):format(r.status)
-    )
+    if both_why then
+        H.skip("an index.htm beside an index.html linked out of the root is served (" .. both_why .. ")")
+    else
+        r = H.http_get(("http://127.0.0.1:%d/both/"):format(inst.port))
+        ok(
+            r.status == 200 and r.body:find("beside the link", 1, true) ~= nil,
+            ("an index.htm beside an index.html linked out of the root is served (got %d)"):format(r.status)
+        )
+    end
 end)
 
 -- A listing's links are built from the path the server resolved, each
