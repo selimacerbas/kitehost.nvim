@@ -916,7 +916,7 @@ H.case("the injected client is never gated", function()
     -- files the root route never serves, so a link to it reads the gate.
     vim.fn.mkdir(site .. "/lib", "p")
     H.write_file(site .. "/lib/script.js", "var linked = 1")
-    local linked, link_err = uv.fs_symlink("lib/script.js", site .. "/alias.txt")
+    local linked, link_err = uv.fs_symlink("lib" .. package.config:sub(1, 1) .. "script.js", site .. "/alias.txt")
     local gated = server.start({
         port = 0,
         root = site,
@@ -969,15 +969,27 @@ H.case("the injected client is never gated", function()
             )
         end
     end
-    -- Windows may refuse the link (no symlink privilege); the fixture is
-    -- measured and its row skipped where it is not.
-    if linked then
+    -- Windows may refuse the link (no symlink privilege), and took a / in
+    -- its target unconverted, leaving it dangling (measured on the hosted
+    -- runner), so the target carries the platform's separator. The rows run
+    -- only where the link resolves to lib/script.js: a dangling one is a
+    -- missing name, whose 404 is no answer about the token.
+    local why
+    local real, real_err = uv.fs_realpath(site .. "/alias.txt")
+    if not linked then
+        why = tostring(link_err)
+    elseif not real then
+        why = "the link does not resolve: " .. tostring(real_err)
+    elseif not H.same_path(real, site .. "/lib/script.js") then
+        why = "the link resolves to " .. real
+    end
+    if not why then
         eq(http_get(base .. "/alias.txt").status, 401, "a file named script.js reached through a link wants the token")
         local r = http_get(base .. "/alias.txt?t=" .. TOKEN)
         ok(r.status == 200 and r.body == "var linked = 1", ("and is served with it (got %d)"):format(r.status))
     else
-        H.skip("a file named script.js reached through a link wants the token (" .. tostring(link_err) .. ")")
-        H.skip("and is served with it (" .. tostring(link_err) .. ")")
+        H.skip("a file named script.js reached through a link wants the token (" .. why .. ")")
+        H.skip("and is served with it (" .. why .. ")")
     end
     -- A case-sensitive volume has no second name for the file. The variant
     -- is a name under /__live/ that is no route, so it never reaches the

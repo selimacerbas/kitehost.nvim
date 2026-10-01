@@ -574,9 +574,30 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
     -- it, as the dot rule reads one. The case variant holds on every
     -- volume: where case is kept it names no file and is 404 all the same,
     -- which its label says, since there the rule is never reached.
-    -- A link that cannot be made skips its row with the reason.
-    local file_link, file_link_err = uv.fs_symlink("__live/other.txt", site .. "/link.txt")
-    local dir_link, dir_link_err = uv.fs_symlink("__live", site .. "/dirlink")
+    -- Windows took a / in a link's target unconverted and opened no file
+    -- link to a directory (measured on the hosted runner), so each target
+    -- carries the platform's separator and the directory link is made as
+    -- one. A row runs only where its name resolves into __live/, since a
+    -- link that dangles answers as a missing name does, the same 404 these
+    -- rows want; elsewhere it is skipped with the reason.
+    local sep = package.config:sub(1, 1)
+    local function unresolved(made, made_err, name, want)
+        if not made then
+            return "no link: " .. tostring(made_err)
+        end
+        local real, err = uv.fs_realpath(name)
+        if not real then
+            return "the link does not resolve: " .. tostring(err)
+        end
+        if not H.same_path(real, want) then
+            return ("the link resolves to %s, not %s"):format(real, want)
+        end
+    end
+    local file_link, file_link_err = uv.fs_symlink("__live" .. sep .. "other.txt", site .. "/link.txt")
+    local dir_link, dir_link_err = uv.fs_symlink("__live", site .. "/dirlink", { dir = true })
+    local file_why = unresolved(file_link, file_link_err, site .. "/link.txt", site .. "/__live/other.txt")
+    local through_why = unresolved(dir_link, dir_link_err, site .. "/dirlink/other.txt", site .. "/__live/other.txt")
+    local dir_why = unresolved(dir_link, dir_link_err, site .. "/dirlink", site .. "/__live")
     local folds = uv.fs_stat(site .. "/__LIVE/other.txt") ~= nil
     local resolved = {
         {
@@ -586,9 +607,9 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
             folds and "which this case-folding volume resolves under __live/"
                 or "which names no file on this case-keeping volume",
         },
-        { "/link.txt", file_link, "no link: " .. tostring(file_link_err) },
-        { "/dirlink/other.txt", dir_link, "no link: " .. tostring(dir_link_err) },
-        { "/dirlink/", dir_link, "no link: " .. tostring(dir_link_err) },
+        { "/link.txt", not file_why, file_why },
+        { "/dirlink/other.txt", not through_why, through_why },
+        { "/dirlink/", not dir_why, dir_why },
     }
     for _, c in ipairs({
         { "no cors, no token", {} },
