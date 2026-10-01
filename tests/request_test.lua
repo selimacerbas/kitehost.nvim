@@ -5,7 +5,9 @@
 -- Section 1 pins the behaviour the buffered pipeline keeps from the server
 -- before it; each later section holds one change made on top of it.
 -- Sections 6 and 7 read the index and listing routes, 6 through curl and
--- 7 over raw TCP; Section 8 forces a raise inside the handler.
+-- 7 over raw TCP; Section 8 forces a raise inside the handler; Section 9
+-- refuses a target over 8 KiB (414) before the Host check, the gate or
+-- any pattern reads it, and measures the loop's hold under the cap.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/request_test.lua"
 
@@ -760,6 +762,75 @@ H.case("Section 8: a raise inside the handler answers 500 and is reported", func
 
     res = ask(port, get("/style.css", port))
     eq(res[1] and res[1].status, 200, "and the server answers the next request")
+end)
+
+-- The gate matches every protected_paths pattern against the request's
+-- path on the loop, and a well-formed pattern backtracks: /.*%.md$ held
+-- the editor 4.7 s on a 16 KiB path of a/a/... (measured). A target over
+-- 8 KiB is refused before the Host check, the gate or any pattern reads
+-- it; the 64 KiB head cap stays for the whole head.
+H.case("Section 9: a target over 8 KiB is 414 before any check reads it", function()
+    local uv = vim.uv
+    local pattern = "/.*%.md$"
+    local inst = serve({ token = "tok", protected_paths = { pattern } })
+    local port = inst.port
+    -- Each match of the pattern is counted, so a 414 is shown to run none.
+    local real_find, runs = string.find, 0
+    H.defer(function()
+        string.find = real_find
+    end)
+    string.find = function(s, pat, ...)
+        if pat == pattern then
+            runs = runs + 1
+        end
+        return real_find(s, pat, ...)
+    end
+    local function target(size)
+        return "/" .. ("a"):rep(size - 1)
+    end
+    runs = 0
+    local res = ask(port, get(target(8 * 1024), port))
+    eq(res[1] and res[1].status, 404, "a target of 8 KiB is read and answered")
+    ok(runs > 0, ("and the gate matched its pattern against it (%d runs)"):format(runs))
+    runs = 0
+    local closed
+    res, _, _, closed = ask(port, get(target(8 * 1024 + 1), port))
+    eq(res[1] and res[1].status, 414, "a target one byte over 8 KiB is 414")
+    eq(res[1] and res[1].reason, "URI Too Long", "with its reason phrase")
+    eq(closed, true, "a 414 closes the connection")
+    eq(runs, 0, "and no pattern was matched against it")
+    local absolute = ("GET http://127.0.0.1:%d%s HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"):format(port, target(9 * 1024))
+    res = ask(port, absolute)
+    eq(res[1] and res[1].status, 414, "a 9 KiB target in absolute form is 414")
+    res = ask(port, ("GET %s HTTP/1.1\r\nHost: evil.test\r\n\r\n"):format(target(9 * 1024)))
+    eq(res[1] and res[1].status, 414, "a 9 KiB target under a Host the check refuses is 414, never 421")
+    res = ask(port, ("GET %s HTTP/1.1\r\n\r\n"):format(target(9 * 1024)))
+    eq(res[1] and res[1].status, 414, "and one with no Host is 414, never 400")
+    eq(runs, 0, "and none of them reached a pattern")
+    string.find = real_find
+    -- The bound the cap buys, measured on this machine, not a promise: the
+    -- pattern on the longest path the cap lets through, 8 KiB of a/a/...,
+    -- held the loop about 200 ms of CPU time (1.5 s wall at a load
+    -- average of 32), where 16 KiB held it 4.7 s. A timer every 10 ms
+    -- reads the longest gap while the request is answered.
+    local last, gap = uv.hrtime(), 0
+    local tick = assert(uv.new_timer())
+    H.defer(function()
+        if not tick:is_closing() then
+            tick:close()
+        end
+    end)
+    assert(tick:start(10, 10, function()
+        local now = uv.hrtime()
+        gap = math.max(gap, (now - last) / 1e6)
+        last = now
+    end))
+    local slashed = "/" .. ("a/"):rep(4095) .. "x"
+    eq(#slashed, 8 * 1024, "the slashed path is 8 KiB")
+    res = ask(port, get(slashed, port))
+    tick:close()
+    eq(res[1] and res[1].status, 404, "the slashed 8 KiB path is answered")
+    ok(gap < 1000, ("and the loop was held under 1 s while the pattern read it (%d ms)"):format(gap))
 end)
 
 H.finish()

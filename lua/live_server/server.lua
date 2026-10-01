@@ -73,6 +73,7 @@ local REASONS = {
     [403] = "Forbidden",
     [404] = "Not Found",
     [405] = "Method Not Allowed",
+    [414] = "URI Too Long",
     [421] = "Misdirected Request",
     [431] = "Request Header Fields Too Large",
     [500] = "Internal Server Error",
@@ -348,12 +349,20 @@ end
 -- The Origin and Fetch Metadata fields the gates read, as sent, each once.
 local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Mode" }
 
+-- The longest request target read. The gate matches every protected_paths
+-- pattern against the path on the loop, where a well-formed pattern
+-- backtracks: /.*%.md$ held the editor 4.7 s on a 16 KiB path (measured).
+-- The cap bounds the request's spelling; the name on disk the gate reads
+-- second is bounded by the OS's path limit.
+local MAX_TARGET = 8 * 1024
+
 -- The request head, parsed once: method, target, version, and the header
 -- fields by lowercased name, each the list of its values in order, so a
 -- check can refuse a repeated field instead of reading one copy. The
 -- target is a path (origin-form) or an http URL (absolute-form, RFC 9112
 -- 3.2.2), whose authority is kept for the Host check and whose path is
--- served. nil and the reason for any head it refuses.
+-- served. nil and the reason for any head it refuses, and 414 as a third
+-- value for a target over the cap.
 local function parse_head(head)
     local lines = vim.split(head, "\r?\n")
     -- RFC 9112 2.2: empty lines before the request line are ignored; an empty head is refused.
@@ -363,6 +372,11 @@ local function parse_head(head)
     local method, target, minor = lines[1]:match("^(%u+) (%S+) HTTP/1%.(%d)$")
     if not method then
         return nil, "Cannot parse request line"
+    end
+    -- RFC 9112 3: 414, read before any field, so neither the Host check
+    -- nor a pattern reads a target past the cap.
+    if #target > MAX_TARGET then
+        return nil, "URI Too Long", 414
     end
     -- RFC 9110 2.5: a higher minor version of HTTP/1 is answered as 1.1.
     local version = minor == "0" and "1.0" or "1.1"
@@ -1490,7 +1504,8 @@ end
 -- can nest past LuaJIT's depth on a path ("pattern too complex") and
 -- raise here, in the read callback, where it left the request unanswered:
 -- a raise reads as a match no token satisfies, since the gate cannot tell
--- what it protects.
+-- what it protects. A match also costs time on the loop, which a
+-- backtracking pattern spends on a long path; MAX_TARGET bounds the path.
 -- Every pattern is read, so the answer does not hang on the list's order.
 -- A 401 alone reads like a bad token, so the first pattern that raises is
 -- named once per instance (warn_once).
@@ -2223,8 +2238,11 @@ local function on_read(conn, err, chunk)
         return
     end
     head_done(conn)
-    local req, why = parse_head(conn.buf:sub(1, head_end))
+    local req, why, status = parse_head(conn.buf:sub(1, head_end))
     conn.buf = ""
+    if status == 414 then
+        return send_response(sock, 414, { ["Content-Type"] = "text/plain" }, "URI Too Long")
+    end
     if not req then
         return http_400(sock, why)
     end
