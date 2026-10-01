@@ -537,9 +537,52 @@ function U.parse_liveignore(root)
     return patterns
 end
 
+-- Whether path holds one of parse_liveignore's patterns, read without the
+-- pattern matcher: each .* backtracked over the path, and five stars
+-- apart, each before an a, held the loop 60 s on a path of 60 a's
+-- (measured). A pattern is literal parts between .* and maybe a ^, so
+-- each part is found as plain text after the one before; the first
+-- place a part is found leaves the most path for the rest, so this finds
+-- what the pattern finds.
+local function holds(path, pat)
+    local anchored = pat:sub(1, 1) == "^"
+    local parts, part, i = {}, {}, anchored and 2 or 1
+    while i <= #pat do
+        local c = pat:sub(i, i)
+        if c == "%" then
+            table.insert(part, pat:sub(i + 1, i + 1))
+            i = i + 2
+        elseif c == "." and pat:sub(i + 1, i + 1) == "*" then
+            table.insert(parts, table.concat(part))
+            part = {}
+            i = i + 2
+        else
+            table.insert(part, c)
+            i = i + 1
+        end
+    end
+    table.insert(parts, table.concat(part))
+    local at = 1
+    if anchored then
+        if path:sub(1, #parts[1]) ~= parts[1] then
+            return false
+        end
+        at = #parts[1] + 1
+        table.remove(parts, 1)
+    end
+    for _, text in ipairs(parts) do
+        local _, stop = path:find(text, at, true)
+        if not stop then
+            return false
+        end
+        at = stop + 1
+    end
+    return true
+end
+
 function U.match_ignore(path, patterns)
     for _, pat in ipairs(patterns) do
-        if path:find(pat) then
+        if holds(path, pat) then
             return true
         end
     end

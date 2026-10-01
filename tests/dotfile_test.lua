@@ -9,11 +9,13 @@
 -- link to a large file among them) is never read, gives no rule and is
 -- named once; the FIFO row starts in a child Neovim bounded at 5 s. A
 -- start refused after reading it warns nothing, and a retarget to another
--- root warns anew. A run of stars in a line is one star, timed on a path
--- (Section 10c). One debounce window reloads the page when any change
--- in it is not a stylesheet, a path gone by the send is dropped (a
--- save's probe and backup files, a temporary name renamed away), and a
--- window names its latest page change however long the burst.
+-- root warns anew. A run of stars in a line is one star, and stars apart
+-- are matched with no going back, each timed on a path, every line
+-- matching what its pattern finds (Section 10c). One debounce window
+-- reloads the page when any change in it is not a stylesheet, a path
+-- gone by the send is dropped (a save's probe and backup files, a
+-- temporary name renamed away), and a window names its latest page
+-- change however long the burst.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/dotfile_test.lua"
 
@@ -1065,6 +1067,32 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     eq(rule("dist/**"), rule("dist/*"), "dist/** reads as dist/*")
     eq(util.match_ignore("/dist/a/b.js", { rule("dist/**") }), true, "and still matches below dist/")
     eq(rule("a**b*c"), rule("a*b*c"), "a run inside a line is one star, a single star kept")
+    -- Stars apart backtracked as well: five, each before an a, then an x
+    -- held the loop 60 s on a path of 60 a's (measured). Each part
+    -- between stars is found after the last one, as the pattern would
+    -- find it, with no going back.
+    local apart = rule("*a*a*a*a*a*x")
+    local long = "/" .. ("a"):rep(60) .. "/page.html"
+    t0 = uv.hrtime()
+    hit = util.match_ignore(long, { apart })
+    took = (uv.hrtime() - t0) / 1e6
+    eq(hit, false, "stars apart leave a path of a's with no x unmatched")
+    ok(took < 10, ("in under 10 ms (%.1f ms)"):format(took))
+    -- On short paths, where the pattern costs nothing, each line matches
+    -- the paths string.find matches.
+    local lines = { "dist", "/dist", "*.log", "a*b", "/a*b*", "*a*a*x", "draft[", "a?b", "x.y", "/" }
+    local paths = { "/dist/x.js", "/sub/dist", "/a.log", "/ab", "/a/b", "/b/a", "/aax", "/xaa", "/draft[1]" }
+    vim.list_extend(paths, { "/axb", "/a?b", "/x.y", "/xzy", "/" })
+    local differ = {}
+    for _, line in ipairs(lines) do
+        local pat = rule(line)
+        for _, path in ipairs(paths) do
+            if util.match_ignore(path, { pat }) ~= (path:find(pat) ~= nil) then
+                table.insert(differ, line .. " " .. path)
+            end
+        end
+    end
+    eq(table.concat(differ, ", "), "", "every line matches the paths its pattern finds, and no other")
 end)
 
 -- Two changes inside one debounce window kept the last path alone, so
