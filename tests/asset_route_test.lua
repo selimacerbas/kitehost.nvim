@@ -12,12 +12,12 @@
 --   - fixes a string root at start (a relative one needs the working
 --     directory then) and resolves the string given again per request,
 --     which must still name the real path kept: a link put at the kept
---     path, the root removed or a link given as the root and repointed
---     is 404 and warned once; reads a function per request, a raise or
---     an answer that is no absolute directory outside the credential
---     directories warned once, nil a silent 404; a request whose root
---     resolves again re-arms the warning, so a later fault warns again
---     (Section 6)
+--     path, the root removed, a file put there or a link given as the
+--     root and repointed is 404 and warned once; reads a function per
+--     request, a raise or an answer that is no absolute directory
+--     outside the credential directories warned once, nil a silent 404;
+--     a request whose root resolves again re-arms the warning, so a
+--     later fault warns again (Section 6)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -538,8 +538,10 @@ end
 -- resolve to the path kept; otherwise the request is 404 and the fault
 -- is told once, naming the root as given.
 for _, c in ipairs({
-    { "a link put at the kept path", true },
-    { "the kept directory removed", false },
+    { "a link put at the kept path", "link" },
+    { "the kept directory removed", "gone" },
+    -- The path still resolves to itself, and names no directory.
+    { "a file put at the kept path", "file" },
 }) do
     local kept = tmpdir .. "/kept"
     vim.fn.mkdir(kept, "p")
@@ -552,9 +554,12 @@ for _, c in ipairs({
     eq(http_get(url).status, 200, "a string root serves its file before " .. c[1])
     assert(uv.fs_rename(kept, tmpdir .. "/kept-moved"))
     local fault, linked, link_err = "does not resolve (ENOENT)", true, nil
-    if c[2] then
+    if c[2] == "link" then
         linked, link_err = uv.fs_symlink(tmpdir .. "/elsewhere", kept, { dir = true, junction = true })
         fault = ('resolves to "%s"'):format(assert(uv.fs_realpath(tmpdir .. "/elsewhere")))
+    elseif c[2] == "file" then
+        write_file(kept, "FILE")
+        fault = "is not a directory"
     end
     local rows = {
         "and after " .. c[1] .. " is 404",
