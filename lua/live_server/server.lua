@@ -2525,9 +2525,6 @@ local function pattern_cost(pat)
     if #pat > 256 then
         return 257, LONG
     end
-    if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
-        return nil
-    end
     local anchored = pat:sub(1, 1) == "^"
     local i, n = anchored and 2 or 1, #pat
     -- first: the pattern's first element when it is a fixed literal,
