@@ -6,13 +6,14 @@
 -- a cors list's echo of a listed Origin, a 404 that names the request,
 -- never a filesystem path or the query, the instance's header tables left
 -- as start made them, and a /__live/ name that is no route answered 404,
--- a preflight or any other method included (Section 8). Of the directory
--- behind /__live/: a listing names nothing in it (Section 9), an index
--- that resolves into it is not its directory's (Section 10), its name is
--- matched in any letter case (Section 11), the rule reaches the root's
--- own entry alone, the started-on file served at / (Section 12), and a
--- link so named at the root is refused whatever it resolves to (Section
--- 13).
+-- a preflight or any other method included, as is a preflight or any
+-- other method through a link elsewhere into the directory (Section 8).
+-- Of the directory behind /__live/: a listing names nothing in it
+-- (Section 9), an index that resolves into it is not its directory's
+-- (Section 10), its name is matched in any letter case (Section 11), the
+-- rule reaches the root's own entry alone, the started-on file served at
+-- / (Section 12), and a link so named at the root is refused whatever it
+-- resolves to (Section 13).
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/response_test.lua"
 
@@ -639,6 +640,23 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
                 eq(r.status, 404, label)
                 ok(not r.body:find("USERFILE", 1, true), ("under %s, %s never serves the file"):format(c[1], t[1]))
                 eq(r.headers["access-control-allow-origin"], nil, ("under %s, %s carries no ACAO"):format(c[1], t[1]))
+                -- The preflight and any method but GET read the request's
+                -- spelling alone, so a link elsewhere into the directory
+                -- got the root route's 204 and its origin line, or 405.
+                for _, method in ipairs({ "OPTIONS", "POST" }) do
+                    local asked = ("%s %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://a.test\r\n"):format(
+                        method,
+                        t[1],
+                        port
+                    ) .. "Access-Control-Request-Method: GET\r\n\r\n"
+                    r = raw(port, asked)
+                    eq(r.status, 404, ("under %s, %s %s is 404"):format(c[1], method, t[1]))
+                    eq(
+                        r.headers["access-control-allow-origin"],
+                        nil,
+                        ("under %s, %s %s carries no ACAO"):format(c[1], method, t[1])
+                    )
+                end
             else
                 H.skip(label .. " (" .. t[3] .. ")")
             end

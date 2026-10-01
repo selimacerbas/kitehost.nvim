@@ -1813,6 +1813,14 @@ local function handle_request(conn, req)
     -- and its origin line while its GET was 404. The routes stay exact.
     local namespaced = path_only == "/__live" or path_only:find("^/__live/") ~= nil
     local reserved = in_live_dir(path_only)
+    -- The name the disk gives is read too, as refusal() reads it for a
+    -- GET: a link elsewhere in the root into the entry got the preflight's
+    -- 204 and its origin line, and 405 for any other method.
+    if req.method ~= "GET" and not reserved then
+        local mapped = sanitize_and_map(path_only, inst.root_real)
+        local rel = mapped and root_rel(inst.root_real, mapped)
+        reserved = rel and in_live_dir(rel) or false
+    end
     if reserved and req.method ~= "GET" and not LIVE_ROUTES[path_only] then
         return http_404(sock, path_only)
     end
