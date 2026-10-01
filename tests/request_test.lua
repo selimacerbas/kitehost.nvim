@@ -806,6 +806,19 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     res = ask(port, ("GET %s HTTP/1.1\r\n\r\n"):format(target(9 * 1024)))
     eq(res[1] and res[1].status, 414, "and one with no Host is 414, never 400")
     eq(runs, 0, "and none of them reached a pattern")
+    -- The cap counts the whole target, the query too: a short path whose
+    -- query takes it past 8 KiB is refused, and at 8 KiB the query is
+    -- read and the path matched.
+    local queried = "/a.md?" .. ("q"):rep(8 * 1024 - 6)
+    eq(#queried, 8 * 1024, "the queried target is 8 KiB")
+    runs = 0
+    res = ask(port, get(queried, port))
+    eq(res[1] and res[1].status, 401, "a target of 8 KiB with a query is read and its path gated")
+    eq(runs, 1, "and the gate matched its pattern once")
+    runs = 0
+    res = ask(port, get(queried .. "q", port))
+    eq(res[1] and res[1].status, 414, "a short path whose query takes the target past 8 KiB is 414")
+    eq(runs, 0, "and no pattern was matched against it")
     string.find = real_find
     -- The cost the cap leaves, measured on this machine, not a promise:
     -- the pattern on the longest path the cap lets through, 8 KiB of
