@@ -282,7 +282,10 @@ local function run_pages(body)
     local dir = H.tmpdir()
     H.write_file(dir .. "/client.js", body)
     H.write_file(dir .. "/run.cjs", RUNNER)
-    local res = vim.system({ "node", dir .. "/run.cjs", dir .. "/client.js" }, { text = true, timeout = 10000 }):wait()
+    -- The bound only stops a node that hangs: a cold first node start on a
+    -- hosted Windows runner outlasted 10 s twice, where a warm one ran the
+    -- whole suite in 0.3 s (measured).
+    local res = vim.system({ "node", dir .. "/run.cjs", dir .. "/client.js" }, { text = true, timeout = 60000 }):wait()
     local code = H.exit_code(res)
     if code ~= 0 then
         return nil, ("node exited %d: %s"):format(code, (res.stderr or ""):sub(1, 400))
