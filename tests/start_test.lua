@@ -30,14 +30,15 @@
 -- is refused by its byte unless a literal its item cannot match sits
 -- right before it, as is an unbounded quantifier in a pattern not
 -- anchored with ^ unless the pattern starts with a literal its item
--- cannot match, as are more than two ? items, and one that nests too
--- deep for LuaJIT on a path answers that path 401 without the token with
--- one warning (the token's holder served), a zoned host reports the
--- address it bound (a zone of digits, as Windows spells one, among them,
--- and the loopback's own name skipped where it is no zone the host
--- takes), a table naming every key start reads starts, START_KEYS names
--- the keys check_start and S.start read in the source and no other, and
--- each option is read from the caller's table once.
+-- cannot match, as are more than two ? items and a pattern over 256
+-- bytes, and one LuaJIT cannot read on a path (its raise stubbed, since
+-- none start takes nests that deep) answers that path 401 without the
+-- token with one warning (the token's holder served), a zoned host
+-- reports the address it bound (a zone of digits, as Windows spells one,
+-- among them, and the loopback's own name skipped where it is no zone the
+-- host takes), a table naming every key start reads starts, START_KEYS
+-- names the keys check_start and S.start read in the source and no other,
+-- and each option is read from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -589,13 +590,27 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             server.stop(res)
         end
     end
-    -- A well-formed pattern can still raise at a request: each "x*/" item
-    -- nests one level, and past 200 LuaJIT answers "pattern too complex"
-    -- for a path of 200 "x/". Such a request raised in the read callback
-    -- and went unanswered; it reads as a match, which only the token
-    -- opens.
-    local deep = "^/" .. string.rep("x*/", 200)
-    local xs = "/" .. ("x/"):rep(200)
+    -- A well-formed pattern could raise at a request: past 200 nested
+    -- levels LuaJIT answers "pattern too complex", and the request raised
+    -- in the read callback and went unanswered; it reads as a match, which
+    -- only the token opens. No pattern start takes nests that deep within
+    -- 256 bytes (32 captures and a literal before each later quantifier
+    -- hold about 128 levels; measured, none raised), so LuaJIT's raise is
+    -- stubbed for these two patterns, which keeps the gate's answer to one
+    -- in view.
+    local deep = "^/" .. string.rep("x*/", 84)
+    local deep_escaped = "^/\27?" .. string.rep("x*/", 80)
+    local xs = "/" .. ("x/"):rep(84)
+    local real_find = string.find
+    H.defer(function()
+        string.find = real_find
+    end)
+    string.find = function(s, pat, ...)
+        if pat == deep or pat == deep_escaped then
+            error("pattern too complex", 0)
+        end
+        return real_find(s, pat, ...)
+    end
     local function unreadable_server(patterns)
         local up, inst_or_err = pcall(server.start, {
             port = 0,
@@ -634,12 +649,12 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     H.defer(function()
         vim.notify = real_notify
     end)
-    -- The pattern is named cut at 300 bytes, as its start refusal cuts
-    -- what it shows: deep is 402 bytes, and a 10 KiB one came back whole.
+    -- The pattern is named marked and cut at 300 bytes, which start's 256
+    -- leaves whole.
     local function warning(url)
         return ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(url:match(":(%d+)/")),
-            deep:sub(1, 300),
+            deep,
             "pattern too complex"
         )
     end
@@ -681,13 +696,13 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- A control byte in the pattern is a ? in the warning, which a
     -- notifier would otherwise carry raw to a terminal.
     local seen = #notes
-    local escaped = unreadable_server({ "^/\27?" .. string.rep("x*/", 200) })
+    local escaped = unreadable_server({ deep_escaped })
     if escaped then
         answers_401(escaped, "an unreadable pattern holding an escape is 401")
         local count = settled(seen + 1)
         local want = ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(escaped:match(":(%d+)/")),
-            ("^/??" .. string.rep("x*/", 200)):sub(1, 300),
+            "^/??" .. string.rep("x*/", 80),
             "pattern too complex"
         )
         ok(
@@ -712,6 +727,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     answers_401(("http://127.0.0.1:%d/content.md"):format(readable.port), "a readable pattern gates as before")
     vim.wait(100)
     eq(#notes, before, "and a list of readable patterns warns nothing")
+    string.find = real_find
     -- The token is read from the caller's table once: a table that computes
     -- the field could pass the check with one value and hand the gate another.
     local reads = 0
@@ -2052,9 +2068,8 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
     -- Each construct well-formed: a set with ] first, a negated set, an
     -- escape in a set, classes, a capture and its back-reference, a
     -- position capture, %b, %f, each quantifier, both anchors and an
-    -- anchor character inside the pattern, 32 captures, and a pattern
-    -- that nests too deep to match a path of x's (the gate's own warning
-    -- names that one per request).
+    -- anchor character inside the pattern, 32 captures, and a chain of 84
+    -- x*/ items, as many as 256 bytes hold.
     for _, pattern in ipairs({
         "[]x]",
         "/[^/]+%.md$",
@@ -2071,7 +2086,7 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "x$y^z",
         "%%",
         string.rep("()", 32),
-        "^/" .. string.rep("x*/", 250),
+        "^/" .. string.rep("x*/", 84),
     }) do
         local started, res = start_with(pattern)
         ok(started, ("%s starts: %s"):format(vim.inspect(pattern), started and "" or tostring(res)))
@@ -2089,12 +2104,15 @@ end)
 -- cost 0.2 ms; it is taken unanchored only when the pattern starts with
 -- a literal its first such item cannot match, which ends each run at the
 -- next start (the same consumer pattern). Each ? item doubles the ways a
--- path is tried, so two are taken and a third refused.
+-- path is tried, so two are taken and a third refused, and the pattern's
+-- own length multiplies every try, so 256 bytes are taken.
 H.case("start refuses a second unbounded quantifier that can run on", function()
     local second = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
     local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
         .. " so a request path costs the square of its length"
     local optional = "more than two ? items double a request path's cost with each one"
+    local long = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
+    local chain85 = "^/" .. ("x*/"):rep(85)
     for _, c in ipairs({
         { "^/.*/.*%.md$", 7, second },
         { "^[^/]*[^/]*x", 11, second },
@@ -2111,6 +2129,8 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         { "/x.*", 4, unanchored },
         { "a*b", 2, unanchored },
         { "^/" .. ("a?"):rep(3), 8, optional },
+        { chain85, 257, long, chain85:sub(217, 257), "bytes 217 to 257" },
+        { ("a"):rep(257), 257, long, ("a"):rep(41), "bytes 217 to 257" },
     }) do
         local started, res = pcall(server.start, {
             port = 0,
@@ -2123,8 +2143,13 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         end
         eq(
             not started and tostring(res) or "started",
-            ("protected_paths pattern is refused at byte %d (%s): %s"):format(c[2], c[3], c[1]),
-            ("%s is refused at byte %d"):format(c[1], c[2])
+            ("protected_paths pattern is refused at byte %d (%s)%s: %s"):format(
+                c[2],
+                c[3],
+                c[5] and (", " .. c[5]) or "",
+                c[4] or c[1]
+            ),
+            ("%s is refused at byte %d"):format(c[1]:sub(1, 40), c[2])
         )
     end
     for _, pattern in ipairs({
@@ -2138,7 +2163,8 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         "^/[^/]*/[^/]*%.md$",
         "^/x%-*y",
         "^/" .. ("a?"):rep(2),
-        "^/" .. ("x*/"):rep(200),
+        "^/" .. ("x*/"):rep(84),
+        ("a"):rep(256),
     }) do
         local started, res = pcall(server.start, {
             port = 0,

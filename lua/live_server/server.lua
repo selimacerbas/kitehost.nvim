@@ -2468,11 +2468,20 @@ end
 --   * Each ? item doubles the ways a path is tried: twenty-four took 1 s
 --     on a 26-byte path, and eight after a wildcard 175 ms on 8 KiB, so
 --     two are taken.
+--   * Every try reads as much of the pattern as matches, so its length
+--     multiplies the cost: a wildcard, eight ? items and a 1000-byte tail
+--     took 14 s. 256 bytes are taken; the costliest shape the rules then
+--     take, a wildcard and two ? items before a tail filling them, costs
+--     about 60 ms.
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
     .. " so a request path costs the square of its length"
 local OPTIONAL = "more than two ? items double a request path's cost with each one"
+local LONG = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
 local function pattern_cost(pat)
+    if #pat > 256 then
+        return 257, LONG
+    end
     if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
         return nil
     end

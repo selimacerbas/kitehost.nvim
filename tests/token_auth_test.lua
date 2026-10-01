@@ -943,7 +943,11 @@ end)
 -- carries the token runs no pattern, a pattern that cannot be read
 -- included, which answered it 401 though its holder may read any path.
 H.case("a request carrying the token runs no pattern", function()
-    local deep = "^/" .. ("x*/"):rep(200)
+    -- No pattern start takes nests past LuaJIT's depth within 256 bytes,
+    -- so the raise it gives one, "pattern too complex", is stubbed for
+    -- this pattern on the path of x/ it is asked about.
+    local deep = "^/" .. ("x*/"):rep(84)
+    local xs = "/" .. ("x/"):rep(84)
     local counted = { ["^/content%.md$"] = true, [deep] = true }
     local real_find, runs = string.find, 0
     H.defer(function()
@@ -952,6 +956,9 @@ H.case("a request carrying the token runs no pattern", function()
     string.find = function(s, pat, ...)
         if counted[pat] then
             runs = runs + 1
+        end
+        if pat == deep and s == xs then
+            error("pattern too complex", 0)
         end
         return real_find(s, pat, ...)
     end
@@ -967,9 +974,7 @@ H.case("a request carrying the token runs no pattern", function()
         server.stop(inst)
     end)
     local base = ("http://127.0.0.1:%d"):format(inst.port)
-    -- Each x*/ item nests one level, so 200 of them are past LuaJIT's
-    -- depth and the pattern cannot be read on a path of 200 x/.
-    local xs = "/" .. ("x/"):rep(200)
+
     for _, c in ipairs({
         { "/content.md?t=" .. TOKEN, 200, 0, "a protected path with the token" },
         { "/index.html?t=" .. TOKEN, 200, 0, "an open path with the token" },
