@@ -1952,11 +1952,14 @@ io.stdout:write(vim.json.encode({ moved = moved, res = tostring(res) }))
                 ~= nil,
         "a 413-byte root is named cut at 300 bytes, the error by its name: " .. tostring(long_err):sub(-60)
     )
-    local marked_file = H.tmpdir() .. "/f\27[31m.txt"
+    -- Windows refuses a name holding a byte 1 to 31 (measured on the
+    -- hosted runner), so there the file is named with DEL, which a name
+    -- may hold and the refusal marks as it marks ESC.
+    local marked_file = H.tmpdir() .. (is_win and "/f\127[31m.txt" or "/f\27[31m.txt")
     H.write_file(marked_file, "x")
     got, err =
-        refused(("update_target: root %s is not a directory"):format((marked_file:gsub("\27", "?"))), marked_file)
-    ok(got, "a file root with an escape is named marked: " .. err)
+        refused(("update_target: root %s is not a directory"):format((marked_file:gsub("[\27\127]", "?"))), marked_file)
+    ok(got, ("a file root with %s is named marked: "):format(is_win and "a DEL" or "an escape") .. err)
     local real_cwd = uv.cwd
     H.defer(function()
         uv.cwd = real_cwd

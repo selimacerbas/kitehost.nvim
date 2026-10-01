@@ -16,6 +16,7 @@ H.rtp()
 local server = require("live_server.server")
 local util = require("live_server.util")
 local eq, ok = H.eq, H.ok
+local is_win = vim.fn.has("win32") == 1
 
 local root = H.tmpdir()
 H.write_file(root .. "/index.html", "<html><body>ok</body></html>")
@@ -751,10 +752,14 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     vim.uv.new_fs_event = function()
         return nil, "EMFILE: stubbed", "EMFILE"
     end
-    -- A root named with ESC and U+202E reaches both notices marked.
-    local third = H.tmpdir() .. "/d\27[31m\226\128\174e"
+    -- A root named with ESC and U+202E reaches both notices marked. Windows
+    -- refuses a name holding a byte 1 to 31 (E739, measured on the hosted
+    -- runner), so there DEL stands for ESC: a name may hold it, and the
+    -- notices mark it as they mark ESC.
+    local control = is_win and "DEL" or "ESC"
+    local third = H.tmpdir() .. (is_win and "/d\127[31m\226\128\174e" or "/d\27[31m\226\128\174e")
     assert(vim.fn.mkdir(third, "p") == 1)
-    local shown = third:gsub("d\27%[31m\226\128\174e$", "d?[31m?e")
+    local shown = third:gsub("d[\27\127]%[31m\226\128\174e$", "d?[31m?e")
     notes, target = {}, third
     called, err = pcall(ls.start_picker)
     ok(called, "a retarget whose watcher cannot start raises nothing: " .. tostring(err))
@@ -763,7 +768,7 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     eq(
         said.msg,
         ("LiveServer %d retargeted to %s; live reload is off"):format(inst.port, shown),
-        "and says live reload is off, naming the port, the root marked"
+        ("and says live reload is off, naming the port, the root marked (its %s and U+202E)"):format(control)
     )
     eq(said.level, vim.log.levels.WARN, "as a warning")
     local server_said = notes[2] or {}
@@ -1020,9 +1025,13 @@ end)
 -- a refused start the server's text, which repeats the root raw.
 H.case("Section 13: every notice naming a root shows its controls as ?", function()
     local base = H.tmpdir()
-    local named = base .. "/d\27]0;x\7\226\128\174e"
+    -- Windows refuses a name holding a byte 1 to 31 (E739, measured on the
+    -- hosted runner), so there DEL and U+009B stand for ESC and BEL: a name
+    -- may hold both, and the notices mark them as they mark ESC and BEL.
+    local controls = is_win and "DEL, U+009B" or "ESC, BEL"
+    local named = base .. (is_win and "/d\127]0;x\194\155\226\128\174e" or "/d\27]0;x\7\226\128\174e")
     assert(vim.fn.mkdir(named, "p") == 1)
-    local other = base .. "/o\27\7\226\128\174p"
+    local other = base .. (is_win and "/o\127\194\155\226\128\174p" or "/o\27\7\226\128\174p")
     assert(vim.fn.mkdir(other, "p") == 1)
     local shown = base .. "/d?]0;x??e"
     local other_shown = base .. "/o???p"
@@ -1052,7 +1061,7 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     eq(
         said:match("^(.-) at "),
         ("LiveServer %s started → %s"):format(tostring(port), shown),
-        "the start notice shows the root's controls as ?"
+        ("the start notice shows the root's controls (%s and U+202E) as ?"):format(controls)
     )
     notes, target, picked_port = {}, other, port or 0
     ls.start_picker()
@@ -1067,7 +1076,8 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     local listed = notes[1] and notes[1].msg or ""
     ok(
         listed:find(("\n  :%s → %s  [live:"):format(tostring(port), other_shown), 1, true) ~= nil
-            and not listed:find("[\1-\9\11-\31]"),
+            and not listed:find("[\1-\9\11-\31\127]")
+            and not listed:find("\194[\128-\159]"),
         "the status list shows them as ?, its line breaks kept: " .. vim.inspect(listed)
     )
     ls.stop_all()
