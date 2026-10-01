@@ -940,14 +940,19 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
         end
     end
     -- Each resolves to a name the disk rule lets through: plain.txt, or the
-    -- root, whose files then sit under the reserved spelling.
+    -- root, whose files then sit under the reserved spelling. The root is
+    -- named bare: libuv writes a junction's target as spelled, a . segment
+    -- included, and a junction to <root>/. was made on Windows but did not
+    -- resolve while the ones above did (measured). Elsewhere the kernel
+    -- drops the . and the server reads a link by realpath alone, so the
+    -- bare name tests the same thing there.
     for _, c in ipairs({
         { "a file of the root", "plain.txt", false, { "/__Live", "/__LIVE" } },
-        { "the root itself", ".", true, { "/__Live/plain.txt", "/__LIVE/plain.txt" } },
+        { "the root itself", false, true, { "/__Live/plain.txt", "/__LIVE/plain.txt" } },
     }) do
         local site = H.tmpdir()
         H.write_file(site .. "/plain.txt", "PLAINFILE")
-        local target = site .. "/" .. c[2]
+        local target = c[2] and (site .. "/" .. c[2]) or site
         local flags = c[3] and { dir = true, junction = true } or nil
         local made, made_err = uv.fs_symlink(target, site .. "/__Live", flags)
         local why = unresolved(made, made_err, site .. "/__Live", target)
