@@ -28,14 +28,16 @@
 -- plain text starts and gates its path (a lone ) included), each
 -- malformed shape is one LuaJIT raises on, a second unbounded quantifier
 -- is refused by its byte unless a literal its item cannot match sits
--- right before it, and one that nests too deep for LuaJIT on a path
--- answers that path 401 without the token with one warning (the token's
--- holder served), a zoned host reports the address it bound (a zone of
--- digits, as Windows spells one, among them, and the loopback's own name
--- skipped where it is no zone the host takes), a table naming every key
--- start reads starts, START_KEYS names the keys check_start and S.start
--- read in the source and no other, and each option is read from the
--- caller's table once.
+-- right before it, as is an unbounded quantifier in a pattern not
+-- anchored with ^ unless the pattern starts with a literal its item
+-- cannot match, and one that nests too deep for LuaJIT on a path answers
+-- that path 401 without the token with one warning (the token's holder
+-- served), a zoned host reports the address it bound (a zone of digits,
+-- as Windows spells one, among them, and the loopback's own name skipped
+-- where it is no zone the host takes), a table naming every key start
+-- reads starts, START_KEYS names the keys check_start and S.start read in
+-- the source and no other, and each option is read from the caller's
+-- table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -487,7 +489,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         port = 0,
         root = root,
         token = TOKEN,
-        protected_paths = { "^/content%.md$", "[%w_]+%.key$", "^/a/(b)$" },
+        protected_paths = { "^/content%.md$", "/[%w_]+%.key$", "^/a/(b)$" },
     })
     ok(started, "a list of well-formed patterns starts: " .. tostring(started and "" or res))
     if started then
@@ -587,13 +589,13 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             server.stop(res)
         end
     end
-    -- A well-formed pattern can still raise at a request: each "x?" nests
-    -- one level when it matches, and past 200 LuaJIT answers "pattern too
-    -- complex" for a path of 200 x's. Such a request raised in the read
-    -- callback and went unanswered; it reads as a match, which only the
-    -- token opens.
-    local deep = "^/" .. string.rep("x?", 200)
-    local xs = "/" .. ("x"):rep(200)
+    -- A well-formed pattern can still raise at a request: each "x*/" item
+    -- nests one level, and past 200 LuaJIT answers "pattern too complex"
+    -- for a path of 200 "x/". Such a request raised in the read callback
+    -- and went unanswered; it reads as a match, which only the token
+    -- opens.
+    local deep = "^/" .. string.rep("x*/", 200)
+    local xs = "/" .. ("x/"):rep(200)
     local function unreadable_server(patterns)
         local up, inst_or_err = pcall(server.start, {
             port = 0,
@@ -679,13 +681,13 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- A control byte in the pattern is a ? in the warning, which a
     -- notifier would otherwise carry raw to a terminal.
     local seen = #notes
-    local escaped = unreadable_server({ "^/\27?" .. string.rep("x?", 200) })
+    local escaped = unreadable_server({ "^/\27?" .. string.rep("x*/", 200) })
     if escaped then
         answers_401(escaped, "an unreadable pattern holding an escape is 401")
         local count = settled(seen + 1)
         local want = ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(escaped:match(":(%d+)/")),
-            ("^/??" .. string.rep("x?", 200)):sub(1, 300),
+            ("^/??" .. string.rep("x*/", 200)):sub(1, 300),
             "pattern too complex"
         )
         ok(
@@ -2055,7 +2057,7 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
     -- names that one per request).
     for _, pattern in ipairs({
         "[]x]",
-        "[^/]+%.md$",
+        "/[^/]+%.md$",
         "[%]%-]",
         "[%]]",
         "[%%]",
@@ -2064,12 +2066,12 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "()x",
         "%bxy",
         "%f[%w]word",
-        "a*b",
-        "c-d?",
+        "^a*b",
+        "^c-d?",
         "x$y^z",
         "%%",
         string.rep("()", 32),
-        "^/" .. string.rep("x?", 250),
+        "^/" .. string.rep("x*/", 250),
     }) do
         local started, res = start_with(pattern)
         ok(started, ("%s starts: %s"):format(vim.inspect(pattern), started and "" or tostring(res)))
@@ -2079,20 +2081,34 @@ end)
 -- The gate matches each pattern on the loop, and a second unbounded
 -- quantifier multiplies the ways a path splits between them:
 -- /.*/.*%.md$ cost 4.2 s of CPU time on a 2 KiB path and 42.7 s on 4
--- KiB, where /.*%.md$ costs 270 ms on 8 KiB (measured). A second one
--- is taken only when the character right before its item is a literal
--- the item cannot match, which ends each of its runs there:
--- /%.[^/]+%.%d+%.tmp$ cost 0.2 ms on every 8 KiB path tried.
+-- KiB (measured). A second one is taken only when the character right
+-- before its item is a literal the item cannot match, which ends each
+-- of its runs there: /%.[^/]+%.%d+%.tmp$ cost 0.2 ms on every 8 KiB path
+-- tried. A pattern not anchored with ^ is tried at every start, so one
+-- unbounded quantifier cost /.*%.md$ 535 ms on 8 KiB where ^/.*%.md$
+-- cost 0.2 ms; it is taken unanchored only when the pattern starts with
+-- a literal its first such item cannot match, which ends each run at the
+-- next start (the same consumer pattern).
 H.case("start refuses a second unbounded quantifier that can run on", function()
-    local why = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
+    local second = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
+    local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
+        .. " so a request path costs the square of its length"
+
     for _, c in ipairs({
-        { "/.*/.*%.md$", 6 },
-        { "[^/]*[^/]*x", 10 },
-        { "%d+%d+x", 6 },
-        { "a*b+c-d?", 4 },
-        { "(.*)(.*)", 7 },
-        { ".*a.-b", 5 },
-        { "^/x.*%d+", 8 },
+        { "^/.*/.*%.md$", 7, second },
+        { "^[^/]*[^/]*x", 11, second },
+        { "^%d+%d+x", 7, second },
+        { "^a*b+c-d?", 5, second },
+        { "^(.*)(.*)", 8, second },
+        { "^.*a.-b", 6, second },
+        { "^/x.*%d+", 8, second },
+        { "/[^/]*/.*", 9, second },
+        { "/.*%.md$", 3, unanchored },
+        { ".*%.md$", 2, unanchored },
+        { "[%w_]+%.key$", 6, unanchored },
+        { "(.*)/(%d+)$", 3, unanchored },
+        { "/x.*", 4, unanchored },
+        { "a*b", 2, unanchored },
     }) do
         local started, res = pcall(server.start, {
             port = 0,
@@ -2105,18 +2121,22 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         end
         eq(
             not started and tostring(res) or "started",
-            ("protected_paths pattern is refused at byte %d (%s): %s"):format(c[2], why, c[1]),
-            ("%s is refused at its second unbounded quantifier"):format(c[1])
+            ("protected_paths pattern is refused at byte %d (%s): %s"):format(c[2], c[3], c[1]),
+            ("%s is refused at byte %d"):format(c[1], c[2])
         )
     end
     for _, pattern in ipairs({
-        "/.*%.md$",
+        "^/.*%.md$",
         "^/docs/.+$",
         "^/a%.md$",
+        "%.md$",
         "/%.[^/]+%.%d+%.tmp$",
-        "(.*)/(%d+)$",
+        "/[^/]*%.md$",
+        "^(.*)/(%d+)$",
         "^/[^/]*/[^/]*%.md$",
         "^/x%-*y",
+
+        "^/" .. ("x*/"):rep(200),
     }) do
         local started, res = pcall(server.start, {
             port = 0,
@@ -2127,7 +2147,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         if started then
             server.stop(res)
         end
-        ok(started, ("%s starts: %s"):format(pattern, started and "" or tostring(res)))
+        ok(started, ("%s starts: %s"):format(pattern:sub(1, 40), started and "" or tostring(res)))
     end
 end)
 

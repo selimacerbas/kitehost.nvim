@@ -770,7 +770,7 @@ end)
 -- 8 KiB is refused before the Host check, the gate or any pattern reads
 -- it; the 64 KiB head cap stays for the whole head.
 H.case("Section 9: a target over 8 KiB is 414 before any check reads it", function()
-    local pattern = "/.*%.md$"
+    local pattern = "^/.*%.md$"
     local inst = serve({ token = "tok", protected_paths = { pattern } })
     local port = inst.port
     -- Each match of the pattern is counted, so a 414 is shown to run none.
@@ -820,29 +820,35 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     eq(res[1] and res[1].status, 414, "a short path whose query takes the target past 8 KiB is 414")
     eq(runs, 0, "and no pattern was matched against it")
     string.find = real_find
-    -- The cost the cap leaves, measured on this machine, not a promise:
-    -- the pattern on the longest path the cap lets through, 8 KiB of
-    -- a/a/..., cost about 270 ms of CPU time on 0.12.5 and 160 ms on
-    -- 0.10.0, where 16 KiB cost 880 and 620 ms. The pattern's own calls
+    -- The cost the start rules leave, measured on this machine, not a
+    -- promise. Anchored, this pattern costs 0.1 ms on the longest path the
+    -- cap lets through; unanchored, which start refuses, it cost 300 to
+    -- 535 ms. A costly shape start takes, one wildcard and eight ? items
+    -- before a literal tail, tries 2^8 ways at every split of 8 KiB, each
+    -- as long as the tail: with eight a's of tail, about 175 ms of CPU
+    -- time on 0.12.5 and 155 on 0.10.0 (1000 a's took 14 s). Its calls
     -- are timed by os.clock, so the row reads their work and not the
-    -- machine's load beside it, which a wall-clock gap read as seconds.
-    local spent = 0
+    -- machine's load beside it.
+    local costly = "^/.*" .. ("a?"):rep(8) .. ("a"):rep(8) .. "b"
+    local worst = serve({ token = "tok", protected_paths = { costly } })
+    local spent, calls = 0, 0
     string.find = function(s, pat, ...)
-        if pat ~= pattern then
+        if pat ~= costly then
             return real_find(s, pat, ...)
         end
+        calls = calls + 1
         local c0 = os.clock()
         local first, last = real_find(s, pat, ...)
         spent = spent + os.clock() - c0
         return first, last
     end
-    local slashed = "/" .. ("a/"):rep(4095) .. "x"
-    eq(#slashed, 8 * 1024, "the slashed path is 8 KiB")
+    local a_path = "/" .. ("a"):rep(8 * 1024 - 1)
     -- Asked through curl, another process, so the client's own work is
     -- no part of the loop's.
-    local got = H.http_get(("http://127.0.0.1:%d%s"):format(port, slashed))
+    local got = H.http_get(("http://127.0.0.1:%d%s"):format(worst.port, a_path))
     string.find = real_find
-    eq(got.status, 404, "the slashed 8 KiB path is answered")
+    eq(got.status, 404, "an 8 KiB path of a's is answered under a costly shape start takes")
+    eq(calls, 1, "which the gate matched once")
     ok(spent > 0 and spent < 1, ("and the pattern held the loop under 1 s of CPU time (%d ms)"):format(spent * 1000))
 end)
 

@@ -2439,22 +2439,45 @@ local function pattern_fault(pat)
     end
 end
 
--- The byte of a well-formed pattern's second unbounded quantifier (*, +
--- or - after an item) that can run on, or nil. The gate matches every
--- pattern on the loop, and two such runs split a path in more ways than
--- its length: /.*/.*%.md$ cost 4.2 s of CPU time on a 2 KiB path and
--- 42.7 s on 4 KiB, where /.*%.md$ costs 270 ms on 8 KiB (measured). A
--- later one is taken when the character right before its item is a
--- literal the item cannot match, which ends each of its runs there:
--- /%.[^/]+%.%d+%.tmp$ cost 0.2 ms on every 8 KiB path tried. The items
--- are read as LuaJIT's matcher reads them; a capture's parenthesis is
--- skipped, and any other element before an item is no literal.
-local function second_quantifier(pat)
+-- Whether a literal character can be matched by an item (a character, an
+-- escape, a class or a set). "$" alone reads as an anchor in a pattern
+-- of its own, so it is compared as text.
+local function item_matches(item, ch)
+    if item == "$" then
+        return ch == "$"
+    end
+    return ch:find("^" .. item) ~= nil
+end
+
+-- The byte of the first part of a well-formed pattern that makes a
+-- request path cost seconds on the loop, and why, or nil. The gate
+-- matches every pattern on the loop, read as LuaJIT's matcher reads it
+-- (a capture's parenthesis skipped, any element but a literal before an
+-- item no literal). Measured on an 8 KiB path unless named:
+--   * A second unbounded quantifier (*, + or - after an item) splits a
+--     path in more ways than its length: /.*/.*%.md$ cost 4.2 s of CPU
+--     time on a 2 KiB path and 42.7 s on 4 KiB. It is taken when the
+--     character right before its item is a literal the item cannot
+--     match, which ends each of its runs there: /%.[^/]+%.%d+%.tmp$ cost
+--     0.2 ms on every path tried.
+--   * Without a leading ^ the pattern is tried at every start, so one
+--     unbounded quantifier costs the square of the path's length:
+--     /.*%.md$ 535 ms, ^/.*%.md$ 0.2 ms. It is taken unanchored when the
+--     pattern starts with a literal that item cannot match, which ends
+--     each run at the next place a match can start (the same pattern).
+local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
+local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
+    .. " so a request path costs the square of its length"
+
+local function pattern_cost(pat)
     if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
         return nil
     end
-    local i, n = pat:sub(1, 1) == "^" and 2 or 1, #pat
-    local seen, before = false, nil
+    local anchored = pat:sub(1, 1) == "^"
+    local i, n = anchored and 2 or 1, #pat
+    -- first: the pattern's first element when it is a fixed literal,
+    -- false when it is anything else, nil before it is read.
+    local seen, before, first = false, nil, nil
     while i <= n do
         local c, d = pat:sub(i, i), pat:sub(i + 1, i + 1)
         if c == "(" or c == ")" then
@@ -2463,27 +2486,31 @@ local function second_quantifier(pat)
             break
         elseif c == "%" and (d == "b" or d == "f" or d:find("%d")) then
             before = nil
+            first = first == nil and false or first
             i = d == "b" and i + 4 or d == "f" and set_end(pat, i + 2) or i + 2
         else
             local stop = c == "%" and i + 2 or c == "[" and set_end(pat, i) or i + 1
             local item, q = pat:sub(i, stop - 1), pat:sub(stop, stop)
+            -- A literal: one character but ".", or "%" and a character
+            -- that is no letter or digit.
+            local literal = (#item == 1 and item ~= ".") and item or (c == "%" and not d:find("%w") and d) or nil
             if q == "*" or q == "+" or q == "-" then
-                -- "$" alone reads as an anchor in a pattern of its own.
-                local runs_on = before == nil
-                    or (item == "$" and before == "$")
-                    or (item ~= "$" and before:find("^" .. item) ~= nil)
-                if seen and runs_on then
-                    return stop
+                if seen and not (before and not item_matches(item, before)) then
+                    return stop, SECOND
                 end
-                seen, before = true, nil
+                if not seen and not anchored and not (first and not item_matches(item, first)) then
+                    return stop, UNANCHORED
+                end
+                seen, before, first = true, nil, first or false
                 i = stop + 1
             elseif q == "?" then
-                before = nil
+                before, first = nil, first == nil and false or first
                 i = stop + 1
             else
-                -- A literal: one character but ".", or "%" and a character
-                -- that is no letter or digit.
-                before = (#item == 1 and item ~= ".") and item or (c == "%" and not d:find("%w") and d) or nil
+                before = literal
+                if first == nil then
+                    first = literal or false
+                end
                 i = stop
             end
         end
@@ -2636,11 +2663,10 @@ local function check_start(cfg)
                 local span = (lo > 1 or hi < #pat) and (", bytes %d to %d"):format(lo, hi) or ""
                 error(("protected_paths pattern is malformed at byte %d (%s)%s: %s"):format(at, why, span, text), 0)
             end
-            at = second_quantifier(pat)
+            at, why = pattern_cost(pat)
             if at then
                 local text, lo, hi = fault_window(pat, at)
                 local span = (lo > 1 or hi < #pat) and (", bytes %d to %d"):format(lo, hi) or ""
-                why = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
                 error(("protected_paths pattern is refused at byte %d (%s)%s: %s"):format(at, why, span, text), 0)
             end
         end

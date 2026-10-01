@@ -943,7 +943,7 @@ end)
 -- carries the token runs no pattern, a pattern that cannot be read
 -- included, which answered it 401 though its holder may read any path.
 H.case("a request carrying the token runs no pattern", function()
-    local deep = "^/" .. ("x?"):rep(200)
+    local deep = "^/" .. ("x*/"):rep(200)
     local counted = { ["^/content%.md$"] = true, [deep] = true }
     local real_find, runs = string.find, 0
     H.defer(function()
@@ -967,9 +967,9 @@ H.case("a request carrying the token runs no pattern", function()
         server.stop(inst)
     end)
     local base = ("http://127.0.0.1:%d"):format(inst.port)
-    -- Each x? nests one level when it matches, so 200 x's are past
-    -- LuaJIT's depth and the pattern cannot be read on that path.
-    local xs = "/" .. ("x"):rep(200)
+    -- Each x*/ item nests one level, so 200 of them are past LuaJIT's
+    -- depth and the pattern cannot be read on a path of 200 x/.
+    local xs = "/" .. ("x/"):rep(200)
     for _, c in ipairs({
         { "/content.md?t=" .. TOKEN, 200, 0, "a protected path with the token" },
         { "/index.html?t=" .. TOKEN, 200, 0, "an open path with the token" },
