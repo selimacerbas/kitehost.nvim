@@ -473,17 +473,18 @@ resolve or is not a directory; a host that is not an address of this
 machine (`EADDRNOTAVAIL`); a port another socket holds; a probe that
 cannot check the loopback address a wildcard bind's URL names, or a
 wildcard address a specific bind would shadow (on Windows, where a bind
-meets another socket only in the same mode, also `::` in the mode the
-bind does not meet); a failed listen; a reload or heartbeat timer it
-cannot make. Call it under `pcall`. A refusal for a taken port carries
-the text `EADDRINUSE: address already in use` in each of its forms (the
-bind's own refusal, a specific bind beside a listener on the wildcard
-address of its family or, on Windows, on a dual-stack `::`, a wildcard
-bind beside a socket on the loopback address its URL names, and on
-Windows a `::` bind beside a `::` IPv6-only listener, which would take
-the requests its URL sends), and a plugin may match that text to name
-the port. A root whose watcher cannot start is served with live reload
-off and a warning.
+meets another socket only in the same mode, also `::` in the mode a
+specific, `0.0.0.0` or `::` bind does not meet); a failed listen; a
+reload or heartbeat timer it cannot make. Call it under `pcall`. A
+refusal for a taken port carries the text
+`EADDRINUSE: address already in use` in each of its forms (the bind's
+own refusal, a specific bind beside a listener on the wildcard address
+of its family, a wildcard bind beside a socket on the loopback address
+its URL names, and on Windows a specific or `0.0.0.0` bind beside a
+dual-stack `::` listener and a `::` bind beside a `::` IPv6-only
+listener, which would take the requests its URL sends), and a plugin
+may match that text to name the port. A root whose watcher cannot start
+is served with live reload off and a warning.
 
 The instance has two public fields: `inst.port`, the port the socket
 holds, and `inst.host`, the address the socket is bound to as the OS

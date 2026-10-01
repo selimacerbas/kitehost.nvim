@@ -1062,7 +1062,9 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
         end
     )
     ok(free_started, "with nothing on 127.0.0.1 at that port, the wildcard start serves: " .. free_res)
-    eq(free_made, 2, "its own socket and the probe")
+    -- Windows probes :: dual-stack beside a 0.0.0.0 bind too.
+    local wild_made = sysname == "Windows_NT" and 3 or 2
+    eq(free_made, wild_made, ("its own socket and the probes (%s)"):format(sysname))
     eq(free_open, 1, "and the probe is closed")
     eq(status, 200, "the URL's address reaches this server")
 
@@ -1104,7 +1106,7 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     local absent_started, absent_res, absent_made, absent_open = start_counted({ host = "0.0.0.0", port = 0 })
     server.wildcard_loopback = real_rule
     ok(absent_started, "a probe of an address this machine lacks serves: " .. absent_res)
-    eq(absent_made, 2, "its own socket and the probe")
+    eq(absent_made, wild_made, ("its own socket and the probes (%s)"):format(sysname))
     eq(absent_open, 1, "keeping its one socket, the probe closed")
     refuses(
         "a probe of an address bind cannot read raises",
@@ -1411,7 +1413,10 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
     end
     local up3, res3, made3 = held_probes(3)
     ok(up3, "a port-0 wildcard start whose probe finds the port held three times serves: " .. res3)
-    eq(made3, 8, "on its fourth socket, each with its probe")
+    -- The fourth start, which serves, makes Windows's :: dual-stack probe
+    -- too; each held one stops at its URL's address.
+    local sys = real_uname().sysname
+    eq(made3, sys == "Windows_NT" and 9 or 8, ("on its fourth socket, each with its probes (%s)"):format(sys))
     local up4, res4, made4 = held_probes(4)
     ok(
         not up4 and res4:find("another socket holds 127.0.0.1:", 1, true) ~= nil,
@@ -1640,8 +1645,9 @@ end)
 -- A listener in the one mode a Windows probe adds cannot be made beside
 -- a bind here, since macOS and Linux meet a bind across modes, so these
 -- rows read the system as Windows and answer that probe's bind: a
--- specific bind probes :: dual-stack after its own family's wildcard, and
--- a :: bind :: IPv6-only after its URL's address.
+-- specific bind probes :: dual-stack after its own family's wildcard, a
+-- 0.0.0.0 bind after its URL's address, and a :: bind probes ::
+-- IPv6-only after its URL's address.
 H.case("read as Windows, a bind probes :: in the mode its own does not meet", function()
     local real_new_tcp, real_uname = vim.uv.new_tcp, vim.uv.os_uname
     H.defer(function()
@@ -1730,6 +1736,20 @@ H.case("read as Windows, a bind probes :: in the mode its own does not meet", fu
     up, res, sockets = start_as("Darwin", "127.0.0.1", false, held)
     ok(up, "read as macOS, a 127.0.0.1 start makes no :: dual-stack probe and serves: " .. res)
     eq(sockets, 2, "with its socket and the 0.0.0.0 probe")
+    -- A 0.0.0.0 bind on Windows sits beside a dual-stack :: listener and
+    -- takes its IPv4 connections, and its :: dual-stack probe never meets
+    -- its own socket (measured on the hosted runner).
+    up, res, sockets = start_as("Windows_NT", "0.0.0.0", false, nil)
+    ok(up, "a 0.0.0.0 start read as Windows serves: " .. res)
+    eq(sockets, 3, "with its socket, the 127.0.0.1 probe and the :: dual-stack one")
+    up, res, sockets, open = start_as("Windows_NT", "0.0.0.0", false, held)
+    ok(not up and shadowed(res, "0.0.0.0"), "and raises when :: dual-stack holds the port: " .. res)
+    eq(open, 0, "leaving no socket")
+    up, res = start_as("Windows_NT", "0.0.0.0", false, { "EAFNOSUPPORT: stubbed", "EAFNOSUPPORT" })
+    ok(up, "and serves when :: dual-stack is EAFNOSUPPORT, a host with no IPv6: " .. res)
+    up, res, sockets = start_as("Darwin", "0.0.0.0", false, held)
+    ok(up, "read as macOS, a 0.0.0.0 start makes no :: dual-stack probe and serves: " .. res)
+    eq(sockets, 2, "with its socket and the 127.0.0.1 probe")
 
     if binds("::ffff:127.0.0.1") then
         up, res = start_as("Windows_NT", "::ffff:127.0.0.1", false, held)

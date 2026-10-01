@@ -3144,10 +3144,11 @@ local function bind_probed(host, port)
         return nil, ("Failed to bind %s: the loopback rule raised: %s"):format(here, tostring(loopback))
     end
     -- Windows meets a bind only in the same mode, IPv4, IPv6-only or
-    -- dual-stack (measured): a specific bind there sits beside a
-    -- dual-stack :: listener of either family, and a :: bind beside an
-    -- IPv6-only one, which then takes the [::1] requests the URL sends, so
-    -- there each also probes :: in the mode its own bind does not meet.
+    -- dual-stack (measured): a specific or a 0.0.0.0 bind there sits
+    -- beside a dual-stack :: listener and takes its connections to the
+    -- addresses it binds, and a :: bind sits beside an IPv6-only one,
+    -- which then takes the [::1] requests the URL sends, so there each
+    -- also probes :: in the mode its own bind does not meet.
     local info = uv.os_uname()
     local sysname = info and info.sysname
     local windows = sysname == "Windows_NT"
@@ -3190,17 +3191,20 @@ local function bind_probed(host, port)
     -- Linux refuses that bind at the bind; a probe there refuses free ones.
     local shadows = sysname ~= "Linux"
     local wildcard = shadows and wildcard_of(bound.ip)
-    if wildcard then
-        local probed, mode = wildcard, ""
-        -- IPv6-only, so an IPv6 bind's probe never meets an IPv4 listener,
-        -- of which that bind shadows nothing.
-        local free, why, why_name = address_free(wildcard, bound.port, wildcard == "::")
+    local ipv4 = wildcard == "0.0.0.0" or bound.ip == "0.0.0.0"
+    if wildcard or (windows and ipv4) then
+        local probed, mode, free, why, why_name = wildcard, "", true, nil, nil
+        if wildcard then
+            -- IPv6-only, so an IPv6 bind's probe never meets an IPv4
+            -- listener, of which that bind shadows nothing.
+            free, why, why_name = address_free(wildcard, bound.port, wildcard == "::")
+        end
         if free and windows then
             probed, mode = "::", " dual-stack"
             free, why, why_name = address_free("::", bound.port)
             -- A host with no IPv6 has no dual-stack listener to shadow.
             local no_v6 = why_name == "EAFNOSUPPORT" or why_name == "EADDRNOTAVAIL"
-            if not free and wildcard == "0.0.0.0" and no_v6 then
+            if not free and ipv4 and no_v6 then
                 free = true
             end
         end
@@ -3233,11 +3237,11 @@ end
 -- option, a failed bind or listen, a port in use, a reload timer it cannot
 -- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check, or
--- a loopback bind whose wildcard of its family the same holds for; on
--- Windows a loopback or a :: bind also refuses a :: held in the mode its
--- own bind does not meet. A root whose watcher cannot start is served
--- with live reload off and one warning. A caller reads
--- S.features.start_raises before it relies on that.
+-- a specific bind (loopback or LAN) whose wildcard of its family the same
+-- holds for; on Windows a specific, a 0.0.0.0 or a :: bind also refuses
+-- a :: held in the mode its own bind does not meet. A root whose watcher
+-- cannot start is served with live reload off and one warning. A caller
+-- reads S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host
