@@ -38,6 +38,7 @@ H.rtp()
 local server = require("live_server.server")
 local eq, ok = H.eq, H.ok
 local uv = vim.uv
+local is_win = vim.fn.has("win32") == 1
 
 local root = H.tmpdir()
 H.write_file(root .. "/index.html", "<html><body>hi</body></html>")
@@ -94,7 +95,10 @@ end
 -- page is 16 MiB, past what the socket buffers of both ends take (1.6 MiB
 -- at most on macOS, measured), so the write is still pending at the end.
 -- The read path leaves a response's socket to the response, so the end
--- and the reset after it reach one close.
+-- and the reset after it reach one close. Winsock completes the send at
+-- once instead (measured on the hosted runner), which leaves no race to
+-- build, so there the row that needs one is skipped with the count of
+-- pages still pending, and the close row still runs.
 H.case("Section 1: a peer that ends its side during a response is closed once", function()
     H.write_file(root .. "/large.html", "<html><body>" .. string.rep("p", 16 * 1024 * 1024) .. "</body></html>")
     local inst = serve()
@@ -112,8 +116,25 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
     end, 500)
     local sockets = settled
     local seen = #H.errors()
+    -- A page's socket is the one its response shuts; a client's
+    -- half-close shuts the client's own, through the same method table.
+    local methods = getmetatable(inst.handle).__index
+    local real_shutdown = methods.shutdown
+    H.defer(function()
+        methods.shutdown = real_shutdown
+    end)
+    local clients, shut = {}, {}
+    methods.shutdown = function(h, ...)
+        if not clients[h] then
+            table.insert(shut, h)
+        end
+        return real_shutdown(h, ...)
+    end
+    local pending = 0
     for _ = 1, 3 do
+        local before = #shut
         local c = assert(H.raw_connect(port))
+        clients[c.tcp] = true
         assert(c.tcp:read_stop())
         assert(c:send(get("/large.html", port)))
         assert(c:half_close())
@@ -126,14 +147,29 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
             end, 1000),
             "the tcp count held still within 1 s after the half-close"
         )
+        H.wait_for(function()
+            return #shut > before
+        end, 1000)
+        local page = shut[before + 1]
+        if page and page:get_write_queue_size() > 0 then
+            pending = pending + 1
+        end
         c:close()
     end
+    methods.shutdown = real_shutdown
     local raised = errors_since(seen)
-    ok(
-        #raised == 0,
-        "3 clients that stop reading a 16 MiB page and half-close raise nothing"
-            .. (#raised > 0 and (": " .. table.concat(raised, " | ")) or "")
-    )
+    local quiet = "3 clients that stop reading a 16 MiB page and half-close raise nothing"
+    if is_win and pending < 3 then
+        H.skip(
+            ("%s (%d of 3 pages still being written at the end: Winsock completes the page's send at once, measured: a 64 MiB write to a client that never reads leaves no queue)"):format(
+                quiet,
+                pending
+            )
+        )
+    else
+        eq(pending, 3, "each page is still being written when its client ends its side")
+        ok(#raised == 0, quiet .. (#raised > 0 and (": " .. table.concat(raised, " | ")) or ""))
+    end
     ok(
         H.wait_for(function()
             return H.handle_count("tcp") == sockets
@@ -829,7 +865,11 @@ H.case("Section 5: stop closes every connection it accepted", function()
     -- stop is a second closer beside a page's shutdown callback: its close
     -- cancels the pending shutdown, whose callback then closes again. The
     -- page is 16 MiB, past what both ends' socket buffers take, so its
-    -- write and the shutdown behind it are still pending at stop.
+    -- write and the shutdown behind it are still pending at stop. Winsock
+    -- completes the send at once instead (a 64 MiB write to a client that
+    -- never reads left no queue, measured on the hosted runner), so there
+    -- the pending page is counted and skipped with the reason, and stop's
+    -- rows still run.
     local methods = getmetatable(inst.handle).__index
     local real_shutdown = methods.shutdown
     H.defer(function()
@@ -859,8 +899,21 @@ H.case("Section 5: stop closes every connection it accepted", function()
         "each page asked for its shutdown within 3 s"
     )
     methods.shutdown = real_shutdown
+    local pending = 0
     for _, h in ipairs(shutting) do
-        assert(h:get_write_queue_size() > 0, "each page is still being written when stop runs")
+        if h:get_write_queue_size() > 0 then
+            pending = pending + 1
+        end
+    end
+    if is_win and pending < #shutting then
+        H.skip(
+            ("each page is still being written when stop runs (%d of %d: Winsock completes the page's send at once, measured: a 64 MiB write to a client that never reads leaves no queue)"):format(
+                pending,
+                #shutting
+            )
+        )
+    else
+        eq(pending, #shutting, "each page is still being written when stop runs")
     end
     server.stop(inst)
     -- Counted while the clients still read nothing: one that reads takes
