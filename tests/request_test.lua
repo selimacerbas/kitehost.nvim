@@ -15,7 +15,7 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local eq, ok = H.eq, H.ok
 
 -- Windows takes a / in a relative link's target unconverted, leaving the
@@ -421,7 +421,7 @@ H.case("Section 5: every status the server sends has its reason phrase", functio
     -- A status added to a response with no entry in the reason table would
     -- go out with an empty reason, which RFC 9112 allows; this row makes
     -- that omission a red run instead of a silent status line.
-    local src = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n")
+    local src = table.concat(vim.fn.readfile(H.root .. "/lua/kitehost/server.lua"), "\n")
     -- Only the table's own entries count, so a bracketed status elsewhere
     -- in the source cannot stand in for a missing reason.
     local block = assert(src:match("REASONS%s*=%s*(%b{})"), "the reason table was found in the source")

@@ -29,7 +29,7 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local eq, ok = H.eq, H.ok
 local uv = vim.uv
 
@@ -914,7 +914,7 @@ H.case("Section 9b: the payload's bytes are the same on every process", function
         script,
         table.concat({
             "vim.opt.runtimepath:prepend(_G.arg[1])",
-            "local server = require('live_server.server')",
+            "local server = require('kitehost.server')",
             "os.time = function() return 1700000000 end",
             "local frame",
             "local stream = {",

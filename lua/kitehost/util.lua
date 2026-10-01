@@ -4,9 +4,9 @@
 -- A failed load leaves require's sentinel behind, which answers a retry with
 -- "loop or previous error", so the entry is cleared first and every require
 -- reads the text.
-local floor = require("live_server.floor")
+local floor = require("kitehost.floor")
 if not floor.ok then
-    package.loaded["live_server.util"] = nil
+    package.loaded["kitehost.util"] = nil
     error(floor.message, 0)
 end
 

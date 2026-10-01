@@ -4,14 +4,14 @@
 -- A failed load leaves require's sentinel behind, which answers a retry with
 -- "loop or previous error", so the entry is cleared first and every require
 -- reads the text.
-local floor = require("live_server.floor")
+local floor = require("kitehost.floor")
 if not floor.ok then
-    package.loaded["live_server.server"] = nil
+    package.loaded["kitehost.server"] = nil
     error(floor.message, 0)
 end
 
 local uv = vim.uv
-local util = require("live_server.util")
+local util = require("kitehost.util")
 
 local S = {}
 

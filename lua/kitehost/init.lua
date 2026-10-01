@@ -7,7 +7,7 @@
 -- waits for the loop as the plugin file's does: a lazy load on FileType runs
 -- inside 0.9's filetype nvim_cmd, where an ERROR notification raised
 -- Vim(append) with a traceback.
-local floor = require("live_server.floor")
+local floor = require("kitehost.floor")
 if not floor.ok then
     vim.schedule(function()
         local notify = vim.notify_once or vim.notify
@@ -25,8 +25,8 @@ end
 
 local M = {}
 
-local util = require("live_server.util")
-local server = require("live_server.server")
+local util = require("kitehost.util")
+local server = require("kitehost.server")
 
 local defaults = {
     default_port = 8000,
@@ -208,7 +208,7 @@ function M.setup(opts)
     -- filetypes list must disarm the earlier autocmd, which otherwise kept
     -- starting servers and raised on a false auto_start. A later call that
     -- names no filetypes keeps the earlier list through the merge above.
-    local group = vim.api.nvim_create_augroup("LiveServerAutoStart", { clear = true })
+    local group = vim.api.nvim_create_augroup("KiteHostAutoStart", { clear = true })
     if M.opts.auto_start and M.opts.auto_start.filetypes then
         local fts = M.opts.auto_start.filetypes
         if #fts > 0 then

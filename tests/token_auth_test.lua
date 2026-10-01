@@ -20,8 +20,8 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
-local util = require("live_server.util")
+local server = require("kitehost.server")
+local util = require("kitehost.util")
 local ok, eq, http_get = H.ok, H.eq, H.http_get
 
 -- Workspace with two files

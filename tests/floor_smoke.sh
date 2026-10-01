@@ -152,7 +152,7 @@ turn_loop()
 local loaded = {}
 for name in pairs(package.loaded) do
     local ours = name == module or name:sub(1, #module + 1) == module .. "."
-    local ls = name == "live_server" or name:sub(1, 12) == "live_server."
+    local ls = name == "kitehost" or name:sub(1, 9) == "kitehost."
     if (ours or ls) and name ~= module and name ~= module .. ".floor" then
         loaded[#loaded + 1] = name
     end

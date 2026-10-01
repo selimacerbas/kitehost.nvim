@@ -20,7 +20,7 @@
 --   the module's source spells, and a section whose default is nil
 --   (auto_start) takes its fields from every M.opts.<key>.<field>, so a
 --   key or field read through an alias of M.opts or rawget is not seen.
--- Section 9: every function of require("live_server") is named in the
+-- Section 9: every function of require("kitehost") is named in the
 --   README's "API (for lua configs)" and in :help's API section. Its
 --   tables (opts, state) are the module's state and are not read.
 -- Section 10: :help's server API names the surface the README does, and
@@ -67,8 +67,8 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
-local util = require("live_server.util")
+local server = require("kitehost.server")
+local util = require("kitehost.util")
 local ok = H.ok
 
 local readme = table.concat(vim.fn.readfile(H.root .. "/README.md"), "\n")
@@ -120,7 +120,7 @@ local function other_inst_fields(text)
     return named
 end
 
-H.case("Section 1: every export of live_server.server is documented", function()
+H.case("Section 1: every export of kitehost.server is documented", function()
     ok(section ~= "", "the README has the plugin-author section")
     for _, name in ipairs(sorted_keys(server)) do
         ok(section:find(export_shown(name), 1, true) ~= nil, ("server.%s is documented"):format(name))
@@ -309,7 +309,7 @@ end)
 -- The routes are the /__live/ literals in the server's source, so a route
 -- added there reds this row until the section names it.
 H.case("Section 6: every /__live/ route the server answers is documented", function()
-    local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n")
+    local source = table.concat(vim.fn.readfile(H.root .. "/lua/kitehost/server.lua"), "\n")
     local seen, routes = {}, {}
     for found in source:gmatch("/__live/[%w._-]+") do
         -- A comment's sentence ends a literal with its full stop.
@@ -334,9 +334,9 @@ end)
 -- fields are options too, the keys of a table default that are all names
 -- (the headers table's keys are header names, and a list holds values).
 local function setup_options()
-    package.loaded["live_server"] = nil
-    local opts = require("live_server").opts
-    local source = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n")
+    package.loaded["kitehost"] = nil
+    local opts = require("kitehost").opts
+    local source = table.concat(vim.fn.readfile(H.root .. "/lua/kitehost/init.lua"), "\n")
     local defaults = "\n" .. (source:match("\nlocal defaults = {\n(.-)\n}\n") or "")
     local declared, seen, keys = {}, {}, {}
     local function add(k)
@@ -424,13 +424,13 @@ H.case("Section 8: every setup() option has an entry in :help's options", functi
     end
 end)
 
--- A user's config calls the functions require("live_server") returns,
+-- A user's config calls the functions require("kitehost") returns,
 -- and the README's "API (for lua configs)" and :help's API section are
 -- where SemVer names them, so a function added to the module is named in
 -- both. Its tables, opts and state, hold the module's state.
-H.case("Section 9: every function of live_server is in README's and :help's API", function()
-    package.loaded["live_server"] = nil
-    local ls = require("live_server")
+H.case("Section 9: every function of kitehost is in README's and :help's API", function()
+    package.loaded["kitehost"] = nil
+    local ls = require("kitehost")
     local api = readme:match("\n## API %(for lua configs%)\n(.-)\n### ") or ""
     ok(api ~= "", "the README has the API (for lua configs) section")
     local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
@@ -447,7 +447,7 @@ H.case("Section 9: every function of live_server is in README's and :help's API"
             )
         end
     end
-    ok(names > 0, 'require("live_server") returns functions')
+    ok(names > 0, 'require("kitehost") returns functions')
 end)
 
 -- :help is the other place a plugin author reads the API, so its section
@@ -852,9 +852,9 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
 
     -- setup() refuses the two connection keys, so every server the
     -- commands open runs with the defaults.
-    local live_server = require("live_server")
+    local kitehost = require("kitehost")
     for _, key in ipairs({ "max_connections", "header_timeout_ms" }) do
-        local took, why = pcall(live_server.setup, { [key] = 1 })
+        local took, why = pcall(kitehost.setup, { [key] = 1 })
         ok(not took and tostring(why) == "setup does not read the key " .. key, ("setup() refuses %s"):format(key))
     end
     states("`setup()` refuses both keys", "the connection keys")

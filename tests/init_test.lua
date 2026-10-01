@@ -13,8 +13,8 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
-local util = require("live_server.util")
+local server = require("kitehost.server")
+local util = require("kitehost.util")
 local eq, ok = H.eq, H.ok
 local is_win = vim.fn.has("win32") == 1
 
@@ -65,8 +65,8 @@ end
 -- A fresh module per start: setup() merges onto the options it holds, so a
 -- start would inherit the last one's token.
 local function start_with(opts)
-    package.loaded["live_server"] = nil
-    local ls = require("live_server")
+    package.loaded["kitehost"] = nil
+    local ls = require("kitehost")
     ls.setup(vim.tbl_extend("force", { notify = false, open_on_start = true }, opts))
     opened, started, servers, raised, notices = {}, {}, {}, {}, {}
     ls.start_picker()
@@ -119,8 +119,8 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
     -- shows which one the URL reads. The URL is built by open_existing,
     -- with no start: the start would probe the stubbed address, which
     -- macOS has no interface for.
-    package.loaded["live_server"] = nil
-    local ls = require("live_server")
+    package.loaded["kitehost"] = nil
+    local ls = require("kitehost")
     ls.setup({ notify = false, host = "0.0.0.0" })
     local real_rule = server.wildcard_loopback
     H.defer(function()
@@ -157,7 +157,7 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
 
     -- A reopen hands the token only to a port this plugin serves: a server
     -- it did not start must not learn it.
-    local ls = require("live_server")
+    local ls = require("kitehost")
     H.defer(function()
         picked_port = 0
     end)
@@ -205,7 +205,7 @@ H.case("Section 3: the start notice is silenced, printed once, and is the opened
     _, url, inst, notes = start_with({ notify = true, token = "abc" })
     local port = inst and inst.port or -1
     local before = #notes
-    local ls = require("live_server")
+    local ls = require("kitehost")
     H.defer(function()
         picked_port = 0
     end)
@@ -290,8 +290,8 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
         vim.notify = suite_notify
     end)
     local function refused_with(opts)
-        package.loaded["live_server"] = nil
-        local ls = require("live_server")
+        package.loaded["kitehost"] = nil
+        local ls = require("kitehost")
         ls.setup(vim.tbl_extend("force", { notify = true, open_on_start = false }, opts))
         notes, raised = {}, {}
         ls.start_picker()
@@ -344,7 +344,7 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     eq(#notes, 0, "and says nothing: " .. vim.inspect(notes, { newline = " ", indent = "" }))
     -- A warning is kept as an error is: a reload asked of a port no server
     -- holds said nothing under notify = false, and the user read it as done.
-    local ls = require("live_server")
+    local ls = require("kitehost")
     notes, picked_port = {}, 1
     ls.force_reload()
     picked_port = 0
@@ -405,8 +405,8 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { "directory_listing", "off" },
     }) do
         local section, value = c[1], c[2]
-        package.loaded["live_server"] = nil
-        local ls = require("live_server")
+        package.loaded["kitehost"] = nil
+        local ls = require("kitehost")
         local set, err = pcall(ls.setup, { notify = false, [section] = value })
         eq(
             not set and tostring(err) or "setup took it",
@@ -414,8 +414,8 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
             ("setup refuses %s = %s, naming it"):format(section, vim.inspect(value))
         )
     end
-    package.loaded["live_server"] = nil
-    local ls = require("live_server")
+    package.loaded["kitehost"] = nil
+    local ls = require("kitehost")
     pcall(ls.setup, { default_port = 9000, live_reload = 1 })
     ok(
         ls.opts.default_port == 8000 and type(ls.opts.live_reload) == "table",
@@ -438,8 +438,8 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { { notify = 0 }, "notify", "number" },
         { { serve_dotfiles = "yes" }, "serve_dotfiles", "string" },
     }) do
-        package.loaded["live_server"] = nil
-        local flagged = require("live_server")
+        package.loaded["kitehost"] = nil
+        local flagged = require("kitehost")
         local set, err = pcall(flagged.setup, vim.tbl_extend("force", { notify = false, default_port = 9000 }, c[1]))
         -- The wording start uses, where setup said "must be a boolean".
         eq(
@@ -460,8 +460,8 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { { filetypes = { 1 } }, "auto_start.filetypes must be a list of filetype names" },
     }) do
         local value = vim.inspect(c[1], { newline = " ", indent = "" })
-        package.loaded["live_server"] = nil
-        local configured = require("live_server")
+        package.loaded["kitehost"] = nil
+        local configured = require("kitehost")
         local set, err = pcall(configured.setup, { notify = false, default_port = 9000, auto_start = c[1] })
         eq(
             not set and tostring(err) or "setup took it",
@@ -482,9 +482,9 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     -- no buffer could fire.
     for _, bad in ipairs({ "", "html,css", "{a", "a\nb", "*", "?", "h?ml", "c++" }) do
         local shown = vim.inspect(bad)
-        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
-        package.loaded["live_server"] = nil
-        local configured = require("live_server")
+        pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
+        package.loaded["kitehost"] = nil
+        local configured = require("kitehost")
         configured.setup({ notify = false, auto_start = { filetypes = { "keeptestft" } } })
         local set, err = pcall(configured.setup, {
             notify = false,
@@ -497,7 +497,7 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
             ("setup refuses the filetype %s, naming the option"):format(shown)
         )
         eq(configured.opts.default_port, 8000, ("and a refused filetype %s keeps every option it had"):format(shown))
-        local found, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+        local found, cmds = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostAutoStart", event = "FileType" })
         ok(
             found and #cmds == 1 and cmds[1].pattern == "keeptestft",
             ("and keeps the earlier FileType autocmd: %s"):format(
@@ -505,25 +505,25 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
             )
         )
     end
-    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
     -- Names of the accepted shape are taken: Neovim ships bicep-params,
     -- lsp_markdown and 8th, and a dot joins a compound filetype
     -- (c.doxygen).
-    package.loaded["live_server"] = nil
-    local named = require("live_server")
+    package.loaded["kitehost"] = nil
+    local named = require("kitehost")
     local took, took_err = pcall(named.setup, {
         notify = false,
         auto_start = { filetypes = { "html", "bicep-params", "lsp_markdown", "8th", "c.doxygen" } },
     })
     ok(took, "names of the accepted shape (letters, digits, _ . -) are taken: " .. tostring(took_err))
-    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
     -- false is off, as for a section, and an empty list starts nothing:
     -- neither arms the FileType autocmd.
     for _, value in ipairs({ false, { filetypes = {} } }) do
         local shown = vim.inspect(value, { newline = " ", indent = "" })
-        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
-        package.loaded["live_server"] = nil
-        local configured = require("live_server")
+        pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
+        package.loaded["kitehost"] = nil
+        local configured = require("kitehost")
         local set, err = pcall(configured.setup, { notify = false, auto_start = value })
         ok(set, ("setup takes auto_start = %s: %s"):format(shown, tostring(err)))
         eq(
@@ -531,20 +531,20 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
             shown,
             ("opts.auto_start is %s"):format(shown)
         )
-        local listed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+        local listed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostAutoStart", event = "FileType" })
         ok(not listed or #cmds == 0, ("auto_start = %s arms no FileType autocmd"):format(shown))
     end
     -- The same probe sees one a listed filetype arms.
-    package.loaded["live_server"] = nil
-    pcall(require("live_server").setup, { notify = false, auto_start = { filetypes = { "livetestft" } } })
-    local armed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+    package.loaded["kitehost"] = nil
+    pcall(require("kitehost").setup, { notify = false, auto_start = { filetypes = { "livetestft" } } })
+    local armed, cmds = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostAutoStart", event = "FileType" })
     ok(armed and #cmds == 1, 'auto_start = { filetypes = { "livetestft" } } arms one FileType autocmd')
-    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
     -- A later setup that arms nothing kept the earlier autocmd, which then
     -- started servers or raised on a false auto_start, so the group is not
     -- deleted between the two calls here: the sequence is what is checked.
     local function file_types()
-        local found, list = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerAutoStart", event = "FileType" })
+        local found, list = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostAutoStart", event = "FileType" })
         local patterns = {}
         for _, cmd in ipairs(found and list or {}) do
             table.insert(patterns, cmd.pattern)
@@ -558,17 +558,17 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { { filetypes = { "othertestft" } }, "othertestft" },
     }) do
         local later = vim.inspect(c[1], { newline = " ", indent = "" })
-        package.loaded["live_server"] = nil
-        local configured = require("live_server")
+        package.loaded["kitehost"] = nil
+        local configured = require("kitehost")
         configured.setup({ notify = false, auto_start = { filetypes = { "livetestft" } } })
         eq(file_types(), "livetestft", "the first setup arms livetestft before auto_start = " .. later)
         local set, err = pcall(configured.setup, { notify = false, auto_start = c[1] })
         ok(set, ("a later setup takes auto_start = %s: %s"):format(later, tostring(err)))
         eq(file_types(), c[2], ("a later auto_start = %s leaves the FileType autocmds it arms, only"):format(later))
     end
-    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
-    package.loaded["live_server"] = nil
-    local flags = require("live_server")
+    pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
+    package.loaded["kitehost"] = nil
+    local flags = require("kitehost")
     local set, err = pcall(flags.setup, {
         notify = false,
         notify_on_reload = true,
@@ -589,8 +589,8 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         { { auto_start = { filetype = { "html" } } }, "auto_start.filetype" },
     }) do
         local shown = vim.inspect(c[1], { newline = " ", indent = "" })
-        package.loaded["live_server"] = nil
-        local configured = require("live_server")
+        package.loaded["kitehost"] = nil
+        local configured = require("kitehost")
         local refused, why = pcall(configured.setup, vim.tbl_extend("force", { default_port = 9000 }, c[1]))
         eq(
             not refused and tostring(why) or "setup took it",
@@ -599,9 +599,9 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         )
         eq(configured.opts.default_port, 8000, ("and a refused %s keeps every option it had"):format(shown))
     end
-    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
-    package.loaded["live_server"] = nil
-    local every = require("live_server")
+    pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
+    package.loaded["kitehost"] = nil
+    local every = require("kitehost")
     set, err = pcall(every.setup, {
         default_port = 9000,
         host = "127.0.0.1",
@@ -620,7 +620,7 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
         directory_listing = { enabled = true, show_hidden = false },
     })
     ok(set, "every key setup reads is taken: " .. tostring(err))
-    pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+    pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
 end)
 
 -- The refusal of a key setup does not read rests on SETUP_KEYS, a list
@@ -632,7 +632,7 @@ end)
 -- M.opts.<key> and M.opts.<key>.<field> the source spells, with the
 -- comments and the strings left out, so a word there is no read.
 H.case("Section 7b: SETUP_KEYS names every key setup reads, and no other", function()
-    local code = H.code_only(table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n") .. "\n")
+    local code = H.code_only(table.concat(vim.fn.readfile(H.root .. "/lua/kitehost/init.lua"), "\n") .. "\n")
     local function literal(name)
         local text = code:match("\nlocal " .. name .. " = (%b{})")
         ok(text ~= nil, ("init.lua holds %s"):format(name))
@@ -719,7 +719,7 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
         cb(target)
     end
     picked_port = inst.port
-    local ls = require("live_server")
+    local ls = require("kitehost")
     local called, err = pcall(ls.start_picker)
     vim.uv.fs_realpath = real_realpath
     ok(called, "a retarget the server refuses raises nothing to the caller: " .. tostring(err))
@@ -812,8 +812,8 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
         { "::1%1", "http://[::1]:8123/" },
         { "[fe80::1%lo0]", "http://[fe80::1]:8123/" },
     }) do
-        package.loaded["live_server"] = nil
-        local ls = require("live_server")
+        package.loaded["kitehost"] = nil
+        local ls = require("kitehost")
         ls.setup({ notify = false, host = pair[1] })
         opened, picked_port = {}, 8123
         ls.open_existing()
@@ -859,7 +859,7 @@ H.case("Section 10: the status list counts clients through the public counter", 
         return s == inst and 7 or real_count(s)
     end
     notices = {}
-    require("live_server").status()
+    require("kitehost").status()
     server.connected_client_count = real_count
     local shown = table.concat(notices, "\n")
     ok(shown:find("clients:7", 1, true) ~= nil, "the status list reads connected_client_count: " .. shown)
@@ -869,7 +869,7 @@ end)
 -- nothing, whether a server ran or not: a user who asks for it gets it.
 H.case("Section 11: :LiveServerStatus prints under notify = false", function()
     local _, _, inst = start_with({ notify = false })
-    local ls = require("live_server")
+    local ls = require("kitehost")
     notices = {}
     ls.status()
     local shown = table.concat(notices, "\n")
@@ -905,8 +905,8 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
     local suite_notify = vim.notify
     H.defer(function()
         vim.notify = suite_notify
-        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
-        pcall(vim.api.nvim_del_augroup_by_name, "LiveServerLaterFileType")
+        pcall(vim.api.nvim_del_augroup_by_name, "KiteHostAutoStart")
+        pcall(vim.api.nvim_del_augroup_by_name, "KiteHostLaterFileType")
     end)
     local editing, during, after = false, {}, {}
     vim.notify = function(msg, level)
@@ -972,8 +972,8 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
     }
     for i, shape in ipairs(shapes) do
         for _, notify in ipairs({ false, true }) do
-            package.loaded["live_server"] = nil
-            local ls = require("live_server")
+            package.loaded["kitehost"] = nil
+            local ls = require("kitehost")
             ls.setup({
                 notify = notify,
                 open_on_start = false,
@@ -983,7 +983,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
             ls.opts.auto_start.port = port
             local later = 0
             vim.api.nvim_create_autocmd("FileType", {
-                group = vim.api.nvim_create_augroup("LiveServerLaterFileType", { clear = true }),
+                group = vim.api.nvim_create_augroup("KiteHostLaterFileType", { clear = true }),
                 pattern = "lsautoft",
                 callback = function()
                     later = later + 1
@@ -1049,8 +1049,8 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     util.pick_path = function(cb)
         cb(target)
     end
-    package.loaded["live_server"] = nil
-    local ls = require("live_server")
+    package.loaded["kitehost"] = nil
+    local ls = require("kitehost")
     ls.setup({ notify = true, open_on_start = false })
     H.defer(function()
         ls.stop_all()

@@ -26,8 +26,8 @@ H.isolate()
 H.rtp()
 
 local uv = vim.uv
-local server = require("live_server.server")
-local lutil = require("live_server.util")
+local server = require("kitehost.server")
+local lutil = require("kitehost.util")
 local eq, http_get, write_file = H.eq, H.http_get, H.write_file
 
 -- Layout:

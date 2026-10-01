@@ -9,10 +9,10 @@
 local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "helpers.lua"))
 H.isolate()
 H.rtp()
-local plugin_file = H.root .. "/plugin/live_server.lua"
+local plugin_file = H.root .. "/plugin/kitehost.lua"
 -- The plugin's entry module, the prefix its commands share and the features
 -- its floor module tests beside the version.
-local MODULE = "live_server"
+local MODULE = "kitehost"
 local COMMAND_PREFIX = "LiveServer"
 local FEATURES = { "uv" }
 
@@ -233,7 +233,7 @@ H.ok(all_errors, "every refusal is an ERROR")
 -- with the floor text, and again on a retry. util goes first: server
 -- requires util, so a server without its own guard still raises util's text
 -- once, and only its second require shows the sentinel it left.
-for _, modname in ipairs({ "live_server.util", "live_server.server" }) do
+for _, modname in ipairs({ MODULE .. ".util", MODULE .. ".server" }) do
     for attempt = 1, 2 do
         local loaded, err = pcall(require, modname)
         H.eq(
@@ -322,15 +322,15 @@ H.eq(
 -- this row and not the whole suite.
 local module_ok, module = pcall(require, MODULE)
 H.ok(
-    type(package.loaded["live_server.server"]) == "table" and module_ok and type(module.state) == "table",
+    type(package.loaded[MODULE .. ".server"]) == "table" and module_ok and type(module.state) == "table",
     "the plugin's own modules load on a supported Neovim" .. (module_ok and "" or (": " .. tostring(module)))
 )
 H.eq(defined(), documented, "every documented command is defined on a supported Neovim, and no other")
-local hooked, hooks = pcall(vim.api.nvim_get_autocmds, { group = "LiveServerExit", event = "VimLeavePre" })
-H.eq(hooked and #hooks or 0, 1, "the exit hook sits once in the LiveServerExit group, a second source included")
+local hooked, hooks = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostExit", event = "VimLeavePre" })
+H.eq(hooked and #hooks or 0, 1, "the exit hook sits once in the KiteHostExit group, a second source included")
 -- stop_all notifies at exit, after the ruling and with no newline, where
 -- its line fused with the runner's next one (a CI ::endgroup:: marker).
 if hooked then
-    vim.api.nvim_clear_autocmds({ group = "LiveServerExit" })
+    vim.api.nvim_clear_autocmds({ group = "KiteHostExit" })
 end
 H.finish()

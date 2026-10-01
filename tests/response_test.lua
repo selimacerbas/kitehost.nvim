@@ -22,7 +22,7 @@ H.isolate()
 H.rtp()
 
 local uv = vim.uv
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local eq, ok = H.eq, H.ok
 
 -- Windows takes a / in a relative link's target unconverted, leaving the

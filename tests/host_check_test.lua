@@ -10,7 +10,7 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local eq, ok, http_get = H.eq, H.ok, H.http_get
 
 local root = H.tmpdir()

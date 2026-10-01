@@ -50,8 +50,8 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
-local util = require("live_server.util")
+local server = require("kitehost.server")
+local util = require("kitehost.util")
 local ok, eq, http_get = H.ok, H.eq, H.http_get
 local is_win = vim.fn.has("win32") == 1
 
@@ -2021,7 +2021,7 @@ H.case("a root that is no directory is refused before any socket opens", functio
         script,
         ([[
 vim.opt.rtp:prepend(%q)
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local started, res = pcall(server.start, {
     port = 0,
     root = %q,
@@ -2708,7 +2708,7 @@ end)
 -- features.dirlist's fields through dirlist), with the comments and the
 -- strings left out, so a word there is no read.
 H.case("START_KEYS names every key start reads, and no other", function()
-    local src = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n") .. "\n"
+    local src = table.concat(vim.fn.readfile(H.root .. "/lua/kitehost/server.lua"), "\n") .. "\n"
     local listed = {}
     local function flatten(t, prefix)
         for k, v in pairs(t) do

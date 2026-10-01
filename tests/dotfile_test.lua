@@ -29,11 +29,11 @@ H.rtp()
 local uv = vim.uv
 -- The FIFO rows skip on Windows, which has no FIFO.
 local is_win = vim.fn.has("win32") == 1
-local server = require("live_server.server")
+local server = require("kitehost.server")
 -- The join the plugin names a .liveignore with: a \ on Windows, where
 -- vim.fs.joinpath writes a /, so a stub keyed or a warning spelled with
 -- the latter matched nothing there (measured).
-local util = require("live_server.util")
+local util = require("kitehost.util")
 local eq, ok = H.eq, H.ok
 
 local function serve(root, extra)
@@ -975,7 +975,7 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
         script,
         ([[
 vim.opt.rtp:prepend(%q)
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local notes = {}
 vim.notify = function(msg, level)
     table.insert(notes, { msg = msg, level = level })

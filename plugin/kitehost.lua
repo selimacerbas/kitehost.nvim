@@ -5,7 +5,7 @@
 -- sources this file with :source and runs a cmd spec's command through
 -- vim.cmd, where an ERROR notification on 0.9 raised Vim(source) or a
 -- traceback through lazy's handler (measured).
-local floor = require("live_server.floor")
+local floor = require("kitehost.floor")
 if not floor.ok then
     local function refuse()
         vim.schedule(function()
@@ -34,7 +34,7 @@ if not floor.ok then
     return
 end
 
-local LS = require("live_server")
+local LS = require("kitehost")
 
 vim.api.nvim_create_user_command("LiveServerStart", function()
     LS.start_picker()
@@ -65,7 +65,7 @@ vim.api.nvim_create_user_command("LiveServerStopAll", function()
 end, { desc = "LiveServer: stop all" })
 
 vim.api.nvim_create_autocmd("VimLeavePre", {
-    group = vim.api.nvim_create_augroup("LiveServerExit", { clear = true }),
+    group = vim.api.nvim_create_augroup("KiteHostExit", { clear = true }),
     callback = function()
         LS.stop_all()
     end,

@@ -10,7 +10,7 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local util = require("live_server.util")
+local util = require("kitehost.util")
 local eq, ok = H.eq, H.ok
 
 local URL = "http://127.0.0.1:8123/"
@@ -104,7 +104,7 @@ eq(
 )
 local root = H.tmpdir()
 H.write_file(root .. "/index.html", "<html><body>ok</body></html>")
-local ls = require("live_server")
+local ls = require("kitehost")
 local real_pick_path, real_pick_port = util.pick_path, util.pick_port
 H.defer(function()
     util.pick_path, util.pick_port = real_pick_path, real_pick_port

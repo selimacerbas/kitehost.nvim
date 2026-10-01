@@ -1,4 +1,4 @@
--- lua/live_server/floor.lua
+-- lua/kitehost/floor.lua
 -- The one statement of the Neovim floor, read by the plugin file, the module
 -- and the two submodules the plugin-author API loads. It loads on any Neovim
 -- that sources a Lua plugin file (0.5 on), so it calls nothing newer. The

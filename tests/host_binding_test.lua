@@ -14,7 +14,7 @@ H.isolate()
 H.rtp()
 
 local uv = vim.uv
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local eq, http_get = H.eq, H.http_get
 
 -- Detect primary LAN IP via libuv (portable; `hostname -I` is Linux-only

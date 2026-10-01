@@ -35,8 +35,8 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 
-local server = require("live_server.server")
-local util = require("live_server.util")
+local server = require("kitehost.server")
+local util = require("kitehost.util")
 local eq, ok = H.eq, H.ok
 local uv = vim.uv
 local is_win = vim.fn.has("win32") == 1
@@ -1545,7 +1545,14 @@ H.case("Section 7: connections over the cap are closed at once", function()
     settled()
 
     -- Only the server's own checks count: the harness checks every handle
-    -- it registered each 64th registration.
+    -- it registered each 64th registration. A pattern naming no source
+    -- counted none and the row held whatever the accept did, so it is
+    -- checked against the server's own first.
+    local own_source = "[/\\]kitehost[/\\]server%.lua$"
+    ok(
+        debug.getinfo(server.start, "S").source:find(own_source) ~= nil,
+        "the source pattern names server.lua's own: " .. debug.getinfo(server.start, "S").source
+    )
     inst = serve({ max_connections = 200, header_timeout_ms = 0 })
     port = inst.port
     clients = {}
@@ -1563,7 +1570,7 @@ H.case("Section 7: connections over the cap are closed at once", function()
     end)
     local checks = 0
     methods.is_closing = function(h)
-        if watched[h] and debug.getinfo(2, "S").source:find("[/\\]live_server[/\\]server%.lua$") then
+        if watched[h] and debug.getinfo(2, "S").source:find(own_source) then
             checks = checks + 1
         end
         return real_is_closing(h)
@@ -1890,7 +1897,7 @@ H.case("Section 8f: update_target checks its root and its index as start does", 
             script,
             ([[
 vim.opt.rtp:prepend(%q)
-local server = require("live_server.server")
+local server = require("kitehost.server")
 local inst = server.start({ port = 0, root = %q, live = { enabled = true, inject_script = false } })
 local moved, res = pcall(server.update_target, inst, %q, nil)
 server.stop(inst)
