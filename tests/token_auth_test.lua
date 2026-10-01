@@ -7,8 +7,9 @@
 -- cfg.protected_paths but the injected client, /__live/script.js, while
 -- leaving static assets (index.html) reachable without auth. The gate
 -- reads the request path, then the name on disk of the file, index or
--- directory about to be served (a case variant, a link); a NUL or a
--- backslash in the path is 400 before it; a link out of the root is 404.
+-- directory about to be served (a case variant, a link), each name once
+-- a request; a NUL or a backslash in the path is 400 before it; a link
+-- out of the root is 404.
 -- The token is read first: a request carrying it runs no pattern, one
 -- that cannot be read included, and is served. What start refuses is
 -- tests/start_test.lua's.
@@ -991,6 +992,64 @@ H.case("a request carrying the token runs no pattern", function()
         else
             ok(runs > 0, ("and the patterns decide it (%d runs)"):format(runs))
         end
+    end
+end)
+
+-- Each pattern spends the loop's time on every name it reads, so a name
+-- is read once a request: the name on disk is read again only where it
+-- differs from the request's spelling (a link, a case variant), which
+-- the gate must still refuse by the name it reaches.
+H.case("a request reads each pattern once for each name it reaches", function()
+    local site = H.tmpdir()
+    H.write_file(vim.fs.joinpath(site, "page.html"), "<html>page</html>")
+    local patterns = { "^/one/", "^/two$", "^/%f[%w]three" }
+    local real_find, runs = string.find, {}
+    H.defer(function()
+        string.find = real_find
+    end)
+    -- Counted by the pattern's text up to an end anchor.
+    string.find = function(s, pat, ...)
+        for _, p in ipairs(patterns) do
+            local stem = p:gsub("%$$", "")
+            if pat:sub(1, #stem) == stem then
+                runs[p] = runs[p] + 1
+            end
+        end
+        return real_find(s, pat, ...)
+    end
+    local inst = server.start({
+        port = 0,
+        root = site,
+        token = TOKEN,
+        protected_paths = patterns,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = true } },
+    })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local base = ("http://127.0.0.1:%d"):format(inst.port)
+    local function reads(path, status, want, label)
+        for _, p in ipairs(patterns) do
+            runs[p] = 0
+        end
+        eq(http_get(base .. path).status, status, ("%s is %d without the token"):format(label, status))
+        for _, p in ipairs(patterns) do
+            eq(runs[p], want, ("and %s is read %d time%s"):format(p, want, want == 1 and "" or "s"))
+        end
+    end
+    reads("/page.html", 200, 1, "a file asked by its own name")
+    local alias = vim.fs.joinpath(site, "alias.html")
+    local linked, link_err = uv.fs_symlink("page.html", alias)
+    if linked and uv.fs_stat(alias) then
+        reads("/alias.html", 200, 2, "a link to it, read by its name and the file's")
+    else
+        H.skip("a link to it is read by both names (" .. tostring(link_err or "the link does not resolve") .. ")")
+    end
+    if H.fs_folds_case then
+        reads("/PAGE.HTML", 200, 2, "a case variant, read by its spelling and the disk's")
+    else
+        H.skip("a case variant is read by both names (a case-sensitive volume has no such file)")
     end
 end)
 

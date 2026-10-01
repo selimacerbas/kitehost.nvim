@@ -1878,7 +1878,13 @@ local function handle_request(conn, req)
     -- every path, so a request carrying it runs no pattern, whose match
     -- spent the loop's time on a request the token opened anyway and
     -- whose raise refused the holder.
+    -- Each name's answer is kept for the request: every pattern spends the
+    -- loop's time on each name it reads, and the name on disk, read again
+    -- below, is most often the request's own, which then read every
+    -- pattern twice for one answer. A link or a case variant is another
+    -- name and is still read.
     local carries_token
+    local answered = {}
     local function authorized(p)
         if not inst.token then
             return true
@@ -1887,7 +1893,13 @@ local function handle_request(conn, req)
             local req_token = qparam("t")
             carries_token = util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)
         end
-        return carries_token or not needs_auth(inst, p)
+        if carries_token then
+            return true
+        end
+        if answered[p] == nil then
+            answered[p] = not needs_auth(inst, p)
+        end
+        return answered[p]
     end
     -- The injected client is answered before the gate: it holds no secret
     -- and its tag carries no token, so a pattern that matched it (%.js$,
