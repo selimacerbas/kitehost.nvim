@@ -472,6 +472,11 @@ end
 
 local LIVEIGNORE_MAX = 65536
 
+-- Each list parse_liveignore returned, by its rules' parts (holds), so a
+-- rule is split once, when its file is read; weak, so a list a retarget
+-- replaces goes with it.
+local split_lists = setmetatable({}, { __mode = "k" })
+
 -- Opening a FIFO blocks the loop past SIGTERM, so the type is read
 -- first; the window between the stat and the open stays, as the asset
 -- route's does.
@@ -516,7 +521,7 @@ function U.parse_liveignore(root)
     end
     -- Lines are numbered by their line feeds, a lone CR splitting a line
     -- in two as it always has, so a warning can name the line skipped.
-    local patterns, skipped, number = {}, {}, 0
+    local patterns, rules, skipped, number = {}, {}, {}, 0
     for numbered in (content .. "\n"):gmatch("([^\n]*)\n") do
         number = number + 1
         for line in numbered:gmatch("[^\r]+") do
@@ -550,58 +555,54 @@ function U.parse_liveignore(root)
                     pat = "^" .. pat
                 end
                 table.insert(patterns, pat)
+                -- The same rule as literal parts between star runs.
+                table.insert(rules, { anchored = line:sub(1, 1) == "/", parts = vim.split(line, "%*+") })
             end
         end
     end
+    split_lists[patterns] = rules
     return patterns, nil, #skipped > 0 and skipped or nil
 end
 
--- Whether path holds one of parse_liveignore's patterns, read without the
--- pattern matcher: each .* backtracked over the path, and five stars
--- apart, each before an a, held the loop 60 s on a path of 60 a's
--- (measured). A pattern is literal parts between .* and maybe a ^, so
--- each part is found as plain text after the one before; the first
--- place a part is found leaves the most path for the rest, so this finds
--- what the pattern finds.
-local function holds(path, pat)
-    local anchored = pat:sub(1, 1) == "^"
-    local parts, part, i = {}, {}, anchored and 2 or 1
-    while i <= #pat do
-        local c = pat:sub(i, i)
-        if c == "%" then
-            table.insert(part, pat:sub(i + 1, i + 1))
-            i = i + 2
-        elseif c == "." and pat:sub(i + 1, i + 1) == "*" then
-            table.insert(parts, table.concat(part))
-            part = {}
-            i = i + 2
-        else
-            table.insert(part, c)
-            i = i + 1
-        end
-    end
-    table.insert(parts, table.concat(part))
+-- Whether path holds a rule, read without the pattern matcher: each .*
+-- backtracked over the path, and five stars apart, each before an a,
+-- held the loop 60 s on a path of 60 a's (measured). A rule is literal
+-- parts between star runs, anchored at the root when its line starts
+-- with /, so each part is found as plain text after the one before; the
+-- first place a part is found leaves the most path for the rest, so this
+-- finds what the rule's pattern finds.
+local function holds(path, rule)
     local at = 1
-    if anchored then
-        if path:sub(1, #parts[1]) ~= parts[1] then
-            return false
+    for k, text in ipairs(rule.parts) do
+        if k == 1 and rule.anchored then
+            if path:sub(1, #text) ~= text then
+                return false
+            end
+            at = #text + 1
+        else
+            local _, stop = path:find(text, at, true)
+            if not stop then
+                return false
+            end
+            at = stop + 1
         end
-        at = #parts[1] + 1
-        table.remove(parts, 1)
-    end
-    for _, text in ipairs(parts) do
-        local _, stop = path:find(text, at, true)
-        if not stop then
-            return false
-        end
-        at = stop + 1
     end
     return true
 end
 
+-- Takes the list parse_liveignore returned and no other: its rules were
+-- split when the file was read, and a pattern of another making (%.log$)
+-- would be read as plain text without a word.
 function U.match_ignore(path, patterns)
-    for _, pat in ipairs(patterns) do
-        if holds(path, pat) then
+    local rules = split_lists[patterns]
+    if not rules then
+        if #patterns == 0 then
+            return false
+        end
+        error("match_ignore takes a list parse_liveignore returned", 2)
+    end
+    for _, rule in ipairs(rules) do
+        if holds(path, rule) then
             return true
         end
     end
