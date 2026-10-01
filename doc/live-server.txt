@@ -117,7 +117,7 @@ Options:
     carry a `%zone` of letters, digits, `.`, `_` and `-`, not checked
     against the interfaces; on macOS a zoned link-local bind starts and
     answers no request. Windows reads a zone as the interface's number,
-    one starting with no digit as 0, so no interface name is resolved
+    one with no leading number as 0, so no interface name is resolved
     there, and its bind refuses any number but 0 on `::1`
     (`EADDRNOTAVAIL`). `inst.host` carries no zone, nor does
     any URL the plugin opens, |:LiveServerOpen| on a port no server of

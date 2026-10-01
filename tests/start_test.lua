@@ -448,7 +448,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             eq(res.host, "::1", ("host = %s reports the address it bound"):format(vim.inspect(host)))
         end
     end
-    -- Windows reads a zone as a number, one starting with no digit as 0,
+    -- Windows reads a zone as a number, one with no leading number as 0,
     -- and its bind refuses every number on ::1 but 0, the loopback's own
     -- included (EADDRNOTAVAIL, measured on the hosted runner); macOS and
     -- Linux read a digit as no interface's name and bind plain ::1.
