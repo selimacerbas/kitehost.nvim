@@ -5,7 +5,8 @@
 -- key of live or features), a bad token (one that is no UTF-8 among
 -- them), default_index, a live, dirlist or notify_on_reload flag that is
 -- no boolean, protected_paths (patterns with no token among them, and a
--- malformed pattern named by the byte of its fault wherever it sits),
+-- malformed pattern named by the byte of its fault wherever it sits and
+-- shown in at most 40 bytes either side of it),
 -- serve_dotfiles, index_names, headers (a control byte in a value, two
 -- spellings of one name, the server's own fields and false among them),
 -- cors, allowed_hosts (a string, a map, a hole, a wildcard, an entry no
@@ -1865,27 +1866,46 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         { "(a%1)", 3, "%1 names no closed capture", nil, "a" },
         { "(a)%2", 4, "%2 names no closed capture", nil, "a" },
         { "(a)%0", 4, "%0 names no closed capture", nil, "a" },
-        { string.rep("()", 33), 65, "more than 32 captures", nil, "x" },
-        -- The pattern is shown as a notice shows a caller's text: a
-        -- control byte as ?, cut at 300 bytes. It went out raw, whole.
+        { string.rep("()", 33), 65, "more than 32 captures, bytes 25 to 66", string.rep("()", 21), "x" },
+        -- The pattern went out raw and whole, and then marked and cut at
+        -- 300 bytes, which hid a fault past the cut and moved a byte after
+        -- a mark. It is shown around its fault, at most 40 bytes each
+        -- side, named by where the bytes shown start and end when that is
+        -- not the whole pattern, each byte of a control a ?, so the byte
+        -- named is the one at its place in the text shown.
         { "^/a[\27[2J", 4, "a set is not closed", "^/a[?[2J", "/a" },
         {
             string.rep("a", 10240) .. "[",
             10241,
-            "a set is not closed",
-            string.rep("a", 300),
+            "a set is not closed, bytes 10201 to 10241",
+            string.rep("a", 40) .. "[",
             string.rep("a", 10240),
         },
+        {
+            string.rep("a", 400) .. "(" .. string.rep("b", 100),
+            401,
+            "a capture is not closed, bytes 361 to 441",
+            string.rep("a", 40) .. "(" .. string.rep("b", 40),
+            string.rep("a", 400) .. string.rep("b", 100),
+        },
+        { "\194\155\194\155(", 5, "a capture is not closed", "????(", "\194\155\194\155" },
+        { "\226\128\174/[", 5, "a set is not closed", "???/[", "\226\128\174/" },
     }) do
         local started, res = start_with(c[1])
+        local why, span = c[3]:match("^(.-)(, bytes %d+ to %d+)$")
         eq(
             not started and tostring(res) or "started",
-            ("protected_paths pattern is malformed at byte %d (%s): %s"):format(c[2], c[3], c[4] or c[1]),
-            ("%s is refused, naming the byte"):format(vim.inspect(c[1]:sub(1, 40)))
+            ("protected_paths pattern is malformed at byte %d (%s)%s: %s"):format(
+                c[2],
+                why or c[3],
+                span or "",
+                c[4] or c[1]
+            ),
+            ("%s is refused, naming the byte"):format(util.marked(c[1], 40))
         )
         ok(
             not pcall(string.find, c[5], c[1]),
-            ("and LuaJIT raises reading %s on %s"):format(vim.inspect(c[1]:sub(1, 40)), vim.inspect(c[5]:sub(1, 40)))
+            ("and LuaJIT raises reading %s on %s"):format(util.marked(c[1], 40), util.marked(c[5], 40))
         )
     end
     -- LuaJIT's find reads a pattern holding none of ^$*+?.([%- as plain

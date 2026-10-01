@@ -2406,6 +2406,24 @@ local function pattern_fault(pat)
     end
 end
 
+-- A malformed pattern's bytes around its fault, at most 40 each side, and
+-- the first and last byte shown. The refusal named a byte of the pattern
+-- and showed it marked and cut at 300 bytes, so a fault past the cut was
+-- not shown and one after a mark was named where the text shown did not
+-- hold it. Each byte of a control, or of a sequence no UTF-8 reader
+-- accepts, is a ?, so the text shown counts as the pattern does.
+local function fault_window(pat, at)
+    local lo, hi = math.max(1, at - 40), math.min(#pat, at + 40)
+    local s, out, i = pat:sub(lo, hi), {}, 1
+    while i <= #s do
+        local len = util.utf8_len(s, i) or 1
+        local seq = s:sub(i, i + len - 1)
+        table.insert(out, util.marked(seq) == seq and seq or ("?"):rep(len))
+        i = i + len
+    end
+    return table.concat(out), lo, hi
+end
+
 -- The keys start reads, a nested table for a section (util.unread_key).
 local START_KEYS = {
     token = true,
@@ -2530,10 +2548,9 @@ local function check_start(cfg)
             no_nul("protected_paths pattern", pat)
             local at, why = pattern_fault(pat)
             if at then
-                error(
-                    ("protected_paths pattern is malformed at byte %d (%s): %s"):format(at, why, util.marked(pat, 300)),
-                    0
-                )
+                local shown, lo, hi = fault_window(pat, at)
+                local span = (lo > 1 or hi < #pat) and (", bytes %d to %d"):format(lo, hi) or ""
+                error(("protected_paths pattern is malformed at byte %d (%s)%s: %s"):format(at, why, span, shown), 0)
             end
         end
     end
