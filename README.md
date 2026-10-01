@@ -155,7 +155,7 @@ Set `auto_start` to automatically start a server when you open a matching filety
 auto_start = { filetypes = { "html" }, port = 8000 }
 ```
 
-The server starts once per directory: opening another HTML file in the same folder won't spawn a duplicate. Opening a matching file in a folder no running server serves starts one on `port` (`default_port` when unset) or, when a server already runs on that port, retargets it to that folder, so the root follows the files you open; with `host = "0.0.0.0"` it is the network-reachable root that moves. A new file not yet on disk starts nothing, and writing it does not either; `:edit` it once it is written. In a folder that is on disk and that no running server serves, the notice reads `Path not found`; in a folder not yet on disk, or one a running server already serves, no notice shows. A start that fails, a taken port among them, lets the file open and shows its notice after it. Each entry of `filetypes` is a filetype name (letters, digits, `_`, `.` and `-`); `"*"`, a `+`, an empty string or a comma is refused. A later `filetypes` list replaces the earlier one whole, and a later `setup()` that names none keeps it.
+The server starts once per directory: opening another HTML file in the same folder won't spawn a duplicate. Opening a matching file in a folder no running server serves starts one on `port` (`default_port` when unset) or, when a server already runs on that port, retargets it to that folder, so the root follows the files you open; with `host = "0.0.0.0"` it is the network-reachable root that moves. A new file not yet on disk starts nothing, and writing it does not either; `:edit` it once it is written. In a folder that is on disk and that no running server serves, the notice reads `kitehost: path not found`; in a folder not yet on disk, or one a running server already serves, no notice shows. A start that fails, a taken port among them, lets the file open and shows its notice after it. Each entry of `filetypes` is a filetype name (letters, digits, `_`, `.` and `-`); `"*"`, a `+`, an empty string or a comma is refused. A later `filetypes` list replaces the earlier one whole, and a later `setup()` that names none keeps it.
 
 ### `.liveignore`
 
@@ -195,7 +195,7 @@ sections = {
 }
 ```
 
-Returns `"[LS :8000]"` when a server is running, or `""` when idle.
+Returns `"[kitehost :8000]"` when a server is running on port 8000, `"[kitehost :3000,:8000]"` for more than one, in port order, or `""` when idle.
 
 ### Styled error pages
 
@@ -266,7 +266,7 @@ ls.open_existing()               -- pick a port → open in browser
 ls.force_reload()                -- broadcast reload to clients
 ls.toggle_livereload()           -- enable/disable live-reload for a port
 ls.status()                      -- print running server info
-ls.statusline()                  -- returns "[LS :8000]" or ""
+ls.statusline()                  -- returns "[kitehost :8000]" or ""
 ls.stop_one()                    -- pick a port → stop
 ls.stop_all()                    -- stop everything
 ```

@@ -258,7 +258,7 @@ function start_for_path(path, port, in_autocmd)
     end
     local stat = vim.uv.fs_stat(path)
     if not stat then
-        return say("Path not found: " .. path, "ERROR")
+        return say("kitehost: path not found: " .. path, "ERROR")
     end
     local root, index = path, nil
     if stat.type == "file" then
@@ -418,10 +418,10 @@ function M.toggle_livereload()
         -- A toggle that failed read as a plain DISABLED, naming no cause.
         if want and not enabled then
             local why = cause and (": " .. cause) or ""
-            local line = ("Live-reload DISABLED on %d%s"):format(port, why)
+            local line = ("kitehost: port %d live-reload DISABLED%s"):format(port, why)
             return util.notify(util.marked(line), M.opts, "WARN")
         end
-        util.notify(("Live-reload %s on %d"):format(enabled and "ENABLED" or "DISABLED", port), M.opts)
+        util.notify(("kitehost: port %d live-reload %s"):format(port, enabled and "ENABLED" or "DISABLED"), M.opts)
     end)
 end
 
@@ -469,7 +469,7 @@ local SHOWN = { notify = true }
 function M.status()
     local ports = vim.tbl_keys(M.state.servers)
     if #ports == 0 then
-        return util.notify("No running servers.", SHOWN)
+        return util.notify("kitehost: no running servers.", SHOWN)
     end
     table.sort(ports)
     local lines = { "kitehost: status:" }
@@ -486,7 +486,7 @@ function M.status()
     util.notify(table.concat(lines, "\n"), SHOWN)
 end
 
--- Statusline component: returns "[LS :8000]" or ""
+-- Statusline component: returns "[kitehost :8000]" or ""
 function M.statusline()
     local ports = vim.tbl_keys(M.state.servers)
     if #ports == 0 then
@@ -497,7 +497,7 @@ function M.statusline()
     for _, p in ipairs(ports) do
         table.insert(parts, ":" .. p)
     end
-    return "[LS " .. table.concat(parts, ",") .. "]"
+    return "[kitehost " .. table.concat(parts, ",") .. "]"
 end
 
 return M

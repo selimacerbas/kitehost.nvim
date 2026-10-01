@@ -244,9 +244,10 @@ gates `/__live/asset` too.
     that moves. A new file not yet on disk starts nothing, and writing it
     does not either; |:edit| it once it is written. In a directory that
     is on disk and that no running server serves, the notice reads
-    `Path not found`; in a directory not yet on disk, or one a running
-    server already serves, no notice shows. A start that fails, a taken
-    port among them, lets the file open and shows its notice after it.
+    `kitehost: path not found`; in a directory not yet on disk, or one a
+    running server already serves, no notice shows. A start that fails, a
+    taken port among them, lets the file open and shows its notice after
+    it.
 
 `auto_start.filetypes` (string[])
     Filetype names to trigger on, each made of letters, digits, `_`, `.`
@@ -323,8 +324,9 @@ STATUSLINE                                      *live-server-statusline*
 
                                                 *live_server.statusline()*
 live_server.statusline()
-    Returns `"[LS :8000]"` when a server is running on port 8000,
-    `"[LS :8000,:3000]"` for multiple servers, or `""` when idle.
+    Returns `"[kitehost :8000]"` when a server is running on port 8000,
+    `"[kitehost :3000,:8000]"` for more than one, in port order, or `""`
+    when idle.
 
     Lualine example: >lua
         sections = {

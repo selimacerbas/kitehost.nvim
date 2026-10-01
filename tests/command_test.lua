@@ -163,9 +163,9 @@ H.case("Section 5: the subcommand and the former command run the real function",
     kitehost.status = real.status
     local err, _ = use("KiteHost status")
     eq(err, "", ":KiteHost status raises nothing")
-    eq(notices[1] and notices[1].msg, "No running servers.", ":KiteHost status prints the status")
+    eq(notices[1] and notices[1].msg, "kitehost: no running servers.", ":KiteHost status prints the status")
     use("LiveServerStatus")
-    eq(notices[1] and notices[1].msg, "No running servers.", ":LiveServerStatus prints it too")
+    eq(notices[1] and notices[1].msg, "kitehost: no running servers.", ":LiveServerStatus prints it too")
 end)
 
 H.finish()

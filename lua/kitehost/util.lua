@@ -188,7 +188,7 @@ function U.open_browser(url)
     -- notice that carries it is the one notify silences.
     local function by_hand()
         local shown = url:gsub("([?&]t=)[^&#]*", "%1...")
-        U.notify(("Could not open a browser; open %s by hand"):format(shown), { notify = true }, "WARN")
+        U.notify(("kitehost: could not open a browser; open %s by hand"):format(shown), { notify = true }, "WARN")
     end
     vim.schedule(function()
         local started, job = pcall(vim.fn.jobstart, argv, {
@@ -323,7 +323,7 @@ function U.pick_path(cb)
                         elseif tag == "__CUR_FILE__" then
                             local f = vim.api.nvim_buf_get_name(0)
                             if f == "" then
-                                U.notify("No current file.", { notify = true }, "WARN")
+                                U.notify("kitehost: no current file.", { notify = true }, "WARN")
                                 return
                             end
                             cb(f)
@@ -350,7 +350,7 @@ function U.pick_path(cb)
                 elseif choice == "Current file" then
                     local f = vim.api.nvim_buf_get_name(0)
                     if f == "" then
-                        U.notify("No current file.", { notify = true }, "WARN")
+                        U.notify("kitehost: no current file.", { notify = true }, "WARN")
                         return
                     end
                     cb(f)
@@ -389,7 +389,7 @@ function U.pick_port(opts, cb)
         end
         p = tonumber(tostring(p):match("^(%d+)"))
         if not p or p <= 0 or p > 65535 then
-            return U.notify("Invalid port.", { notify = true }, "ERROR")
+            return U.notify("kitehost: invalid port.", { notify = true }, "ERROR")
         end
         cb(p)
     end

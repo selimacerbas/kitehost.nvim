@@ -99,7 +99,7 @@ calls, notices = attempt({ nil, "vim.ui.open: no handler found" }, -1, nil, func
 end)
 eq(
     #notices == 1 and notices[1].msg or vim.inspect(notices),
-    "Could not open a browser; open http://127.0.0.1:8123/?t=... by hand",
+    "kitehost: could not open a browser; open http://127.0.0.1:8123/?t=... by hand",
     "a token URL is shown with the token's value left out"
 )
 local root = H.tmpdir()
@@ -130,7 +130,7 @@ local shown = table.concat(
 )
 eq(
     shown,
-    ("Could not open a browser; open http://127.0.0.1:%s/?t=... by hand"):format(tostring(port)),
+    ("kitehost: could not open a browser; open http://127.0.0.1:%s/?t=... by hand"):format(tostring(port)),
     "setup with notify = false and a token: the one notice holds the URL"
 )
 ok(not shown:find("SECRET-TOKEN", 1, true), "and never the token: " .. shown)

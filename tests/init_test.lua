@@ -785,7 +785,7 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     said = notes[1] or {}
     eq(
         said.msg,
-        ("Live-reload DISABLED on %d: could not watch %s (EMFILE: stubbed)"):format(inst.port, shown),
+        ("kitehost: port %d live-reload DISABLED: could not watch %s (EMFILE: stubbed)"):format(inst.port, shown),
         "and its DISABLED line names the cause, the root marked"
     )
     eq(said.level, vim.log.levels.WARN, "as a warning")
@@ -880,7 +880,80 @@ H.case("Section 11: :KiteHost status prints under notify = false", function()
     ls.stop_all()
     notices = {}
     ls.status()
-    eq(table.concat(notices, "\n"), "No running servers.", "with none it says so")
+    eq(table.concat(notices, "\n"), "kitehost: no running servers.", "with none it says so")
+end)
+
+-- The statusline names the plugin beside each port it serves, in order.
+H.case("Section 11b: the statusline reads kitehost and each port", function()
+    local _, _, inst = start_with({})
+    local ls = require("kitehost")
+    eq(ls.statusline(), ("[kitehost :%s]"):format(inst and inst.port), "one server: the name and its port")
+    ls.start_picker()
+    local ports = vim.tbl_keys(ls.state.servers)
+    table.sort(ports)
+    eq(#ports, 2, "a second start serves a second port")
+    eq(ls.statusline(), "[kitehost :" .. table.concat(ports, ",:") .. "]", "two: each port, in order")
+    ls.stop_all()
+    eq(ls.statusline(), "", "none: an empty string")
+end)
+
+-- Every notice starts kitehost:, so :messages names the plugin that sent
+-- it; these had no prefix before 2.0.0.
+H.case("Section 11c: the toggle's and the pickers' notices read kitehost:", function()
+    local _, _, inst = start_with({ notify = true })
+    local ls = require("kitehost")
+    H.defer(function()
+        picked_port = 0
+    end)
+    picked_port = inst and inst.port or -1
+    notices = {}
+    ls.toggle_livereload()
+    ls.toggle_livereload()
+    eq(
+        table.concat(notices, " | "),
+        ("kitehost: port %d live-reload DISABLED | kitehost: port %d live-reload ENABLED"):format(
+            picked_port,
+            picked_port
+        ),
+        "a toggle off and on names the port"
+    )
+    -- The refusals are recorded here, apart from the suite's count of
+    -- error notices, since one of them is an error by design.
+    local notes = {}
+    local suite_notify, real_select = vim.notify, vim.ui.select
+    H.defer(function()
+        vim.notify, vim.ui.select = suite_notify, real_select
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, ("%s (%s)"):format(msg, level))
+    end
+    local reached = false
+    vim.ui.select = function(_, _, cb)
+        cb("70000")
+    end
+    real_pick_port({ default = 8000 }, function()
+        reached = true
+    end)
+    eq(
+        table.concat(notes, " | "),
+        ("kitehost: invalid port. (%d)"):format(vim.log.levels.ERROR),
+        "a port out of range is refused"
+    )
+    ok(not reached, "and reaches no caller")
+    vim.cmd("enew")
+    vim.ui.select = function(_, _, cb)
+        cb("Current file")
+    end
+    notes = {}
+    real_pick_path(function()
+        reached = true
+    end)
+    eq(
+        table.concat(notes, " | "),
+        ("kitehost: no current file. (%d)"):format(vim.log.levels.WARN),
+        "the current file of a nameless buffer is refused"
+    )
+    ok(not reached, "and reaches no caller")
 end)
 
 -- A refused auto-start sent its error notice inside the FileType autocmd,
@@ -941,7 +1014,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 return held_port
             end,
             false,
-            "^Path not found: ",
+            "^kitehost: path not found: ",
         },
         -- setup leaves auto_start's port to start, so the notice names
         -- whatever the config gave.
