@@ -4,6 +4,8 @@ All notable changes to this project; versions follow SemVer, which covers what a
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-01
+
 ### Upgrading from v1.5.0 (users)
 
 - Neovim 0.10 or newer is required. On Neovim 0.8 or 0.9, pin v1.5.0, which keeps every hole this section's Security entries close.
@@ -229,7 +231,8 @@ Pure-Lua local web server for Neovim with live-reload. Zero external dependencie
 
 See [README](https://github.com/selimacerbas/live-server.nvim#readme) for full setup and configuration.
 
-[Unreleased]: https://github.com/selimacerbas/live-server.nvim/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/selimacerbas/live-server.nvim/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/selimacerbas/live-server.nvim/releases/tag/v2.0.0
 [1.5.0]: https://github.com/selimacerbas/live-server.nvim/releases/tag/v1.5.0
 [1.4.0]: https://github.com/selimacerbas/live-server.nvim/releases/tag/v1.4.0
 [1.3.0]: https://github.com/selimacerbas/live-server.nvim/releases/tag/v1.3.0
