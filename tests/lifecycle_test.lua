@@ -131,7 +131,7 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
         end
         return real_shutdown(h, ...)
     end
-    local pending = 0
+    local pages, pending = 0, 0
     for _ = 1, 3 do
         local before = #shut
         local c = assert(H.raw_connect(port))
@@ -148,22 +148,28 @@ H.case("Section 1: a peer that ends its side during a response is closed once", 
             end, 1000),
             "the tcp count held still within 1 s after the half-close"
         )
-        H.wait_for(function()
+        -- A page whose shutdown is not seen fails the row after the loop,
+        -- so the test's own miss never reads as Winsock's in the skip.
+        local asked = H.wait_for(function()
             return #shut > before
         end, 1000)
-        local page = shut[before + 1]
-        if page and page:get_write_queue_size() > 0 then
-            pending = pending + 1
+        if asked then
+            pages = pages + 1
+            if shut[before + 1]:get_write_queue_size() > 0 then
+                pending = pending + 1
+            end
         end
         c:close()
     end
     methods.shutdown = real_shutdown
+    eq(pages, 3, "each page's response asks to shut its socket within 1 s")
     local raised = errors_since(seen)
     local quiet = "3 clients that stop reading a 16 MiB page and half-close raise nothing"
     if is_win and pending < 3 then
         H.skip(
-            ("%s (%d of 3 pages still being written at the end: Winsock completes the page's send at once, measured: a 64 MiB write to a client that never reads leaves no queue)"):format(
+            ("%s (%d of 3 pages seen, %d still being written at the end: Winsock completes the page's send at once, measured: a 64 MiB write to a client that never reads leaves no queue)"):format(
                 quiet,
+                pages,
                 pending
             )
         )
