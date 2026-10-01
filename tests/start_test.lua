@@ -29,7 +29,8 @@
 -- a pattern LuaJIT reads as plain text starts and gates its path (a lone
 -- ) included), each malformed shape is one LuaJIT raises on, and one
 -- that nests too deep for LuaJIT on a path gates every path it is
--- asked about with one warning, a zoned host reports the address it
+-- asked about without the token with one warning (the token's holder
+-- served), a zoned host reports the address it
 -- bound (a zone of digits, as Windows spells one, among them, and the
 -- loopback's own name skipped where it is no zone the host takes), a
 -- table naming every key start reads starts, START_KEYS names
@@ -649,10 +650,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     local alone = unreadable_server({ deep })
     if alone then
         answers_401(alone, "/content.md under an unreadable pattern is 401 without the token, never unanswered")
-        answers_401(
-            alone .. "?t=" .. TOKEN,
-            "and 401 with it: a pattern nobody can read gates every path it is asked about"
-        )
+        answers_401(alone, "and 401 again: a pattern nobody can read gates every path it is asked about")
+        -- The token opens every path and runs no pattern, so its holder is
+        -- served what the pattern cannot be read on.
+        local held = http_get(alone .. "?t=" .. TOKEN)
+        eq(held.status, 200, "and the token's holder is served it")
         local count = settled(1)
         ok(
             count == 1 and notes[1].level == vim.log.levels.WARN and notes[1].msg == warning(alone),
@@ -665,7 +667,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- about the unreadable one too.
     local after = unreadable_server({ "^/content%.md$", deep })
     if after then
-        answers_401(after .. "?t=" .. TOKEN, "an unreadable pattern after a matching one refuses the token too")
+        answers_401(after, "an unreadable pattern after a matching one is read too")
         local count = settled(2)
         ok(
             count == 2 and notes[2].msg == warning(after),

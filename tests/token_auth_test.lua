@@ -9,7 +9,9 @@
 -- reads the request path, then the name on disk of the file, index or
 -- directory about to be served (a case variant, a link); a NUL or a
 -- backslash in the path is 400 before it; a link out of the root is 404.
--- What start refuses is tests/start_test.lua's.
+-- The token is read first: a request carrying it runs no pattern, one
+-- that cannot be read included, and is served. What start refuses is
+-- tests/start_test.lua's.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/token_auth_test.lua"
 
@@ -933,6 +935,58 @@ H.case("the injected client is never gated", function()
         page.body:find('<script src="/__live/script.js"></script>', 1, true) ~= nil,
         "the page's injected tag still names /__live/script.js: " .. page.body
     )
+end)
+
+-- The token opens every path, so the patterns decide only for a request
+-- without it; matched first, each spent the loop's time on a request
+-- the token was about to open whatever they answered. A request that
+-- carries the token runs no pattern, a pattern that cannot be read
+-- included, which answered it 401 though its holder may read any path.
+H.case("a request carrying the token runs no pattern", function()
+    local deep = "^/" .. ("x?"):rep(200)
+    local counted = { ["^/content%.md$"] = true, [deep] = true }
+    local real_find, runs = string.find, 0
+    H.defer(function()
+        string.find = real_find
+    end)
+    string.find = function(s, pat, ...)
+        if counted[pat] then
+            runs = runs + 1
+        end
+        return real_find(s, pat, ...)
+    end
+    local inst = server.start({
+        port = 0,
+        root = tmpdir,
+        token = TOKEN,
+        protected_paths = { "^/content%.md$", deep },
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local base = ("http://127.0.0.1:%d"):format(inst.port)
+    -- Each x? nests one level when it matches, so 200 x's are past
+    -- LuaJIT's depth and the pattern cannot be read on that path.
+    local xs = "/" .. ("x"):rep(200)
+    for _, c in ipairs({
+        { "/content.md?t=" .. TOKEN, 200, 0, "a protected path with the token" },
+        { "/index.html?t=" .. TOKEN, 200, 0, "an open path with the token" },
+        { xs .. "?t=" .. TOKEN, 404, 0, "a path the deep pattern cannot read, with the token" },
+        { "/content.md", 401, nil, "a protected path without it" },
+        { "/content.md?t=wrong", 401, nil, "a protected path with a wrong token" },
+        { xs, 401, nil, "a path the deep pattern cannot read, without it" },
+    }) do
+        runs = 0
+        local got = http_get(base .. c[1])
+        eq(got.status, c[2], c[4] .. " is " .. c[2])
+        if c[3] then
+            eq(runs, c[3], "and runs no pattern")
+        else
+            ok(runs > 0, ("and the patterns decide it (%d runs)"):format(runs))
+        end
+    end
 end)
 
 -- ─── Summary ────────────────────────────────────────────────────────────────

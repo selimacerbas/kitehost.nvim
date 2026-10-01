@@ -1508,12 +1508,12 @@ local function unmarked_ok(inst, req)
 end
 
 -- Whether a path needs ?t=<token>: the live endpoints and any
--- protected_paths pattern; the second value is true when a pattern could
--- not be read. Start refuses a malformed pattern, but a well-formed one
--- can nest past LuaJIT's depth on a path ("pattern too complex") and
--- raise here, in the read callback, where it left the request unanswered:
--- a raise reads as a match no token satisfies, since the gate cannot tell
--- what it protects. A match also costs time on the loop, which a
+-- protected_paths pattern, asked only for a request that does not carry
+-- the token (authorized). Start refuses a malformed pattern, but a
+-- well-formed one can nest past LuaJIT's depth on a path ("pattern too
+-- complex") and raise here, in the read callback, where it left the
+-- request unanswered: a raise reads as a match, since the gate cannot
+-- tell what it protects. A match also costs time on the loop, which a
 -- backtracking pattern spends on a long path; MAX_TARGET bounds the path.
 -- Every pattern is read, so the answer does not hang on the list's order.
 -- A 401 alone reads like a bad token, so the first pattern that raises is
@@ -1534,7 +1534,7 @@ local function needs_auth(inst, p)
                     tostring(hit)
                 )
             )
-            return true, true
+            return true
         end
         needed = needed or hit ~= nil
     end
@@ -1874,18 +1874,20 @@ local function handle_request(conn, req)
     -- runs and cannot append query strings to <link>/<img> tags it
     -- discovers itself. Protect the user content (caller passes
     -- protected_paths) and the live-reload control plane.
+    -- The token is read first, once per request: its holder may read
+    -- every path, so a request carrying it runs no pattern, whose match
+    -- spent the loop's time on a request the token opened anyway and
+    -- whose raise refused the holder.
+    local carries_token
     local function authorized(p)
         if not inst.token then
             return true
         end
-        local needed, unreadable = needs_auth(inst, p)
-        if not needed then
-            return true
-        elseif unreadable then
-            return false
+        if carries_token == nil then
+            local req_token = qparam("t")
+            carries_token = util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)
         end
-        local req_token = qparam("t")
-        return util.secure_compare(req_token and util.url_decode(req_token) or "", inst.token)
+        return carries_token or not needs_auth(inst, p)
     end
     -- The injected client is answered before the gate: it holds no secret
     -- and its tag carries no token, so a pattern that matched it (%.js$,
