@@ -2503,10 +2503,10 @@ end
 --     multiplies the cost: a wildcard, eight ? items and a 1000-byte tail
 --     took 14 s. 256 bytes are taken. The costliest shape found that the
 --     rules then take, two ? items before 32 captures and a tail of .
---     filling the 256 bytes, cost up to 87 ms (65 ms on 0.10.0), so about
---     90 ms a pattern for one tokenless request, which reads it once
---     (dir_form), or twice for a frontier that tells "/" from the end of a
---     path naming a directory.
+--     filling the 256 bytes, cost up to 87 ms (65 ms on 0.10.0) for one
+--     tokenless request, which reads it once (dir_form), or twice for a
+--     frontier that tells "/" from the end of a path naming a directory;
+--     the README states the figure below its start-key table.
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
     .. " so a request path costs the square of its length"
