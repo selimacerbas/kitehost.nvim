@@ -11,31 +11,43 @@ H.isolate()
 H.rtp()
 local plugin_file = H.root .. "/plugin/kitehost.lua"
 -- The plugin's entry module, its name before 2.0.0 (an alias through 2.x),
--- the prefix its commands share and the features its floor module tests
--- beside the version.
+-- the prefixes its commands share, the command's and the one before 2.0.0
+-- (each such command runs a subcommand through 2.x), and the features its
+-- floor module tests beside the version.
 local MODULE = "kitehost"
 local FORMER = "live_server"
-local COMMAND_PREFIX = "LiveServer"
+local COMMAND_PREFIXES = { "KiteHost", "LiveServer" }
 local FEATURES = { "uv" }
 
--- The documented commands: the README's command table, sorted.
-local documented = {}
+-- The documented commands: every name the README's command tables list,
+-- once each, sorted; and every use they document, each command bare and
+-- with each subcommand its rows name, so a refuser that takes no argument
+-- reds on its subcommands.
+local documented, uses = {}, {}
 for line in io.lines(H.root .. "/README.md") do
     local name = line:match("^| `:(%w+)`")
-    if name then
+    if name and not vim.tbl_contains(documented, name) then
         table.insert(documented, name)
+        table.insert(uses, name)
+    end
+    local sub = line:match("^| `:%w+` | `([%w-]+)`")
+    if sub then
+        table.insert(uses, name .. " " .. sub)
     end
 end
 table.sort(documented)
 documented = table.concat(documented, " ")
 
--- The plugin's commands Neovim has, by the shared prefix, sorted: a set
+-- The plugin's commands Neovim has, by the shared prefixes, sorted: a set
 -- equal to the README's is every documented command and no other.
 local function defined()
     local names = {}
     for name in pairs(vim.api.nvim_get_commands({})) do
-        if vim.startswith(name, COMMAND_PREFIX) then
-            table.insert(names, name)
+        for _, prefix in ipairs(COMMAND_PREFIXES) do
+            if vim.startswith(name, prefix) then
+                table.insert(names, name)
+                break
+            end
         end
     end
     table.sort(names)
@@ -175,15 +187,16 @@ refusals = {}
 -- where an ERROR notification on 0.9 raised a traceback, so a refuser's waits
 -- too; every use answers, a second one included.
 local names = vim.split(documented, " ")
+H.ok(#uses > #names, "the README's command tables name subcommands too: " .. table.concat(uses, ", "))
 -- Under pcall, so a command that is missing reds its own rows below and not
 -- the whole suite.
-for _, name in ipairs(names) do
-    pcall(vim.cmd, name)
+for _, use in ipairs(uses) do
+    pcall(vim.cmd, use)
 end
 H.eq(#refusals, 0, "a refuser's answer waits until the command returns")
-pcall(vim.cmd, names[1])
+pcall(vim.cmd, uses[1])
 turn_loop()
-H.eq(#refusals, #names + 1, "every documented command answers each use below the floor")
+H.eq(#refusals, #uses + 1, "every documented command and subcommand answers each use below the floor")
 local refused_right = #refusals > 0
 for _, refusal in ipairs(refusals) do
     refused_right = refused_right and refusal.msg == message and refusal.level == vim.log.levels.ERROR

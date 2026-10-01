@@ -78,15 +78,25 @@ return {
 
 ### Other commands
 
-| Command | Description |
+| Command | Subcommand | Description |
+| --- | --- | --- |
+| `:KiteHost` | `start` | Pick a path and port, start serving; a bare `:KiteHost` does the same |
+| `:KiteHost` | `stop` | Pick a port to stop |
+| `:KiteHost` | `stop-all` | Stop all servers |
+| `:KiteHost` | `open` | Pick a port, open its URL in browser |
+| `:KiteHost` | `reload` | Force reload all connected clients |
+| `:KiteHost` | `status` | Show running servers (port, root, uptime, clients) |
+| `:KiteHost` | `toggle-live` | Enable/disable file watching for a port |
+
+| Deprecated command, removed in 3.0.0 | Runs, after a warning once a session |
 | --- | --- |
-| `:LiveServerStart` | Pick a path and port, start serving |
-| `:LiveServerOpen` | Pick a port, open its URL in browser |
-| `:LiveServerReload` | Force reload all connected clients |
-| `:LiveServerToggleLive` | Enable/disable file watching for a port |
-| `:LiveServerStatus` | Show running servers (port, root, uptime, clients) |
-| `:LiveServerStop` | Pick a port to stop |
-| `:LiveServerStopAll` | Stop all servers |
+| `:LiveServerStart` | `:KiteHost start` |
+| `:LiveServerStop` | `:KiteHost stop` |
+| `:LiveServerStopAll` | `:KiteHost stop-all` |
+| `:LiveServerOpen` | `:KiteHost open` |
+| `:LiveServerReload` | `:KiteHost reload` |
+| `:LiveServerStatus` | `:KiteHost status` |
+| `:LiveServerToggleLive` | `:KiteHost toggle-live` |
 
 ---
 

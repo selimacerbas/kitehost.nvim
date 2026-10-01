@@ -169,7 +169,7 @@ H.case("Section 4: a show_hidden listing names no dot entry the server refuses",
     )
 end)
 
--- :LiveServerStart on a file serves it at /, and a draft named .draft.html
+-- :KiteHost start on a file serves it at /, and a draft named .draft.html
 -- answered 404 there: the user's own choice is exempt from the dot rule,
 -- while the same name asked for as a path stays refused.
 H.case("Section 5: the file the user started on", function()

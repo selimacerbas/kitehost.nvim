@@ -867,7 +867,7 @@ end)
 
 -- The status command exists to print, and under notify = false it printed
 -- nothing, whether a server ran or not: a user who asks for it gets it.
-H.case("Section 11: :LiveServerStatus prints under notify = false", function()
+H.case("Section 11: :KiteHost status prints under notify = false", function()
     local _, _, inst = start_with({ notify = false })
     local ls = require("kitehost")
     notices = {}
