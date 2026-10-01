@@ -2510,11 +2510,12 @@ end
 --     literal tail filling the 256 bytes, costs about 105 ms for one read
 --     of an 8 KiB path, the figure the README states below its start-key
 --     table beside how many reads a request makes.
--- One rule here is no cost: a - between two letters or digits is a
--- name's hyphen read as a lazy repetition, so ^/my-notes%.md$ found no
--- hyphen and served /my-notes.md without the token; it is refused at
--- the -, which names %-. After a set or a class the - is taken.
-local HYPHEN = "a - between two letters or digits repeats the one before it and finds no hyphen; write %- for a hyphen"
+-- One rule here is no cost: a - after a single character is a name's
+-- hyphen read as a lazy repetition, so ^/my-notes%.md$ and
+-- ^/draft-%d%d%.md$ found no hyphen and served the file without the
+-- token. x- finds what x* finds, so it is refused at the -, naming %-
+-- and *, and no rule is lost; after a set, a class or . it is taken.
+local HYPHEN = "a - after a character repeats it and finds no hyphen; write %- for a hyphen, or * to repeat it"
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
     .. " so a request path costs the square of its length; write ^.* in front to keep the same matches"
@@ -2548,7 +2549,7 @@ local function pattern_cost(pat)
             -- A literal: one character but ".", or "%" and a character
             -- that is no letter or digit.
             local literal = (#item == 1 and item ~= ".") and item or (c == "%" and not d:find("%w") and d) or nil
-            if q == "-" and literal and literal:find("^%w$") and pat:sub(stop + 1, stop + 1):find("^%w$") then
+            if q == "-" and literal then
                 return stop, HYPHEN
             end
             if q == "*" or q == "+" or q == "-" then

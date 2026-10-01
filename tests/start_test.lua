@@ -2102,7 +2102,7 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "()x",
         "%f[%w]word",
         "^a*b",
-        "^c-/d?",
+        "^%a-/d?",
         "x$y^z",
         "%%",
         string.rep("()", 32),
@@ -2251,12 +2251,25 @@ end)
 
 -- A - after an item repeats it, lazily, so ^/my-notes%.md$ asked for no
 -- hyphen: it gated /mynotes.md and served /my-notes.md without the token
--- (measured). A - between two letters or digits is a name's hyphen, so
--- it is refused; %- and a - after a set or a class are taken.
-H.case("start refuses a - between letters or digits, which finds no hyphen", function()
-    local hyphen = "a - between two letters or digits repeats the one before it and finds no hyphen;"
-        .. " write %- for a hyphen"
-    for _, c in ipairs({ { "^/my-notes%.md$", 5 }, { "my-notes", 3 }, { "^/v2-0%.md$", 5 }, { "^/.*a-b", 6 } }) do
+-- (measured), and ^/draft-%d%d%.md$ served /draft-12.md so. After one
+-- character, a letter, a digit, punctuation or a byte of a multi-byte
+-- one, x- finds what x* finds, so such a - is refused and no rule is
+-- lost; %- and a - after a set, a class or . are taken.
+H.case("start refuses a - after a single character, which finds no hyphen", function()
+    local hyphen = "a - after a character repeats it and finds no hyphen; write %- for a hyphen, or * to repeat it"
+    for _, c in ipairs({
+        { "^/my-notes%.md$", 5 },
+        { "my-notes", 3 },
+        { "^/v2-0%.md$", 5 },
+        { "^/.*a-b", 6 },
+        { "^/draft-%d%d%.md$", 8 },
+        { "^/report-[0-9]", 9 },
+        { "^/caf\195\169-menu%.md$", 8 },
+        { "^/a-/b", 4 },
+        { "^/a-$", 4 },
+        { "^/a_-b", 5 },
+        { "^/x%.-y", 6 },
+    }) do
         local started, res = pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { c[1] } })
         if started then
             server.stop(res)
@@ -2267,7 +2280,17 @@ H.case("start refuses a - between letters or digits, which finds no hyphen", fun
             ("%s is refused at its hyphen"):format(c[1])
         )
     end
-    for _, pattern in ipairs({ "^/my%-notes%.md$", "^/[a-z]-x", "^/%d-x", "^/%a-1", "^/a-/b", "^/a-$" }) do
+    for _, pattern in ipairs({
+        "^/my%-notes%.md$",
+        "^/[a-z]-x",
+        "^/%d-x",
+        "^/%a-1",
+        "^/%a-x",
+        "^/.-x",
+        "^/a%-b",
+        "^/x%-*y",
+        "/%.[^/]+%.%d+%.tmp$",
+    }) do
         local started, res =
             pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { pattern } })
         if started then
