@@ -253,7 +253,7 @@ write_file(tmpdir .. "/.ssh/pic.png", "PNGDATA")
 local up, why = pcall(asset_server, tmpdir .. "/.ssh")
 eq(
     not up and tostring(why) or "started",
-    ("asset_root is inside a credential directory (.ssh): %s"):format(vim.inspect(tmpdir .. "/.ssh")),
+    ('asset_root is inside a credential directory (.ssh): "%s/.ssh"'):format(tmpdir),
     "an asset root inside .ssh is refused at start, naming the directory"
 )
 if up then
