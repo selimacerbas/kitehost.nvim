@@ -1,7 +1,9 @@
-# live-server.nvim
+# kitehost.nvim
 
 A tiny, zero-dependency **local web server** for Neovim, written in pure Lua with `vim.uv`.
 Start a server on any file or folder, auto-reload the browser on save, and quickly reopen existing ports.
+
+Before 2.0.0 this plugin was live-server.nvim: [Upgrading from live-server.nvim](#upgrading-from-live-servernvim) maps every name it had then.
 
 * **Pure Lua**: no npm, no Python, no binaries.
 * **Local by default**: binds to `127.0.0.1`; set `host = "0.0.0.0"` for network access, with a `token`, after reading [SECURITY.md](SECURITY.md).
@@ -30,9 +32,9 @@ Start a server on any file or folder, auto-reload the browser on save, and quick
 ## Installation (lazy.nvim)
 
 ```lua
--- lua/plugins/live-server.lua
+-- lua/plugins/kitehost.lua
 return {
-  "selimacerbas/live-server.nvim",
+  "selimacerbas/kitehost.nvim",
   dependencies = {
     "folke/which-key.nvim",
     "nvim-telescope/telescope.nvim", -- recommended for path picker
@@ -40,7 +42,7 @@ return {
   init = function()
     -- which-key group label only (best practice)
     local ok, wk = pcall(require, "which-key")
-    if ok then wk.add({ { "<leader>l", group = "LiveServer" } }) end
+    if ok then wk.add({ { "<leader>l", group = "KiteHost" } }) end
   end,
   opts = {
     default_port = 8000,
@@ -49,19 +51,48 @@ return {
   },
   -- map to user commands (robust lazy-loading)
   keys = {
-    { "<leader>ls", "<cmd>LiveServerStart<cr>",      desc = "Start (pick path & port)" },
-    { "<leader>lo", "<cmd>LiveServerOpen<cr>",       desc = "Open existing port in browser" },
-    { "<leader>lr", "<cmd>LiveServerReload<cr>",     desc = "Force reload (pick port)" },
-    { "<leader>lt", "<cmd>LiveServerToggleLive<cr>", desc = "Toggle live-reload (pick port)" },
-    { "<leader>li", "<cmd>LiveServerStatus<cr>",     desc = "Show server status" },
-    { "<leader>lS", "<cmd>LiveServerStop<cr>",       desc = "Stop one (pick port)" },
-    { "<leader>lA", "<cmd>LiveServerStopAll<cr>",    desc = "Stop all" },
+    { "<leader>ls", "<cmd>KiteHost start<cr>",       desc = "Start (pick path & port)" },
+    { "<leader>lo", "<cmd>KiteHost open<cr>",        desc = "Open existing port in browser" },
+    { "<leader>lr", "<cmd>KiteHost reload<cr>",      desc = "Force reload (pick port)" },
+    { "<leader>lt", "<cmd>KiteHost toggle-live<cr>", desc = "Toggle live-reload (pick port)" },
+    { "<leader>li", "<cmd>KiteHost status<cr>",      desc = "Show server status" },
+    { "<leader>lS", "<cmd>KiteHost stop<cr>",        desc = "Stop one (pick port)" },
+    { "<leader>lA", "<cmd>KiteHost stop-all<cr>",    desc = "Stop all" },
   },
   config = function(_, opts)
-    require("live_server").setup(opts)
+    require("kitehost").setup(opts)
   end,
 }
 ```
+
+---
+
+## Upgrading from live-server.nvim
+
+Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still installs it, since GitHub redirects the repository's former name, and the former modules and commands still work, each warning once a session and naming its replacement; they are removed in 3.0.0. The notices, the notification title, the statusline and the help take the new name now.
+
+| What | live-server.nvim | kitehost.nvim |
+| --- | --- | --- |
+| lazy.nvim spec | `"selimacerbas/live-server.nvim"` | `"selimacerbas/kitehost.nvim"` |
+| Entry module | `require("live_server")` | `require("kitehost")` |
+| Server module | `require("live_server.server")` | `require("kitehost.server")` |
+| Util module | `require("live_server.util")` | `require("kitehost.util")` |
+| Notice prefix | `LiveServer <port>` and `live-server: port <n>` | `kitehost: port <n>`, and every other notice starts `kitehost:` |
+| Notification title | `live-server.nvim` | `kitehost.nvim` |
+| Statusline | `[LS :8000]` | `[kitehost :8000]` |
+| Help | `:help live-server.nvim` | `:help kitehost.nvim` (the former tags: `:help kitehost-deprecated`) |
+
+| Command before 2.0.0, removed in 3.0.0 | Runs, after a warning once a session |
+| --- | --- |
+| `:LiveServerStart` | `:KiteHost start` |
+| `:LiveServerStop` | `:KiteHost stop` |
+| `:LiveServerStopAll` | `:KiteHost stop-all` |
+| `:LiveServerOpen` | `:KiteHost open` |
+| `:LiveServerReload` | `:KiteHost reload` |
+| `:LiveServerStatus` | `:KiteHost status` |
+| `:LiveServerToggleLive` | `:KiteHost toggle-live` |
+
+Through 2.x the plugin ships two top-level modules, `kitehost` and `live_server`, so lazy.nvim finds the module an `opts` table goes to only by the spec's name. `"selimacerbas/kitehost.nvim"` and the former spec both name one; a spec named otherwise (a fork, or a `name` or `dir` of your own) sets `main = "kitehost"`, or its `opts` reach no `setup()`.
 
 ---
 
@@ -69,7 +100,7 @@ return {
 
 ### Start a server
 
-* Press **`<leader>ls`** (or run `:LiveServerStart`).
+* Press **`<leader>ls`** (or run `:KiteHost start`).
 * Pick a **path** (file or directory), then pick a **port** (default `8000`).
 * Your browser opens `http://127.0.0.1:<port>/`.
 
@@ -88,21 +119,13 @@ return {
 | `:KiteHost` | `status` | Show running servers (port, root, uptime, clients) |
 | `:KiteHost` | `toggle-live` | Enable/disable file watching for a port |
 
-| Deprecated command, removed in 3.0.0 | Runs, after a warning once a session |
-| --- | --- |
-| `:LiveServerStart` | `:KiteHost start` |
-| `:LiveServerStop` | `:KiteHost stop` |
-| `:LiveServerStopAll` | `:KiteHost stop-all` |
-| `:LiveServerOpen` | `:KiteHost open` |
-| `:LiveServerReload` | `:KiteHost reload` |
-| `:LiveServerStatus` | `:KiteHost status` |
-| `:LiveServerToggleLive` | `:KiteHost toggle-live` |
+No subcommand takes an argument. `<Tab>` completes the subcommands; a name that is no subcommand, or an argument after one, is refused with one error notice and runs nothing. The commands from before 2.0.0 still run through 2.x: [Upgrading from live-server.nvim](#upgrading-from-live-servernvim) lists them.
 
 ---
 
 ## Options
 
-Configured via `require("live_server").setup({...})` or `opts = { ... }` in your lazy spec.
+Configured via `require("kitehost").setup({...})` or `opts = { ... }` in your lazy spec.
 
 ```lua
 {
@@ -190,7 +213,7 @@ Show active servers in lualine or any statusline:
 -- lualine example
 sections = {
   lualine_x = {
-    { require("live_server").statusline },
+    { require("kitehost").statusline },
   },
 }
 ```
@@ -236,8 +259,8 @@ All under the which-key group **`<leader>l`**:
 
 ## Troubleshooting
 
-* **"LiveServer 8000 did not start: Failed to bind 127.0.0.1:8000: EADDRINUSE: address already in use"**
-  Another program holds that port. A start is refused the same way, its message carrying `EADDRINUSE: address already in use`, when a `127.0.0.1` bind meets a program on the port at `0.0.0.0`, or a `0.0.0.0` bind meets one at `127.0.0.1`. Pick a different port, or stop the other program; `:LiveServerStop` or `:LiveServerStopAll` stops a server of this plugin. The notice shows even with `notify = false`.
+* **"kitehost: port 8000 did not start: Failed to bind 127.0.0.1:8000: EADDRINUSE: address already in use"**
+  Another program holds that port. A start is refused the same way, its message carrying `EADDRINUSE: address already in use`, when a `127.0.0.1` bind meets a program on the port at `0.0.0.0`, or a `0.0.0.0` bind meets one at `127.0.0.1`. Pick a different port, or stop the other program; `:KiteHost stop` or `:KiteHost stop-all` stops a server of this plugin. The notice shows even with `notify = false`.
 
 * **"start() bad argument #2 to 'start' (table expected, got number)"**
   An old copy of the plugin raised this, trying a two-argument `fs_event:start`; the plugin now calls the three-argument `fs_event:start(path, flags, cb)` alone, and a watcher that cannot start leaves the server serving with live reload off and a warning, so make sure you're on the **latest** plugin files.
@@ -251,37 +274,37 @@ All under the which-key group **`<leader>l`**:
   * Ensure the served root actually changed (the watcher is per root).
   * Check `.liveignore` isn't excluding the file.
   * A change under a dot path pushes no reload unless `serve_dotfiles` is set.
-  * Try `:LiveServerToggleLive` off/on, or `:LiveServerReload` to force.
+  * Try `:KiteHost toggle-live` off/on, or `:KiteHost reload` to force.
 
 ---
 
 ## API (for lua configs)
 
 ```lua
-local ls = require("live_server")
+local kitehost = require("kitehost")
 
-ls.setup({ ... })                -- configure defaults
-ls.start_picker()                -- UI flow: pick path, then port
-ls.open_existing()               -- pick a port → open in browser
-ls.force_reload()                -- broadcast reload to clients
-ls.toggle_livereload()           -- enable/disable live-reload for a port
-ls.status()                      -- print running server info
-ls.statusline()                  -- returns "[kitehost :8000]" or ""
-ls.stop_one()                    -- pick a port → stop
-ls.stop_all()                    -- stop everything
+kitehost.setup({ ... })                -- configure defaults
+kitehost.start_picker()                -- UI flow: pick path, then port
+kitehost.open_existing()               -- pick a port → open in browser
+kitehost.force_reload()                -- broadcast reload to clients
+kitehost.toggle_livereload()           -- enable/disable live-reload for a port
+kitehost.status()                      -- print running server info
+kitehost.statusline()                  -- returns "[kitehost :8000]" or ""
+kitehost.stop_one()                    -- pick a port → stop
+kitehost.stop_all()                    -- stop everything
 ```
 
-Versions follow SemVer, and the promise covers what a configuration and a plugin rely on: the `setup()` options as the Options block documents them, the `:LiveServer*` commands, the functions above and the plugin-author section below; a release that breaks any of it is a major release, while the wording of a notice, the statusline's text and anything these do not name may change in any release. A new option, or a value an option newly takes, comes with a `server.features` flag (`require("live_server.server").features`, below), which a configuration shared across installs checks before it sets it, since `setup()` refuses an option it does not read and `setup()` or a start refuses a value it does not take; an option is removed only in a major release. The options added in the release that followed v1.5.0 are the exception: `allowed_hosts` comes with `host_check` and `serve_dotfiles` with no flag; v1.5.0 ignored an option it did not read, so a configuration may set them there, and one that needs them to take effect checks `server.features.start_raises`, which that release added and v1.5.0 lacks.
+Versions follow SemVer, and the promise covers what a configuration and a plugin rely on: the `setup()` options as the Options block documents them, the `:KiteHost` command and its subcommands, the functions above and the plugin-author section below; a release that breaks any of it is a major release, while the wording of a notice, the statusline's text and anything these do not name may change in any release. A new option, or a value an option newly takes, comes with a `server.features` flag (`require("kitehost.server").features`, below), which a configuration shared across installs checks before it sets it, since `setup()` refuses an option it does not read and `setup()` or a start refuses a value it does not take; an option is removed only in a major release. The options added in the release that followed v1.5.0 are the exception: `allowed_hosts` comes with `host_check` and `serve_dotfiles` with no flag; v1.5.0 ignored an option it did not read, so a configuration may set them there, and one that needs them to take effect checks `server.features.start_raises`, which that release added and v1.5.0 lacks. The module names and commands from before 2.0.0 keep working through 2.x, each warning once a session, and are removed in 3.0.0.
 
 ### Server-level API (for plugin authors)
 
 Everything this section names is the public API that SemVer covers: the calls and what they answer, the `start` keys, the two instance fields, the capability flags, the HTTP routes with their gating and refusals, and the event framing. A release that breaks any of it is a major release. A new `start` key, or a value a key newly takes, comes with a `server.features` flag, which a plugin checks before it sets it, since `start` refuses a key it does not read and a value it does not take; a key is removed only in a major release. The keys added in the release that followed v1.5.0 are the exception: `allowed_hosts` comes with `host_check`, and `serve_dotfiles`, `header_timeout_ms`, `max_connections` and `sse_heartbeat_ms` with no flag; v1.5.0 ignored a key it did not read, so a plugin may set them there, and a plugin that needs them to take effect, or needs the dot rule (a dot path `404` by default), checks `server.features.start_raises`, which that release added and v1.5.0 lacks. Anything of the two modules that this section does not name is internal and may change in any release, including every other field of the instance table (the event-stream list `sse_clients` among them: read `server.connected_client_count(inst)`), and the wording of a message, except the `EADDRINUSE` text below. One reservation: a minor release may refuse a request the server admits today when refusing it closes a security hole; the requests this section lists as admitted stay admitted where it admits them (a request with the right token, a request marked same-origin with no foreign `Origin`, and an unmarked request under a loopback name on a loopback bind). A minor release may also change how a method other than GET is answered (a `HEAD` and the `cors` preflight's answer, which the request order below states as it is today, among them, and the `Allow` field), how a request line naming `HTTP/1.2` to `HTTP/1.9` is answered, the 64 KiB cap on a request head, and the 8 KiB cap on a request target, which bounds the path every `protected_paths` pattern is matched against and so the time a request without the token costs the editor (below the table), and it may refuse at start a `protected_paths` pattern an earlier release took, where that pattern's cost on a request path is the reason.
 
-Below Neovim 0.10, `require("live_server.server")` and `require("live_server.util")` raise the floor message, on every `require`, so a plugin that also runs on an older Neovim loads them under `pcall`.
+Below Neovim 0.10, `require("kitehost.server")` and `require("kitehost.util")` raise the floor message, on every `require`, so a plugin that also runs on an older Neovim loads them under `pcall`.
 
 ```lua
-local server = require("live_server.server")
-local util   = require("live_server.util")
+local server = require("kitehost.server")
+local util   = require("kitehost.util")
 
 local ok, inst = pcall(server.start, {
   root = "/path",                         -- required: the served directory
@@ -360,7 +383,7 @@ On a running server, a relative `update_target` index is joined to the working d
 
 `server.wildcard_loopback(ip)` answers `"127.0.0.1"` for `"0.0.0.0"`, `"::1"` for `"::"` and nil for any other address; a plugin calls it to show the address a wildcard bind's URL names, as this plugin's own URL does. Replacing it is not supported: `start` reads it through the module table, which every plugin in the process shares, so one plugin's replacement would move every other plugin's probe and URL.
 
-Outside the promise, for a person reading the notices: their text and how often they repeat may change in any release. A server tells the user of a fault through `vim.notify`, each line starting `live-server: port <n>`, and shows a control byte, a C1 code, a line or paragraph separator (U+2028, U+2029) or a bidi control from a path or a name as `?`. A warning is sent once per server for each kind: a listener that stopped accepting connections, a connection it could not serve, a connection it could not read, a reload it could not schedule or cancel, a root it could not watch (sent again after a watcher starts), a directory under the root it could not watch (sent once per watch start that misses one, on the per-directory watcher Linux uses), a `.liveignore` it ignores or a line of it skipped for a NUL byte (sent again after `update_target` moves to a new root), a `protected_paths` pattern it could not read, and an `asset_root` function that raised (its first line, at most 300 bytes) or answered what it may not serve from (the answer or its type, at most 300 bytes), and a string `asset_root` that no longer resolves to the directory kept at start, one kind for the three, the request answered 404 each time; after a request whose asset root resolves, the next such fault warns again (a function answering nil neither warns nor counts). A loopback bind started with `allowed_hosts = true` warns that the Host check is off. A request whose handling raised is answered with a 500 (or its connection closed, when the response had begun) and an error notice naming the path and the cause, once per such request. With `notify_on_reload`, each reload is a notice of its own (`live-server: port <n> reload → <path>`).
+Outside the promise, for a person reading the notices: their text and how often they repeat may change in any release. A server tells the user of a fault through `vim.notify`, each line starting `kitehost: port <n>`, and shows a control byte, a C1 code, a line or paragraph separator (U+2028, U+2029) or a bidi control from a path or a name as `?`. A warning is sent once per server for each kind: a listener that stopped accepting connections, a connection it could not serve, a connection it could not read, a reload it could not schedule or cancel, a root it could not watch (sent again after a watcher starts), a directory under the root it could not watch (sent once per watch start that misses one, on the per-directory watcher Linux uses), a `.liveignore` it ignores or a line of it skipped for a NUL byte (sent again after `update_target` moves to a new root), a `protected_paths` pattern it could not read, and an `asset_root` function that raised (its first line, at most 300 bytes) or answered what it may not serve from (the answer or its type, at most 300 bytes), and a string `asset_root` that no longer resolves to the directory kept at start, one kind for the three, the request answered 404 each time; after a request whose asset root resolves, the next such fault warns again (a function answering nil neither warns nor counts). A loopback bind started with `allowed_hosts = true` warns that the Host check is off. A request whose handling raised is answered with a 500 (or its connection closed, when the response had begun) and an error notice naming the path and the cause, once per such request. With `notify_on_reload`, each reload is a notice of its own (`kitehost: port <n> reload → <path>`).
 
 `server.features` holds the flags a plugin checks before it relies on a capability: `token_auth` (the `token` option and the gated routes), `host_binding` (the `host` option), `asset_route` (`asset_root` and `/__live/asset`), `host_check` (a loopback bind answers only loopback Host names and the `allowed_hosts` names, 421 otherwise), `cors_list` (`cors` takes a list of origins; an install without it reads a list as `"*"`) and `start_raises` (`start` raises at level 0 when it cannot serve).
 
@@ -383,7 +406,7 @@ Another process can fire an event at every open page through `/__live/inject`, f
 curl "http://127.0.0.1:8000/__live/inject?event=scroll&data=%7B%22line%22%3A42%7D"
 ```
 
-[markdown-preview.nvim](https://github.com/selimacerbas/markdown-preview.nvim) uses it for cross-instance scroll sync. On a server started with a token, add `&t=<token>`; which requests the route serves is stated in the section above.
+[mdkite.nvim](https://github.com/selimacerbas/mdkite.nvim) uses it for cross-instance scroll sync. On a server started with a token, add `&t=<token>`; which requests the route serves is stated in the section above.
 
 ### Token auth (optional)
 

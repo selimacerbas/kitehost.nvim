@@ -1,13 +1,13 @@
-*live-server.txt*            Pure-Lua local web server with live-reload
+*kitehost.txt*               Pure-Lua local web server with live-reload
 
 Author: Selim Acerbaş
-Homepage: <https://github.com/selimacerbas/live-server.nvim>
+Homepage: <https://github.com/selimacerbas/kitehost.nvim>
 License: MIT
 
 ===============================================================================
-INTRODUCTION                                                *live-server.nvim*
+INTRODUCTION                                                   *kitehost.nvim*
 
-live-server.nvim is a tiny, zero-dependency local web server for Neovim,
+kitehost.nvim is a tiny, zero-dependency local web server for Neovim,
 written in pure Lua with `vim.uv`. Start a server on any file or folder,
 auto-reload the browser on file changes, and quickly reopen existing ports.
 
@@ -26,11 +26,14 @@ Features:
 - Styled error pages (dark-mode aware)
 
 The server binds to `127.0.0.1` unless the `host` option says otherwise
-(|live-server-options|). It is meant for local dev previews, not
+(|kitehost-options|). It is meant for local dev previews, not
 production; read SECURITY.md before binding beyond loopback.
 
+The plugin, module and command names before 2.0.0 keep working through
+2.x, each warning once a session; |kitehost-deprecated| maps them.
+
 ===============================================================================
-REQUIREMENTS                                    *live-server-requirements*
+REQUIREMENTS                                    *kitehost-requirements*
 
 - Neovim 0.10+ (on Neovim 0.8 or 0.9 pin the plugin to v1.5.0, which
   receives no further fixes)
@@ -41,15 +44,28 @@ Optional:
 - which-key.nvim: keymap group labels
 
 ===============================================================================
-COMMANDS                                        *live-server-commands*
+COMMANDS                                        *kitehost-commands*
 
-                                                *:LiveServerStart*
-:LiveServerStart        Pick a path (file or directory) and a port, then
+                                                *:KiteHost*
+:KiteHost {subcommand}  Run {subcommand}, one of the seven below; a bare
+                        `:KiteHost` runs `start`. <Tab> completes the
+                        subcommands. No subcommand takes an argument: one
+                        given, or a name that is no subcommand, is refused
+                        with one error notice and runs nothing.
+
+                                                *:KiteHost-start*
+:KiteHost start         Pick a path (file or directory) and a port, then
                         start the server. If the port is already in use by
                         this plugin, the server retargets to the new path.
 
-                                                *:LiveServerOpen*
-:LiveServerOpen         Pick a port and open it in the default browser: a
+                                                *:KiteHost-stop*
+:KiteHost stop          Pick a running port and stop that server.
+
+                                                *:KiteHost-stop-all*
+:KiteHost stop-all      Stop all running servers.
+
+                                                *:KiteHost-open*
+:KiteHost open          Pick a port and open it in the default browser: a
                         server of this plugin at the address it is bound
                         to (a wildcard bind at its loopback address,
                         `127.0.0.1` for `0.0.0.0`), with `?t=<token>`
@@ -58,30 +74,24 @@ COMMANDS                                        *live-server-commands*
                         zone (`localhost` as written, `::1` as
                         `http://[::1]:<port>/`).
 
-                                                *:LiveServerReload*
-:LiveServerReload       Pick a port and broadcast a manual reload event to
+                                                *:KiteHost-reload*
+:KiteHost reload        Pick a port and broadcast a manual reload event to
                         all connected browser clients.
 
-                                                *:LiveServerToggleLive*
-:LiveServerToggleLive   Pick a port and toggle file watching + live-reload
-                        on or off for that server.
-
-                                                *:LiveServerStatus*
-:LiveServerStatus       Show all running servers with port, root directory,
+                                                *:KiteHost-status*
+:KiteHost status        Show all running servers with port, root directory,
                         uptime, live-reload state, and connected client count.
 
-                                                *:LiveServerStop*
-:LiveServerStop         Pick a running port and stop that server.
-
-                                                *:LiveServerStopAll*
-:LiveServerStopAll      Stop all running servers.
+                                                *:KiteHost-toggle-live*
+:KiteHost toggle-live   Pick a port and toggle file watching + live-reload
+                        on or off for that server.
 
 ===============================================================================
-CONFIGURATION                                   *live-server-config*
+CONFIGURATION                                   *kitehost-config*
 
-Configure via |live_server.setup()| or `opts` in your lazy.nvim spec. >lua
+Configure via |kitehost.setup()| or `opts` in your lazy.nvim spec. >lua
 
-    require("live_server").setup({
+    require("kitehost").setup({
       default_port     = 8000,
       open_on_start    = true,
       notify           = true,
@@ -105,7 +115,7 @@ Configure via |live_server.setup()| or `opts` in your lazy.nvim spec. >lua
     })
 <
 
-                                                *live-server-options*
+                                                *kitehost-options*
 Options:
 
 `default_port` (number, default 8000)
@@ -120,7 +130,7 @@ Options:
     one with no leading number as 0, so no interface name is resolved
     there, and its bind refuses any number but 0 on `::1`
     (`EADDRNOTAVAIL`). `inst.host` carries no zone, nor does
-    any URL the plugin opens, |:LiveServerOpen| on a port no server of
+    any URL the plugin opens, |:KiteHost-open| on a port no server of
     this plugin holds included. `"0.0.0.0"` serves every file under the
     root, except a dot path (unless `serve_dotfiles` is set) and an entry
     named `__live` at the root in any letter case, and the file you
@@ -172,7 +182,7 @@ Options:
     token runs no pattern.
 
 `asset_root` is not a setup option: a plugin that calls
-`require("live_server.server").start()` passes it, and the token then
+`require("kitehost.server").start()` passes it, and the token then
 gates `/__live/asset` too.
 
 `allowed_hosts` (string[]|true, default nil)
@@ -201,7 +211,7 @@ gates `/__live/asset` too.
     Show the informational notices (a start, a retarget, a live-reload
     toggle, a stop). `false` silences those alone: a warning or an error,
     a start that failed among them, is always shown, and
-    |:LiveServerStatus| always prints. `notify_on_reload` is its own
+    |:KiteHost-status| always prints. `notify_on_reload` is its own
     switch, which `false` here leaves as it is.
 
 `notify_on_reload` (boolean, default false)
@@ -229,9 +239,9 @@ gates `/__live/asset` too.
 `index_names` (string[], default `{ "index.html", "index.htm" }`)
     Index file names to try when serving a directory, in order.
 
-`auto_start` (table|false, default off)                 *live-server-auto-start*
+`auto_start` (table|false, default off)                 *kitehost-auto-start*
     Automatically start a server when a matching filetype is opened.
-    `false` turns it off, one an earlier |live_server.setup()| call set
+    `false` turns it off, one an earlier |kitehost.setup()| call set
     included, since each call merges into the options before it; any
     other value that is not a table is refused. The server starts once
     per directory (no duplicates). >lua
@@ -266,7 +276,7 @@ gates `/__live/asset` too.
     Watch files under the served root and push SSE reload events. A
     change under a dot path pushes none unless `serve_dotfiles` is set,
     nor does one under an entry named `__live` at the root in any letter
-    case, the file you started on excepted, and |live-server-liveignore|
+    case, the file you started on excepted, and |kitehost-liveignore|
     patterns match the path relative to the root.
 
 `live_reload.inject_script` (boolean, default true)
@@ -281,7 +291,7 @@ gates `/__live/asset` too.
     to 2147483647; a start refuses any other value, naming
     `live.debounce`.
 
-`live_reload.css_inject` (boolean, default true)        *live-server-css-inject*
+`live_reload.css_inject` (boolean, default true)        *kitehost-css-inject*
     When a `.css` file changes, hot-swap stylesheets in the browser
     without a full page reload. DOM state is preserved.
 
@@ -297,7 +307,7 @@ gates `/__live/asset` too.
     names no dot entry while `serve_dotfiles` is false.
 
 ===============================================================================
-LIVEIGNORE                                      *live-server-liveignore*
+LIVEIGNORE                                      *kitehost-liveignore*
 
 Create a `.liveignore` file in the served root to exclude files from the
 file watcher. One pattern per line. `*` matches any characters, and a
@@ -320,10 +330,10 @@ as `.git/` needs no line: a change under one pushes no reload unless
 The ignore file is re-parsed when the server retargets to a new root.
 
 ===============================================================================
-STATUSLINE                                      *live-server-statusline*
+STATUSLINE                                      *kitehost-statusline*
 
-                                                *live_server.statusline()*
-live_server.statusline()
+                                                *kitehost.statusline()*
+kitehost.statusline()
     Returns `"[kitehost :8000]"` when a server is running on port 8000,
     `"[kitehost :3000,:8000]"` for more than one, in port order, or `""`
     when idle.
@@ -331,24 +341,24 @@ live_server.statusline()
     Lualine example: >lua
         sections = {
           lualine_x = {
-            { require("live_server").statusline },
+            { require("kitehost").statusline },
           },
         }
 <
 
 ===============================================================================
-API                                             *live-server-api*
+API                                             *kitehost-api*
 
-All functions are on the `live_server` module: >lua
-    local ls = require("live_server")
+All functions are on the `kitehost` module: >lua
+    local kitehost = require("kitehost")
 <
 Versions follow SemVer, and the promise covers what a configuration and
-a plugin rely on: the |live-server-options|, the `:LiveServer*`
-commands, the functions below and |live-server-server-api|; a release
+a plugin rely on: the |kitehost-options|, the |:KiteHost| command and
+its subcommands, the functions below and |kitehost-server-api|; a release
 that breaks any of it is a major release, while the wording of a notice,
 the statusline's text and anything these do not name may change in any
 release. A new option, or a value an option newly takes, comes with a
-`server.features` flag (|live-server-server-api|), which a configuration
+`server.features` flag (|kitehost-server-api|), which a configuration
 shared across installs checks before it sets it, since `setup()` refuses
 an option it does not read and `setup()` or a start refuses a value it
 does not take; an option is removed only in a major release. The
@@ -357,9 +367,10 @@ options added in the release that followed v1.5.0 are the exception:
 flag; v1.5.0 ignored an option it did not read, so a configuration may
 set them there, and one that needs them to take effect checks
 `server.features.start_raises`, which that release added and v1.5.0
-lacks.
+lacks. The names before 2.0.0 (|kitehost-deprecated|) keep working
+through 2.x and are removed in 3.0.0.
 
-live_server.setup({opts})                       *live_server.setup()*
+kitehost.setup({opts})                          *kitehost.setup()*
     Merge {opts} with defaults and apply configuration.
     If `auto_start` is set, registers a `FileType` autocmd. A key it
     does not read, a misspelled one among them, is refused, naming it
@@ -374,35 +385,35 @@ live_server.setup({opts})                       *live_server.setup()*
     (`notify`, `auto_start` itself, a `live_reload` field) is left out
     without a word, so give it a plain table.
 
-live_server.start_picker()                      *live_server.start_picker()*
+kitehost.start_picker()                         *kitehost.start_picker()*
     UI flow: pick a path (Telescope or vim.ui), pick a port, start.
 
-live_server.open_existing()                     *live_server.open_existing()*
+kitehost.open_existing()                        *kitehost.open_existing()*
     Pick a port and open its URL in the default browser.
 
-live_server.force_reload()                      *live_server.force_reload()*
+kitehost.force_reload()                         *kitehost.force_reload()*
     Pick a port and broadcast a reload event to all SSE clients.
 
-live_server.toggle_livereload()                 *live_server.toggle_livereload()*
+kitehost.toggle_livereload()                    *kitehost.toggle_livereload()*
     Pick a port and toggle file watching on/off for that server.
 
-live_server.status()                            *live_server.status()*
+kitehost.status()                               *kitehost.status()*
     Print running servers with port, root, uptime, live state, and
     connected client count via `vim.notify`, whatever `notify` says.
 
-live_server.statusline()
-    Returns a short string for statusline use. See |live-server-statusline|.
+kitehost.statusline()
+    Returns a short string for statusline use. See |kitehost-statusline|.
 
-live_server.stop_one()                          *live_server.stop_one()*
+kitehost.stop_one()                             *kitehost.stop_one()*
     Pick a running port and stop that server.
 
-live_server.stop_all()                          *live_server.stop_all()*
+kitehost.stop_all()                             *kitehost.stop_all()*
     Stop all running servers and clear state.
 
 ===============================================================================
-SERVER API                                      *live-server-server-api*
+SERVER API                                      *kitehost-server-api*
 
-For plugins that run their own server. `require("live_server.server")`
+For plugins that run their own server. `require("kitehost.server")`
 and `util.random_token` and `util.secure_compare` hold the public API
 that SemVer covers, as the README's "Server-level API (for plugin
 authors)" section lists it: the calls and what they answer, the `start`
@@ -437,9 +448,9 @@ costs the editor, and it may refuse at start a `protected_paths` pattern
 an earlier release took, where that pattern's cost on a request path is
 the reason.
 
-Below Neovim 0.10 `live_server.server` and `live_server.util` raise on
-every `require`, so a plugin that also runs on an older Neovim loads them
-under `pcall`.
+Below Neovim 0.10 `kitehost.server` and `kitehost.util` raise on every
+`require`, so a plugin that also runs on an older Neovim loads them under
+`pcall`.
 
     server.start({cfg})          start a server and return the instance
     server.stop({inst})          close the listener, every connection,
@@ -574,31 +585,31 @@ which a client builds by formatting `"%s:%d"` with `host = "::1"`,
 cannot be split into host and port and is 400, and so is `Host: ::1`.
 
 ===============================================================================
-KEYMAPS                                         *live-server-keymaps*
+KEYMAPS                                         *kitehost-keymaps*
 
 Suggested keymaps (under `<leader>l` with which-key group): >lua
 
     keys = {
-      { "<leader>ls", "<cmd>LiveServerStart<cr>",      desc = "Start" },
-      { "<leader>lo", "<cmd>LiveServerOpen<cr>",       desc = "Open in browser" },
-      { "<leader>lr", "<cmd>LiveServerReload<cr>",     desc = "Force reload" },
-      { "<leader>lt", "<cmd>LiveServerToggleLive<cr>", desc = "Toggle live-reload" },
-      { "<leader>li", "<cmd>LiveServerStatus<cr>",     desc = "Status" },
-      { "<leader>lS", "<cmd>LiveServerStop<cr>",       desc = "Stop one" },
-      { "<leader>lA", "<cmd>LiveServerStopAll<cr>",    desc = "Stop all" },
+      { "<leader>ls", "<cmd>KiteHost start<cr>",       desc = "Start" },
+      { "<leader>lo", "<cmd>KiteHost open<cr>",        desc = "Open in browser" },
+      { "<leader>lr", "<cmd>KiteHost reload<cr>",      desc = "Force reload" },
+      { "<leader>lt", "<cmd>KiteHost toggle-live<cr>", desc = "Toggle live-reload" },
+      { "<leader>li", "<cmd>KiteHost status<cr>",      desc = "Status" },
+      { "<leader>lS", "<cmd>KiteHost stop<cr>",        desc = "Stop one" },
+      { "<leader>lA", "<cmd>KiteHost stop-all<cr>",    desc = "Stop all" },
     }
 <
 
 ===============================================================================
-TROUBLESHOOTING                                 *live-server-troubleshooting*
+TROUBLESHOOTING                                 *kitehost-troubleshooting*
 
 Port in use ~
-    The notice reads `LiveServer <port> did not start: Failed to bind
-    127.0.0.1:<port>: EADDRINUSE: address already in use`, shown even
-    with `notify = false`: another program holds that port. A
+    The notice reads `kitehost: port <port> did not start: Failed to
+    bind 127.0.0.1:<port>: EADDRINUSE: address already in use`, shown
+    even with `notify = false`: another program holds that port. A
     `127.0.0.1` bind is refused the same way when a program holds the
     port at `0.0.0.0`, and the reverse. Pick a different port or run
-    `:LiveServerStop` / `:LiveServerStopAll`.
+    `:KiteHost stop` / `:KiteHost stop-all`.
 
 Browser didn't open ~
     The plugin tries `vim.ui.open`; when that finds no opener it runs
@@ -610,11 +621,70 @@ Live-reload didn't trigger ~
     - Check `.liveignore` isn't excluding the changed file.
     - A change under a dot path pushes no reload unless `serve_dotfiles`
       is set.
-    - Try `:LiveServerToggleLive` off/on, or `:LiveServerReload`.
+    - Try `:KiteHost toggle-live` off/on, or `:KiteHost reload`.
 
 fs_event error ~
     The plugin calls the three-argument `fs_event:start()` alone, and a
     watcher that cannot start turns live reload off with a warning.
+
+===============================================================================
+DEPRECATED NAMES                                *kitehost-deprecated*
+
+Before 2.0.0 this plugin was live-server.nvim. The names it had then keep
+working through 2.x, each after a warning once a session, and go in
+3.0.0: a command runs its subcommand, and a module is the very table its
+new name returns. Below Neovim 0.10 a former module raises as its new
+name does, and a former command answers with the floor notice, as
+|:KiteHost| does.
+
+                                                *live-server.nvim*
+live-server.nvim        |kitehost.nvim|. A lazy.nvim spec names
+                        `"selimacerbas/kitehost.nvim"`; GitHub redirects
+                        the former repository name.
+
+                                                *:LiveServerStart*
+:LiveServerStart        Runs |:KiteHost-start|.
+                                                *:LiveServerStop*
+:LiveServerStop         Runs |:KiteHost-stop|.
+                                                *:LiveServerStopAll*
+:LiveServerStopAll      Runs |:KiteHost-stop-all|.
+                                                *:LiveServerOpen*
+:LiveServerOpen         Runs |:KiteHost-open|.
+                                                *:LiveServerReload*
+:LiveServerReload       Runs |:KiteHost-reload|.
+                                                *:LiveServerStatus*
+:LiveServerStatus       Runs |:KiteHost-status|.
+                                                *:LiveServerToggleLive*
+:LiveServerToggleLive   Runs |:KiteHost-toggle-live|.
+
+`require("live_server")`, `require("live_server.server")` and
+`require("live_server.util")` return what `require("kitehost")`,
+`require("kitehost.server")` and `require("kitehost.util")` return
+(|kitehost-api|, |kitehost-server-api|).
+
+                                                *live_server.setup()*
+live_server.setup()     |kitehost.setup()|
+                                                *live_server.start_picker()*
+live_server.start_picker()
+                        |kitehost.start_picker()|
+                                                *live_server.open_existing()*
+live_server.open_existing()
+                        |kitehost.open_existing()|
+                                                *live_server.force_reload()*
+live_server.force_reload()
+                        |kitehost.force_reload()|
+                                             *live_server.toggle_livereload()*
+live_server.toggle_livereload()
+                        |kitehost.toggle_livereload()|
+                                                *live_server.status()*
+live_server.status()    |kitehost.status()|
+                                                *live_server.statusline()*
+live_server.statusline()
+                        |kitehost.statusline()|
+                                                *live_server.stop_one()*
+live_server.stop_one()  |kitehost.stop_one()|
+                                                *live_server.stop_all()*
+live_server.stop_all()  |kitehost.stop_all()|
 
 -------------------------------------------------------------------------------
 vim:tw=78:ft=help:norl:

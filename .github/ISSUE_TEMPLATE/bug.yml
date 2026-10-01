@@ -28,8 +28,8 @@ body:
     id: versions
     attributes:
       label: Plugin version
-      description: live-server.nvim, from `git -C <plugin dir> describe --tags` or your lock file.
-      placeholder: live-server.nvim v1.5.0
+      description: kitehost.nvim, from `git -C <plugin dir> describe --tags` or your lock file.
+      placeholder: kitehost.nvim v2.0.0
     validations:
       required: true
   - type: textarea
@@ -42,5 +42,5 @@ body:
     id: health
     attributes:
       label: Diagnostics
-      description: The output of `:messages` after the failure, and `:checkhealth live_server` once your version has it. Replace a `?t=<token>` query in a pasted URL with `?t=<redacted>`.
+      description: The output of `:messages` after the failure. Replace a `?t=<token>` query in a pasted URL with `?t=<redacted>`.
       render: text

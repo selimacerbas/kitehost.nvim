@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security report
-    url: https://github.com/selimacerbas/live-server.nvim/security/advisories/new
+    url: https://github.com/selimacerbas/kitehost.nvim/security/advisories/new
     about: A vulnerability goes through private reporting, never a public issue.

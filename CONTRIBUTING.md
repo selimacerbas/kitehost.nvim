@@ -16,7 +16,7 @@ The absolute name is the one `tests/run.sh` passes: a relative one is made absol
 
 ## Shared files
 
-live-server.nvim and markdown-preview.nvim share their test harness, their hooks, the Makefile and the PR template. `tests/parity.sh` lists every shared file and how it is compared, and `make parity SIBLING=../markdown-preview.nvim` compares them with a sibling checkout. This repository's copy is the source: a change to a shared file lands here first and is copied.
+kitehost.nvim and mdkite.nvim share their test harness, their hooks, the Makefile and the PR template. `tests/parity.sh` lists every shared file and how it is compared, and `make parity SIBLING=../mdkite.nvim` compares them with a sibling checkout. This repository's copy is the source: a change to a shared file lands here first and is copied.
 
 ## Format
 
@@ -50,18 +50,18 @@ A pull request Dependabot opens is machine-authored, keyed on the pull request's
 
 1. Move the `Unreleased` section of `CHANGELOG.md` under the new version and date, add the version's link definition under `[Unreleased]`'s (newest first), and start the `[Unreleased]` compare link at the new tag.
 2. Tag only a commit whose `ci-ok` is green (`gh run list --commit <sha>`): `git tag -a vX.Y.Z -m "vX.Y.Z"`, `git push origin vX.Y.Z`. The tags v1.0.0 and v1.1.0 are annotated and v1.2.0 to v1.5.0 are lightweight, so `git describe` needs `--tags` until the next annotated tag.
-   The `release tags` ruleset refuses moving or deleting a `v*` tag, so a mistaken tag is fixed by editing the ruleset once (Settings, Rules), and every new `v*` tag is covered from its push. markdown-preview.nvim pins its live-server floor by tag and commit (`LIVE_SERVER_FLOOR` and `LIVE_SERVER_FLOOR_SHA` in its `ci.yml`, beside `H.live_server_floor` in its `tests/helpers.lua`): a release that moves that floor edits the three there in one change.
+   The `release tags` ruleset refuses moving or deleting a `v*` tag, so a mistaken tag is fixed by editing the ruleset once (Settings, Rules), and every new `v*` tag is covered from its push. mdkite.nvim pins its kitehost floor by tag and commit (`KITEHOST_FLOOR` and `KITEHOST_FLOOR_SHA` in its `ci.yml`, beside `H.kitehost_floor` in its `tests/helpers.lua`): a release that moves that floor edits the three there in one change.
 3. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <the section as a file>`.
 
 ### Moving the floor
 
 A release that moves the Neovim floor edits every place that states it, together (`git grep -n '0\.10'` and `git grep -n 'v1\.5\.0'` find them, beside what states no floor: harness comments that name a version they were measured on, the CHANGELOG's release links and past release notes, and the tag history in the release steps):
 
-- `lua/live_server/floor.lua`: the check and the message, which the plugin file, the module and the smoke read;
-- `plugin/live_server.lua`: the header comment and the refusers' description;
-- the README's requirements line and its plugin-author note (the floor message `live_server.server` and `live_server.util` raise), the vimdoc's REQUIREMENTS, SECURITY.md's supported versions and a CHANGELOG entry;
+- `lua/kitehost/floor.lua`: the check and the message, which the plugin file, the module and the smoke read;
+- `plugin/kitehost.lua`: the header comment and the refusers' description;
+- the README's requirements line and its plugin-author note (the floor message `kitehost.server` and `kitehost.util` raise), the vimdoc's REQUIREMENTS, SECURITY.md's supported versions and a CHANGELOG entry;
 - this file's prerequisites and job list;
 - `.github/workflows/ci.yml`: the `floor` job's version and name, `floor-below`'s version and name (the newest release below the floor), and the comments above both;
 - `tests/floor_guard_test.lua`, which pins the text, and the comments of `tests/floor_smoke.sh`;
 - the bug template's version placeholder;
-- markdown-preview.nvim, when its live-server floor moves with the release: `LIVE_SERVER_FLOOR` and `LIVE_SERVER_FLOOR_SHA` in its `ci.yml`, `H.live_server_floor` in its `tests/helpers.lua`, and its AGENTS.md and CHANGELOG.
+- mdkite.nvim, when its kitehost floor moves with the release: `KITEHOST_FLOOR` and `KITEHOST_FLOOR_SHA` in its `ci.yml`, `H.kitehost_floor` in its `tests/helpers.lua`, and its AGENTS.md and CHANGELOG.

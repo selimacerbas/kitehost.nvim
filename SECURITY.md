@@ -6,13 +6,13 @@ The latest release and `main` between releases. Fixes land on `main` and ship in
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting: <https://github.com/selimacerbas/live-server.nvim/security/advisories/new>. Do not open a public issue for a security problem.
+Use GitHub's private vulnerability reporting: <https://github.com/selimacerbas/kitehost.nvim/security/advisories/new>. Do not open a public issue for a security problem.
 
 You get a reply within seven days. A confirmed report is fixed in a release and credited in the advisory unless you ask otherwise.
 
 ## What the server exposes
 
-live-server serves the directory you point it at, on `127.0.0.1` by default, and `token` is the boundary.
+kitehost serves the directory you point it at, on `127.0.0.1` by default, and `token` is the boundary.
 
 Who can reach it. The loopback bind keeps other machines out, and its Host check answers 421 to a request under any name but `localhost`, a `*.localhost` name, a loopback address or a name `allowed_hosts` lists, which keeps out a page that reaches the port through DNS rebinding; `allowed_hosts = true` turns the check off, and a bind to any other address, `0.0.0.0` included, has none. A name `allowed_hosts` lists is trusted as far as its DNS: whoever controls that name's records can point it at this machine and read the server from their own page. Neither keeps out a page that addresses a loopback address itself: any page can send the server requests. No bind keeps out another program on this machine, which can read every file the server answers without the token. The server speaks plain HTTP with no TLS, so on a network bind the token and every answer cross the network readable.
 

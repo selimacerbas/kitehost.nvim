@@ -411,9 +411,9 @@ end)
 -- :help's option list is the other place a user reads the options, so
 -- each one, and each field of a section, has its own entry there.
 H.case("Section 8: every setup() option has an entry in :help's options", function()
-    local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
-    local block = help:match("%*live%-server%-options%*\n(.-)\n=====") or ""
-    ok(block ~= "", "doc/live-server.txt has the live-server-options section")
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/kitehost.txt"), "\n")
+    local block = help:match("%*kitehost%-options%*\n(.-)\n=====") or ""
+    ok(block ~= "", "doc/kitehost.txt has the kitehost-options section")
     local keys, fields = setup_options()
     for _, k in ipairs(keys) do
         ok(block:find("\n`" .. k .. "` (", 1, true) ~= nil, ":help has an entry for setup option " .. k)
@@ -430,20 +430,20 @@ end)
 -- both. Its tables, opts and state, hold the module's state.
 H.case("Section 9: every function of kitehost is in README's and :help's API", function()
     package.loaded["kitehost"] = nil
-    local ls = require("kitehost")
+    local kitehost = require("kitehost")
     local api = readme:match("\n## API %(for lua configs%)\n(.-)\n### ") or ""
     ok(api ~= "", "the README has the API (for lua configs) section")
-    local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
-    local help_api = help:match("%*live%-server%-api%*\n(.-)\n=====") or ""
-    ok(help_api ~= "", "doc/live-server.txt has the live-server-api section")
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/kitehost.txt"), "\n")
+    local help_api = help:match("%*kitehost%-api%*\n(.-)\n=====") or ""
+    ok(help_api ~= "", "doc/kitehost.txt has the kitehost-api section")
     local names = 0
-    for _, name in ipairs(sorted_keys(ls)) do
-        if type(ls[name]) == "function" then
+    for _, name in ipairs(sorted_keys(kitehost)) do
+        if type(kitehost[name]) == "function" then
             names = names + 1
-            ok(api:find("ls." .. name .. "(", 1, true) ~= nil, ("README's API names ls.%s()"):format(name))
+            ok(api:find("kitehost." .. name .. "(", 1, true) ~= nil, ("README's API names kitehost.%s()"):format(name))
             ok(
-                help_api:find("live_server." .. name .. "(", 1, true) ~= nil,
-                (":help's API names live_server.%s()"):format(name)
+                help_api:find("kitehost." .. name .. "(", 1, true) ~= nil,
+                (":help's API names kitehost.%s()"):format(name)
             )
         end
     end
@@ -455,9 +455,9 @@ end)
 -- the Host check this release holds, so the flag must be on and each claim
 -- has its own row, and dropping either reds.
 H.case("Section 10: :help names the same surface, SECURITY.md the Host check", function()
-    local help = table.concat(vim.fn.readfile(H.root .. "/doc/live-server.txt"), "\n")
-    local api = help:match("%*live%-server%-server%-api%*\n(.-)\n=====") or ""
-    ok(api ~= "", "doc/live-server.txt has the live-server-server-api section")
+    local help = table.concat(vim.fn.readfile(H.root .. "/doc/kitehost.txt"), "\n")
+    local api = help:match("%*kitehost%-server%-api%*\n(.-)\n=====") or ""
+    ok(api ~= "", "doc/kitehost.txt has the kitehost-server-api section")
     for _, name in ipairs(sorted_keys(server)) do
         ok(api:find(export_shown(name), 1, true) ~= nil, (":help names server.%s"):format(name))
     end
