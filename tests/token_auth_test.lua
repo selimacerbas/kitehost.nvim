@@ -33,12 +33,13 @@ H.write_file(f2, "# secret content")
 local uv = vim.uv
 H.write_file(vim.fs.joinpath(tmpdir, "asset_root"), "/some/dir")
 
--- Windows takes a / in a link's target unconverted, leaving the link
--- dangling, and opens no link to a directory made without dir = true
--- (measured on the hosted runner): a target here carries the platform's
--- separator and a link to a directory is made as one. A row through a
--- link runs only where the link resolves to the name it is about;
--- unresolved says why it does not, the reason the row is skipped with.
+-- Windows takes a / in a relative link's target unconverted, leaving the
+-- link dangling (an absolute target's / resolves), and opens no link to a
+-- directory made without dir = true (measured on the hosted runner): a
+-- relative target here carries the platform's separator and a link to a
+-- directory is made as one. A row through a link runs only where the
+-- link resolves to the name it is about; unresolved says why it does
+-- not, the reason the row is skipped with.
 local sep = package.config:sub(1, 1)
 local function unresolved(made, made_err, name, want)
     if not made then

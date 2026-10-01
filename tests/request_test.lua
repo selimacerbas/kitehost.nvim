@@ -18,11 +18,12 @@ H.rtp()
 local server = require("live_server.server")
 local eq, ok = H.eq, H.ok
 
--- Windows takes a / in a link's target unconverted, leaving the link
--- dangling (measured on the hosted runner): a target here carries the
--- platform's separator. A row through a link runs only where the link
--- resolves to the name it is about; unresolved says why it does not, the
--- reason the row is skipped with.
+-- Windows takes a / in a relative link's target unconverted, leaving the
+-- link dangling (an absolute target's / resolves; measured on the hosted
+-- runner): a relative target here carries the platform's separator. A row
+-- through a link runs only where the link resolves to the name it is
+-- about; unresolved says why it does not, the reason the row is skipped
+-- with.
 local sep = package.config:sub(1, 1)
 local function unresolved(made, made_err, name, want)
     if not made then
