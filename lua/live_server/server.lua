@@ -2992,9 +2992,11 @@ local function check_start(cfg)
         error("root must be a string", 0)
     end
     no_nul("root", root)
-    local root_real = uv.fs_realpath(root)
+    -- Worded as update_target words it, the cause named: "Invalid root"
+    -- left a user to guess between a typo and a permission.
+    local root_real, real_err = uv.fs_realpath(root)
     if not root_real then
-        error("Invalid root: " .. shown(root), 0)
+        error(("root %s does not resolve (%s)"):format(shown(root), tostring(real_err):match("^[^:]*")), 0)
     end
     -- libuv's text repeats the path raw after the error's name, so the
     -- name alone is kept, as asset_dir keeps it.

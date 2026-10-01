@@ -1647,7 +1647,7 @@ H.case("a root that does not resolve is refused before any socket opens", functi
         server.stop(res)
     end
     ok(
-        not started and tostring(res) == "Invalid root: " .. missing,
+        not started and tostring(res) == ("root %s does not resolve (ENOENT)"):format(missing),
         "a missing root is refused, naming it: " .. tostring(res)
     )
     eq(after, tcps, "and opens no socket")
@@ -1949,8 +1949,11 @@ H.case("every value a start refusal repeats is marked and cut at 300 bytes", fun
             { asset_root = root .. "/\27[31m" },
             ('asset_root is not a directory: "%s/?[31m" (ENOENT)'):format(root),
         },
-        { { root = "/nonexistent/\27[31mRED" }, "Invalid root: /nonexistent/?[31mRED" },
-        { { root = "/nonexistent/" .. x400 }, "Invalid root: /nonexistent/" .. x400:sub(1, 287) },
+        { { root = "/nonexistent/\27[31mRED" }, "root /nonexistent/?[31mRED does not resolve (ENOENT)" },
+        {
+            { root = "/nonexistent/" .. x400 },
+            ("root /nonexistent/%s does not resolve (ENOENT)"):format(x400:sub(1, 287)),
+        },
         { { root = file }, "root must be a directory: " .. shown_file },
         { { port = "\27[31m" }, "port must be an integer from 0 to 65535, got ?[31m (string)" },
         { { ["\194\155x"] = 1 }, 'start does not read the key "?x"' },

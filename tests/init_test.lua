@@ -1083,7 +1083,7 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     vim.uv.fs_realpath = real_realpath
     eq(
         notes[1] and notes[1].msg,
-        "LiveServer 0 did not start: Invalid root: " .. shown,
+        ("LiveServer 0 did not start: root %s does not resolve (ENOENT)"):format(shown),
         "a refused start shows the server's text with them as ?"
     )
 end)
