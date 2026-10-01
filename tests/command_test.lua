@@ -106,6 +106,11 @@ H.case("Section 2: completion lists the subcommands, then their arguments", func
     )
     eq(table.concat(vim.fn.getcompletion("vert KiteHost ", "cmdline"), ", "), KNOWN, "every one after :vert")
     eq(
+        table.concat(vim.fn.getcompletion("filter /Kx y/ KiteHost st", "cmdline"), ", "),
+        "start, stop, stop-all, status",
+        "and after a :filter pattern holding a capital word"
+    )
+    eq(
         table.concat(vim.fn.getcompletion("silent! KiteHost start ", "cmdline"), ", "),
         "",
         "and no argument after a modifier either"

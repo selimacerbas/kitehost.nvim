@@ -81,10 +81,17 @@ end, {
     -- The subcommands, then a subcommand's arguments, of which none takes
     -- any. Neovim shows a Lua function's list unfiltered (measured), so
     -- the names are filtered by what was typed. The line is read from the
-    -- command's own word: a modifier before it (:silent, :vert) made the
-    -- first word the modifier's and completed nothing.
+    -- command's own word, the last one that abbreviates KiteHost: a
+    -- modifier before it (:silent, :vert) and a capital word in a
+    -- :filter pattern made another word the command's and completed
+    -- nothing.
     complete = function(lead, line, pos)
-        local after = line:sub(1, pos):match("%f[%w]K%w*%s+(.*)$") or ""
+        local typed, after = line:sub(1, pos), ""
+        for at, word in typed:gmatch("()%f[%w](K%w*)%s+") do
+            if vim.startswith("KiteHost", word) then
+                after = typed:sub(at + #word):match("^%s+(.*)$")
+            end
+        end
         if after:find("%s") then
             return {}
         end
