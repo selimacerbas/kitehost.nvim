@@ -124,7 +124,9 @@ Options:
     When set, the event stream, the inject endpoint and the paths
     `protected_paths` names, but the injected client `/__live/script.js`,
     require `?t=<token>`; other files stay open, except a dot path unless
-    `serve_dotfiles` is set.
+    `serve_dotfiles` is set. A start refuses a token over 4096 bytes once
+    URL-encoded, since the 8 KiB cap on a request target counts the
+    `?t=` query that carries it.
 
 `protected_paths` (string[], default `{}`)
     Lua patterns of request paths that also require the token; the
