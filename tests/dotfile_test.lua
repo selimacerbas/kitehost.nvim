@@ -1050,14 +1050,27 @@ end)
 -- star, which matches what the run matched.
 H.case("Section 10c: a run of stars in a .liveignore line is one star", function()
     local util = require("live_server.util")
-    -- The one rule a line gives, and the list parse_liveignore returned,
-    -- which is what match_ignore reads.
+    -- match_ignore reads a rule's literal parts, kept by util for each list
+    -- parse_liveignore returned, never the pattern string in the list, so
+    -- the rows read the parts through match_ignore's upvalue.
+    local split_lists
+    for i = 1, 64 do
+        local name, value = debug.getupvalue(util.match_ignore, i)
+        if name == nil or name == "split_lists" then
+            split_lists = value
+            break
+        end
+    end
+    ok(type(split_lists) == "table", "match_ignore's split rules are read")
+    -- The parts of the one rule a line gives, the list parse_liveignore
+    -- returned and the rule's pattern string.
     local function rule(line)
         local site = H.tmpdir()
         H.write_file(site .. "/.liveignore", line .. "\n")
         local got = assert(util.parse_liveignore(site))
         eq(#got, 1, ("the line %s gives one rule"):format(line))
-        return got[1], got
+        local split = type(split_lists) == "table" and split_lists[got]
+        return split and vim.inspect(split[1].parts) or "no parts", got, got[1]
     end
     local stars, star_list = rule(("*"):rep(8) .. "x")
     eq(stars, rule("*x"), "eight stars and a letter read as one star and the letter")
@@ -1094,7 +1107,7 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     vim.list_extend(paths, { "/axb", "/a?b", "/x.y", "/xzy", "/" })
     local differ = {}
     for _, line in ipairs(lines) do
-        local pat, list = rule(line)
+        local _, list, pat = rule(line)
         for _, path in ipairs(paths) do
             if util.match_ignore(path, list) ~= (path:find(pat) ~= nil) then
                 table.insert(differ, line .. " " .. path)
@@ -1119,7 +1132,7 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
         ok(spent < 50, cpu)
     end
     eq(wide[1], "a" .. (" "):rep(60000) .. "b", "and keeps its inner blanks")
-    eq(rule(" \t dist \t "), "dist", "a line's outer blanks and tabs are trimmed")
+    eq(rule(" \t dist \t "), vim.inspect({ "dist" }), "a line's outer blanks and tabs are trimmed")
     -- An editor may save a UTF-8 byte order mark ahead of the first line,
     -- which the trim kept: /dist then started with U+FEFF, was anchored at
     -- no root and ignored nothing, without a word (measured).
