@@ -851,7 +851,15 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     string.find = real_find
     eq(got.status, 404, "an 8 KiB path of a's is answered under a costly shape the caps take")
     eq(calls, 1, "which the gate matched once")
-    ok(spent > 0 and spent < 1, ("and the pattern held the loop under 1 s of CPU time (%d ms)"):format(spent * 1000))
+    -- LuaJIT's os.clock is C's clock(), which the Windows C runtime counts
+    -- as wall time since the process began, so there it reads the load
+    -- beside the work and the bound is skipped.
+    local cpu = ("and the pattern held the loop under 1 s of CPU time (%d ms)"):format(spent * 1000)
+    if vim.fn.has("win32") == 1 then
+        H.skip(cpu .. " (os.clock reads wall time on Windows)")
+    else
+        ok(spent > 0 and spent < 1, cpu)
+    end
 end)
 
 H.finish()

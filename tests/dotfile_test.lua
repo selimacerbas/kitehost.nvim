@@ -1110,7 +1110,14 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     local c0 = os.clock()
     local wide = assert(util.parse_liveignore(site))
     local spent = (os.clock() - c0) * 1000
-    ok(spent < 50, ("a line with 60000 inner blanks is read in under 50 ms of CPU time (%.1f ms)"):format(spent))
+    -- os.clock is C's clock(), wall time since the process began under
+    -- the Windows C runtime, so there the bound is skipped.
+    local cpu = ("a line with 60000 inner blanks is read in under 50 ms of CPU time (%.1f ms)"):format(spent)
+    if is_win then
+        H.skip(cpu .. " (os.clock reads wall time on Windows)")
+    else
+        ok(spent < 50, cpu)
+    end
     eq(wide[1], "a" .. (" "):rep(60000) .. "b", "and keeps its inner blanks")
     eq(rule(" \t dist \t "), "dist", "a line's outer blanks and tabs are trimmed")
     -- An editor may save a UTF-8 byte order mark ahead of the first line,
