@@ -9,7 +9,8 @@
 -- link to a large file among them) is never read, gives no rule and is
 -- named once; the FIFO row starts in a child Neovim bounded at 5 s. A
 -- start refused after reading it warns nothing, and a retarget to another
--- root warns anew. One debounce window reloads the page when any change
+-- root warns anew. A run of stars in a line is one star, timed on a path
+-- (Section 10c). One debounce window reloads the page when any change
 -- in it is not a stylesheet, a path gone by the send is dropped (a
 -- save's probe and backup files, a temporary name renamed away), and a
 -- window names its latest page change however long the burst.
@@ -1037,6 +1038,33 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
     check("a .liveignore that grows past the bound after its stat", swapped, over, function()
         uv.fs_stat, uv.fs_open, uv.fs_fstat = real_stat, real_open, real_fstat
     end)
+end)
+
+-- Every changed path is matched against each rule on the loop, and each
+-- star of a line was a .* of its own: eight stars and a letter took 5.8 s
+-- on one 29-byte path (measured), at every change. A run of stars is one
+-- star, which matches what the run matched.
+H.case("Section 10c: a run of stars in a .liveignore line is one star", function()
+    local util = require("live_server.util")
+    -- The one rule a line gives.
+    local function rule(line)
+        local site = H.tmpdir()
+        H.write_file(site .. "/.liveignore", line .. "\n")
+        local got = assert(util.parse_liveignore(site))
+        eq(#got, 1, ("the line %s gives one rule"):format(line))
+        return got[1]
+    end
+    local stars = rule(("*"):rep(8) .. "x")
+    eq(stars, rule("*x"), "eight stars and a letter read as one star and the letter")
+    local t0 = uv.hrtime()
+    local hit = util.match_ignore("/assets/stylesheets/page.html", { stars })
+    local took = (uv.hrtime() - t0) / 1e6
+    eq(hit, false, "and they leave a path with no x unmatched")
+    ok(took < 10, ("in under 10 ms (%.1f ms)"):format(took))
+    eq(util.match_ignore("/build/x.js", { stars }), true, "and match a path holding an x")
+    eq(rule("dist/**"), rule("dist/*"), "dist/** reads as dist/*")
+    eq(util.match_ignore("/dist/a/b.js", { rule("dist/**") }), true, "and still matches below dist/")
+    eq(rule("a**b*c"), rule("a*b*c"), "a run inside a line is one star, a single star kept")
 end)
 
 -- Two changes inside one debounce window kept the last path alone, so
