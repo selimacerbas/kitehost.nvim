@@ -49,8 +49,14 @@ COMMANDS                                        *live-server-commands*
                         this plugin, the server retargets to the new path.
 
                                                 *:LiveServerOpen*
-:LiveServerOpen         Pick a port and open `http://127.0.0.1:<port>/` in
-                        the default browser.
+:LiveServerOpen         Pick a port and open it in the default browser: a
+                        server of this plugin at the address it is bound
+                        to (a wildcard bind at its loopback address,
+                        `127.0.0.1` for `0.0.0.0`), with `?t=<token>`
+                        when it has one; any other port at `setup()`'s
+                        `host`, a wildcard read the same way, without a
+                        zone (`localhost` as written, `::1` as
+                        `http://[::1]:<port>/`).
 
                                                 *:LiveServerReload*
 :LiveServerReload       Pick a port and broadcast a manual reload event to
