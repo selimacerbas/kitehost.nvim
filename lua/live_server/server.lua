@@ -3152,6 +3152,11 @@ local function bind_probed(host, port)
     local info = uv.os_uname()
     local sysname = info and info.sysname
     local windows = sysname == "Windows_NT"
+    if not sysname then
+        -- A read that failed names no system and left these probes off on
+        -- Windows; the path separator, fixed at load, cannot fail.
+        windows = WINDOWS
+    end
     if loopback then
         local free, why, why_name = address_free(loopback, bound.port)
         if not free and why_name ~= "EADDRNOTAVAIL" then

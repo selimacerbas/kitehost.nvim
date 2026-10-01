@@ -1546,6 +1546,28 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             ("and beside a held wildcard it raises, read as %s: %s"):format(sysname, tostring(res_held))
         )
     end
+    -- A uname read that fails names no system: the start probes as outside
+    -- Linux, and on Windows, known by its path separator, :: dual-stack
+    -- too, where it probed nothing of the kind.
+    local failed_made = 0
+    vim.uv.new_tcp = function(...)
+        failed_made = failed_made + 1
+        return real_new_tcp(...)
+    end
+    vim.uv.os_uname = function()
+        return nil, "EIO: stubbed", "EIO"
+    end
+    local up_failed, res_failed = pcall(server.start, { port = 0, root = root })
+    vim.uv.new_tcp, vim.uv.os_uname = real_new_tcp, real_uname
+    if up_failed then
+        server.stop(res_failed)
+    end
+    ok(up_failed, "a 127.0.0.1 start whose uname read fails serves: " .. tostring(up_failed and "" or res_failed))
+    eq(
+        failed_made,
+        is_win and 3 or 2,
+        ("with its socket and the probes its path separator names (%s)"):format(is_win and "Windows" or "not Windows")
+    )
 end)
 
 -- An IPv6 wildcard bind is opened on [::1], so its start probes ::1 as an
