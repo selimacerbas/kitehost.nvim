@@ -672,6 +672,25 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             ("another instance warns once of its own: %s"):format(vim.inspect(notes, { newline = " ", indent = "" }))
         )
     end
+    -- A control byte in the pattern is a ? in the warning, which a
+    -- notifier would otherwise carry raw to a terminal.
+    local seen = #notes
+    local escaped = unreadable_server({ "^/\27?" .. string.rep("x*", 200) })
+    if escaped then
+        answers_401(escaped, "an unreadable pattern holding an escape is 401")
+        local count = settled(seen + 1)
+        local want = ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
+            tonumber(escaped:match(":(%d+)/")),
+            ("^/??" .. string.rep("x*", 200)):sub(1, 300),
+            "pattern too complex"
+        )
+        ok(
+            count == seen + 1 and notes[seen + 1].msg == want,
+            ("and its warning shows the escape as ?: %s"):format(
+                util.marked(vim.inspect(notes[seen + 1], { newline = " ", indent = "" }), 400)
+            )
+        )
+    end
     local before = #notes
     local readable = server.start({
         port = 0,
