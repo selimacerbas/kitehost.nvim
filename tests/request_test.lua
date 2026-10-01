@@ -810,9 +810,9 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     string.find = real_find
     -- The bound the cap buys, measured on this machine, not a promise: the
     -- pattern on the longest path the cap lets through, 8 KiB of a/a/...,
-    -- held the loop about 200 ms of CPU time (1.5 s wall at a load
-    -- average of 32), where 16 KiB held it 4.7 s. A timer every 10 ms
-    -- reads the longest gap while the request is answered.
+    -- held the loop about 200 ms of CPU time (0.2 to 1 s wall, the more
+    -- the busier the machine), where 16 KiB held it 4.7 s. A timer every
+    -- 10 ms reads the longest gap while the request is answered.
     local last, gap = uv.hrtime(), 0
     local tick = assert(uv.new_timer())
     H.defer(function()
@@ -827,9 +827,11 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     end))
     local slashed = "/" .. ("a/"):rep(4095) .. "x"
     eq(#slashed, 8 * 1024, "the slashed path is 8 KiB")
-    res = ask(port, get(slashed, port))
+    -- Asked through curl, another process: the raw client shares this
+    -- loop, so its own write timed out while the pattern held it.
+    local got = H.http_get(("http://127.0.0.1:%d%s"):format(port, slashed))
     tick:close()
-    eq(res[1] and res[1].status, 404, "the slashed 8 KiB path is answered")
+    eq(got.status, 404, "the slashed 8 KiB path is answered")
     ok(gap < 1000, ("and the loop was held under 1 s while the pattern read it (%d ms)"):format(gap))
 end)
 
