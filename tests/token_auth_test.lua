@@ -810,6 +810,53 @@ H.case("a directory the gate refuses serves no index", function()
     eq(http_get(anchored .. "/gonex/").status, 404, "while /gonex/ under ^/gone$ is 404")
 end)
 
+-- A directory asked without its slash is read by its name, which
+-- ^/secret/ does not match, then as the directory about to be served,
+-- which it does. An answer kept by the name alone and given to the
+-- directory's read served secret/ and its listing without the token.
+H.case("a directory asked without its slash is gated as the directory", function()
+    local function site(with_index)
+        local root = H.tmpdir()
+        vim.fn.mkdir(vim.fs.joinpath(root, "secret"), "p")
+        H.write_file(vim.fs.joinpath(root, "secret", "a.txt"), "plain")
+        if with_index then
+            H.write_file(vim.fs.joinpath(root, "secret", "index.html"), "<html>SECRET-INDEX</html>")
+        end
+        local s = server.start({
+            port = 0,
+            root = root,
+            token = TOKEN,
+            protected_paths = { "^/secret/" },
+            live = { enabled = false, inject_script = false },
+            features = { dirlist = { enabled = true } },
+        })
+        H.defer(function()
+            server.stop(s)
+        end)
+        return ("http://127.0.0.1:%d"):format(s.port)
+    end
+    local function shows_secret(body)
+        return body:find("SECRET-INDEX", 1, true) ~= nil or body:find("a.txt", 1, true) ~= nil
+    end
+    for _, form in ipairs({
+        { site(true), "its index", "SECRET-INDEX" },
+        { site(false), "its listing", 'href="/secret/a.txt"' },
+    }) do
+        for _, path in ipairs({ "/secret", "/secret/" }) do
+            local res = http_get(form[1] .. path)
+            ok(
+                res.status == 401 and not shows_secret(res.body),
+                ("%s under ^/secret/ is 401 without the token, never %s (got %d)"):format(path, form[2], res.status)
+            )
+            res = http_get(form[1] .. path .. "?t=" .. TOKEN)
+            ok(
+                res.status == 200 and res.body:find(form[3], 1, true) ~= nil,
+                ("and %s serves %s with it (got %d)"):format(path, form[2], res.status)
+            )
+        end
+    end
+end)
+
 -- The server read the caller's own table, which init.lua hands from the
 -- user's options, so a caller that holed or emptied it after start dropped
 -- the gate; index_names changed after start would name an index the start
