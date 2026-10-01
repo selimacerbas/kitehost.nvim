@@ -30,6 +30,10 @@ local uv = vim.uv
 -- The FIFO rows skip on Windows, which has no FIFO.
 local is_win = vim.fn.has("win32") == 1
 local server = require("live_server.server")
+-- The join the plugin names a .liveignore with: a \ on Windows, where
+-- vim.fs.joinpath writes a /, so a stub keyed or a warning spelled with
+-- the latter matched nothing there (measured).
+local util = require("live_server.util")
 local eq, ok = H.eq, H.ok
 
 local function serve(root, extra)
@@ -335,7 +339,9 @@ H.case("Section 7: a dot path's change sends no reload", function()
     local linked = H.tmpdir()
     vim.fn.mkdir(linked .. "/.hidden", "p")
     H.write_file(linked .. "/.hidden/real.html", "<html><body>REAL</body></html>")
-    local made, made_err = uv.fs_symlink(".hidden/real.html", linked .. "/page.html")
+    -- Windows leaves a relative target spelled with a / dangling and
+    -- resolves one spelled with its own separator (measured).
+    local made, made_err = uv.fs_symlink(".hidden" .. package.config:sub(1, 1) .. "real.html", linked .. "/page.html")
     if made and uv.fs_stat(linked .. "/page.html") then
         local _, lc, lmark = watched({ default_index = linked .. "/page.html" }, linked)
         H.write_file(linked .. "/page.html", "<html><body>REAL 2</body></html>")
@@ -701,9 +707,11 @@ H.case("Section 8: a listing judges a link by where it points", function()
     vim.fn.mkdir(site .. "/.hidden/a", "p")
     H.write_file(site .. "/.hidden/b.txt", "b")
     H.write_file(site .. "/.hidden/a/own.txt", "own")
-    -- { target, link, whether the target exists }
+    -- { target, link, whether the target exists, whether it is a
+    -- directory }: Windows makes a link to a directory that resolves only
+    -- when told so (else fs_realpath EPERM, measured).
     local links = {
-        { ".git", "cfg", true },
+        { ".git", "cfg", true, true },
         { ".env", "dotlink", true },
         { "target.txt", ".hidden/plain", true },
         { ".inner", ".hidden/hid2", true },
@@ -714,7 +722,7 @@ H.case("Section 8: a listing judges a link by where it points", function()
     local why
     for _, l in ipairs(links) do
         local at = site .. "/" .. l[2]
-        local linked, err = uv.fs_symlink(l[1], at)
+        local linked, err = uv.fs_symlink(l[1], at, l[4] and { dir = true } or nil)
         if not linked or not uv.fs_lstat(at) or (l[3] and not uv.fs_stat(at)) then
             why = " (" .. tostring(err or "the link does not resolve") .. ")"
             break
@@ -774,7 +782,8 @@ H.case("Section 9: an entry the scan leaves untyped is judged as a link", functi
     local site = H.tmpdir()
     vim.fn.mkdir(site .. "/.git", "p")
     H.write_file(site .. "/page.txt", "page")
-    local linked, link_err = uv.fs_symlink(".git", site .. "/cfg")
+    -- A directory link resolves on Windows only when made as one.
+    local linked, link_err = uv.fs_symlink(".git", site .. "/cfg", { dir = true })
     if not (linked and uv.fs_stat(site .. "/cfg")) then
         H.skip(
             "an untyped cfg -> .git is not listed, page.txt is ("
@@ -842,7 +851,7 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
     local function ignored(inst)
         return ("live-server: port %d ignores %s: not a regular file"):format(
             inst.port,
-            vim.fs.joinpath(inst.root_real, ".liveignore")
+            util.joinpath(inst.root_real, ".liveignore")
         )
     end
 
@@ -999,7 +1008,7 @@ server.stop(inst)
     local want = shown.port
         and ("live-server: port %d ignores %s: not a regular file"):format(
             shown.port,
-            vim.fs.joinpath(shown.root_real, ".liveignore")
+            util.joinpath(shown.root_real, ".liveignore")
         )
     local child_warned = {}
     for _, n in ipairs(shown.notes or {}) do
@@ -1013,7 +1022,7 @@ server.stop(inst)
     local want_again = shown.two_port
         and ("live-server: port %d ignores %s: not a regular file"):format(
             shown.two_port,
-            vim.fs.joinpath(shown.two_root_real, ".liveignore")
+            util.joinpath(shown.two_root_real, ".liveignore")
         )
     local again = shown.again or {}
     ok(
@@ -1067,7 +1076,7 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
         eq(#inst.ignore_patterns, 0, label .. " gives no rule")
         local want = ("live-server: port %d ignores %s: %s"):format(
             inst.port,
-            vim.fs.joinpath(inst.root_real, ".liveignore"),
+            util.joinpath(inst.root_real, ".liveignore"),
             why
         )
         local warned = warnings(mark)
@@ -1105,12 +1114,12 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
         H.skip("a mode-000 .liveignore serves")
     else
         -- The cause names the path luv opened, under the resolved root.
-        local real_file = vim.fs.joinpath(assert(uv.fs_realpath(locked)), ".liveignore")
+        local real_file = util.joinpath(assert(uv.fs_realpath(locked)), ".liveignore")
         check("a mode-000 .liveignore", locked, (tostring(probe_err):gsub(vim.pesc(locked_file), real_file)))
     end
 
     local failing = site_with("dist\n")
-    local failing_file = vim.fs.joinpath(assert(uv.fs_realpath(failing)), ".liveignore")
+    local failing_file = util.joinpath(assert(uv.fs_realpath(failing)), ".liveignore")
     uv.fs_stat = function(path, ...)
         if path == failing_file then
             return nil, "EIO: stubbed", "EIO"
@@ -1128,7 +1137,7 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
         uv.fs_open, uv.fs_fstat = real_open, real_fstat
     end)
     local large = site_with(big)
-    local large_file = vim.fs.joinpath(assert(uv.fs_realpath(large)), ".liveignore")
+    local large_file = util.joinpath(assert(uv.fs_realpath(large)), ".liveignore")
     local opened = 0
     uv.fs_open = function(path, ...)
         if path == large_file then
@@ -1142,7 +1151,7 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
     eq(opened, 0, "and a 70 KiB .liveignore is never opened")
 
     local swapped = site_with("dist\n")
-    local swapped_file = vim.fs.joinpath(assert(uv.fs_realpath(swapped)), ".liveignore")
+    local swapped_file = util.joinpath(assert(uv.fs_realpath(swapped)), ".liveignore")
     local swapped_fd
     uv.fs_stat = function(path, ...)
         if path == swapped_file then
@@ -1173,7 +1182,6 @@ end)
 -- on one 29-byte path (measured), at every change. A run of stars is one
 -- star, which matches what the run matched.
 H.case("Section 10c: a run of stars in a .liveignore line is one star", function()
-    local util = require("live_server.util")
     -- match_ignore reads a rule's literal parts, kept by util for each list
     -- parse_liveignore returned, never the pattern string in the list, so
     -- the rows read the parts through match_ignore's upvalue.
@@ -1300,7 +1308,7 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     vim.notify = real_notify
     local want = ("live-server: port %d skips 2 lines of %s, the first line 2: each holds a NUL byte, which no path holds"):format(
         inst.port,
-        vim.fs.joinpath(inst.root_real, ".liveignore")
+        util.joinpath(inst.root_real, ".liveignore")
     )
     ok(
         #notes == 1 and notes[1].msg == want and notes[1].level == vim.log.levels.WARN,

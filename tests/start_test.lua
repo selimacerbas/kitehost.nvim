@@ -295,8 +295,9 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "asset_root", root .. "/content.md", ('asset_root is not a directory: "%s/content.md"'):format(root) },
         -- Every asset request under a credential directory answers 404,
         -- so a root there started and served nothing without a word; the
-        -- segment is named as the disk spells it.
-        { "asset_root", keys, ("asset_root is inside a credential directory (.SSH): %s"):format(vim.inspect(keys)) },
+        -- segment is named as the disk spells it, the path quoted as given,
+        -- where vim.inspect doubled each backslash of a Windows path.
+        { "asset_root", keys, ('asset_root is inside a credential directory (.SSH): "%s"'):format(keys) },
         -- A flag turned off on exactly false, so 0 turned it on.
         { "notify_on_reload", 0, "notify_on_reload must be true or false, got number" },
         { "notify_on_reload", "no", "notify_on_reload must be true or false, got string" },
@@ -1185,15 +1186,16 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             H.skip("and no descriptor")
         else
             local here = ("%s:%d"):format(specific, got.port)
-            -- macOS binds beside the listener and the probe refuses;
-            -- Linux refuses the bind itself, with its own cause. Any
-            -- EADDRINUSE passed on macOS, leaving the probe unpinned.
+            -- macOS and Windows bind beside the listener and the probe
+            -- refuses; Linux refuses the bind itself, with its own cause.
+            -- Any EADDRINUSE passed outside Linux, leaving the probe
+            -- unpinned.
             local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
                 got.port
             )
-            local darwin = vim.uv.os_uname().sysname == "Darwin"
+            local shadows = vim.uv.os_uname().sysname ~= "Linux"
             local refused
-            if darwin then
+            if shadows then
                 refused = got.res:find(shadow, 1, true) ~= nil
             else
                 refused = not got.res:find("another socket", 1, true) and got.res:find("EADDRINUSE", 1, true) ~= nil
@@ -1203,7 +1205,7 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
                 ("a %s start beside a %s listener raises, %s: %s"):format(
                     specific,
                     wildcard,
-                    darwin and "the probe naming the shadowed wildcard" or "the bind refusing the port",
+                    shadows and "the probe naming the shadowed wildcard" or "the bind refusing the port",
                     got.res
                 )
             )
@@ -1258,7 +1260,7 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             lan_got.port
         )
         local refused
-        if vim.uv.os_uname().sysname == "Darwin" then
+        if vim.uv.os_uname().sysname ~= "Linux" then
             refused = lan_got.res:find(shadow, 1, true) ~= nil
         else
             refused = lan_got.res:find("EADDRINUSE", 1, true) ~= nil
@@ -1318,7 +1320,7 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             v6_got.port
         )
         local refused
-        if vim.uv.os_uname().sysname == "Darwin" then
+        if vim.uv.os_uname().sysname ~= "Linux" then
             refused = v6_got.res:find(shadow, 1, true) ~= nil
         else
             refused = v6_got.res:find("EADDRINUSE", 1, true) ~= nil
@@ -1935,6 +1937,14 @@ H.case("a root that is no directory is refused before any socket opens", functio
         H.skip("a FIFO root is refused within 5 s (mkfifo: " .. tostring(made.stderr) .. ")")
         return
     end
+    -- The mkfifo on the Windows runner's PATH exits 0 where the system has
+    -- no FIFO, and leaves a name this Neovim cannot resolve (ENOENT,
+    -- measured), so the row runs only on a FIFO the stat reads as one.
+    local st = vim.uv.fs_stat(fifo)
+    if not st or st.type ~= "fifo" then
+        H.skip("a FIFO root is refused within 5 s (no FIFO this Neovim can stat; Windows has none)")
+        return
+    end
     local script = vim.fs.joinpath(H.tmpdir(), "child.lua")
     H.write_file(
         script,
@@ -2165,9 +2175,12 @@ end)
 -- leaves a C1 or a bidi control raw and cuts nothing. Each is shown as a
 -- notice shows a caller's text: a control as ?, cut at 300 bytes.
 H.case("every value a start refusal repeats is marked and cut at 300 bytes", function()
-    local file = vim.fs.joinpath(H.tmpdir(), "f\27[31m.txt")
+    -- Windows refuses a name holding a byte 1 to 31 (measured on the
+    -- hosted runner), so there the file is named with DEL and U+009B,
+    -- which a name may hold and the refusal marks as it marks ESC.
+    local file = vim.fs.joinpath(H.tmpdir(), is_win and "f\127[31m\194\155.txt" or "f\27[31m.txt")
     H.write_file(file, "x")
-    local shown_file = file:gsub("\27", "?")
+    local shown_file = file:gsub("[\27\127]", "?"):gsub("\194\155", "?")
     local x400 = ("x"):rep(400)
     for _, c in ipairs({
         { { index_names = { "a/\27[31mRED" } }, "index_names entry is not a file name: a/?[31mRED" },
