@@ -3290,6 +3290,11 @@ function S.update_target(inst, new_root, new_index)
             error(("update_target: %s holds a NUL byte"):format(arg[1]), 2)
         end
     end
+    -- An empty index named no file, so / fell to the index names with no
+    -- word; start refuses an empty default_index the same way.
+    if new_index == "" then
+        error("update_target: index is empty", 2)
+    end
     if inst.handle:is_closing() then
         return false
     end

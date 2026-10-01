@@ -24,10 +24,10 @@
 -- pending window; the directories under the root a scan cannot watch or
 -- read are dropped with one warning per scan. Every notice goes out
 -- marked. update_target refuses a root that does not resolve or is no
--- directory, an argument of the wrong type and a root or an index
--- holding a NUL byte, and changes nothing, each value it repeats marked
--- and cut at 300 bytes and an error by its name; a relative index names
--- the file it named when it was set.
+-- directory, an argument of the wrong type, a root or an index holding
+-- a NUL byte and an empty index, and changes nothing, each value it
+-- repeats marked and cut at 300 bytes and an error by its name; a
+-- relative index names the file it named when it was set.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -1867,6 +1867,10 @@ io.stdout:write(vim.json.encode({ moved = moved, res = tostring(res) }))
     ok(got, "a root holding a NUL raises at the caller: " .. err)
     got, err = refused("update_target: index holds a NUL byte", root, root .. "/hello.txt\0.html")
     ok(got, "an index holding a NUL raises at the caller: " .. err)
+    -- An empty index named no file, so / fell to the index names with no
+    -- word, where start refuses an empty default_index.
+    got, err = refused("update_target: index is empty", root, "")
+    ok(got, "an empty index raises at the caller: " .. err)
     -- The root and the index were repeated raw and whole, and libuv's text
     -- after the error's name repeated the root again: each is shown marked
     -- and cut at 300 bytes, the error by its name.
