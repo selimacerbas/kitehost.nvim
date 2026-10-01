@@ -36,9 +36,10 @@
 -- a pattern over 256 bytes, and one LuaJIT cannot read on a path (its
 -- raise stubbed, since none start takes nests that deep) answers that
 -- path 401 without the token with one warning (the token's holder
--- served), a zoned host reports the address it bound (a zone of digits,
--- as Windows spells one, among them, and the loopback's own name skipped
--- where it is no zone the host takes), a table naming every key start
+-- served), a zoned host reports the address it bound (the loopback's own
+-- name skipped where it is no zone the host takes), a zone of digits on
+-- ::1 is bound plain on macOS and Linux and refused at the bind on
+-- Windows, which takes no zone on ::1 but %0, a table naming every key start
 -- reads starts, START_KEYS names the keys check_start and S.start read in
 -- the source and no other, and each option is read from the caller's
 -- table once.
@@ -52,6 +53,7 @@ H.rtp()
 local server = require("live_server.server")
 local util = require("live_server.util")
 local ok, eq, http_get = H.ok, H.eq, H.http_get
+local is_win = vim.fn.has("win32") == 1
 
 -- Every refusal the suite provokes, kept as raised for the last case: the
 -- rows match a refusal by substring, which a "server.lua:NNN: " prefix
@@ -394,8 +396,8 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- read from the machine, and the zoned row is skipped where no IPv6
     -- loopback exists. Windows names an interface by its adapter's name,
     -- "Loopback Pseudo-Interface 1", which holds spaces and is no zone the
-    -- host takes, so that row skips naming it; a Windows zone is its
-    -- digits, which the host takes, as the digit row shows on every OS.
+    -- host takes, so that row skips naming it. A zone of digits is read
+    -- by the digit row below.
     local zone, unfit, loopback
     for name, list in pairs(vim.uv.interface_addresses() or {}) do
         for _, a in ipairs(list) do
@@ -421,7 +423,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         H.skip('host = "::FFFF:127.0.0.1" starts (this machine binds no v4-mapped address)')
     end
     if loopback then
-        vim.list_extend(accepted, { "::1", "::1%1" })
+        table.insert(accepted, "::1")
     else
         H.skip('host = "::1" and "::1%1" start (no IPv6 loopback on this machine)')
     end
@@ -443,6 +445,28 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         -- The address as bound, the zone left out.
         if started and host:find("%", 1, true) then
             eq(res.host, "::1", ("host = %s reports the address it bound"):format(vim.inspect(host)))
+        end
+    end
+    -- Windows reads a zone of digits as the interface's number and its
+    -- bind refuses every zone on ::1 but %0, the loopback's own number
+    -- included (EADDRNOTAVAIL, measured on the hosted runner); macOS and
+    -- Linux read a digit as no interface's name and bind plain ::1.
+    if loopback then
+        local started, inst = pcall(server.start, { port = 0, root = root, host = "::1%1" })
+        local res = started and "started" or tostring(inst)
+        if started then
+            server.stop(inst)
+        end
+        if is_win then
+            ok(
+                not started
+                    and res:find("Failed to bind ::1%1:", 1, true) == 1
+                    and res:find("EADDRNOTAVAIL", 1, true) ~= nil,
+                'host = "::1%1" passes the check and the bind refuses it, naming EADDRNOTAVAIL: ' .. res
+            )
+        else
+            ok(started, 'host = "::1%1" starts, its digit zone naming no interface here: ' .. res)
+            eq(started and inst.host, "::1", 'host = "::1%1" reports the address it bound')
         end
     end
     -- A zone is an interface name: the check read only the text before

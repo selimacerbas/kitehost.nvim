@@ -117,14 +117,15 @@ Options:
     carry a `%zone` of letters, digits, `.`, `_` and `-`, not checked
     against the interfaces; on macOS a zoned link-local bind starts and
     answers no request. On Windows write the zone as the interface's
-    number (`"::1%1"`), since a name there such as
-    `Loopback Pseudo-Interface 1` holds spaces. `inst.host` carries no
-    zone, nor does any URL the plugin opens, |:LiveServerOpen| on a port
-    no server of this plugin holds included. `"0.0.0.0"` serves every
-    file under the root, except a dot path (unless `serve_dotfiles` is
-    set) and an entry named `__live` at the root in any letter case, and
-    the file you started on, at `/`, to anyone who can reach the port;
-    set `token` there and read SECURITY.md first.
+    number, since a name there such as `Loopback Pseudo-Interface 1`
+    holds spaces, and Windows refuses a zone on `::1` other than `%0` at
+    the bind (`EADDRNOTAVAIL`). `inst.host` carries no zone, nor does
+    any URL the plugin opens, |:LiveServerOpen| on a port no server of
+    this plugin holds included. `"0.0.0.0"` serves every file under the
+    root, except a dot path (unless `serve_dotfiles` is set) and an entry
+    named `__live` at the root in any letter case, and the file you
+    started on, at `/`, to anyone who can reach the port; set `token`
+    there and read SECURITY.md first.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
