@@ -439,7 +439,7 @@ H.wait_for(function()
 end, 1000)
 -- A second warning scheduled by the later request would land here.
 vim.wait(100)
-local head = ("live-server: port %d asset_root raised ("):format(inst.port)
+local head = ("kitehost: port %d asset_root raised ("):format(inst.port)
 local tail = "); the asset request was answered 404"
 local msg = notes[1] and notes[1].msg or ""
 H.ok(
@@ -522,7 +522,7 @@ for _, c in ipairs(answers) do
         return #notes >= 1
     end, 1000)
     vim.wait(100)
-    local want = ("live-server: port %d asset_root answered %s; the asset request was answered 404"):format(
+    local want = ("kitehost: port %d asset_root answered %s; the asset request was answered 404"):format(
         inst.port,
         c[3]
     )
@@ -573,7 +573,7 @@ for _, c in ipairs({
             return #notes >= 1
         end, 1000)
         vim.wait(100)
-        local want = ('live-server: port %d asset_root "%s" %s since start; the asset request was answered 404'):format(
+        local want = ('kitehost: port %d asset_root "%s" %s since start; the asset request was answered 404'):format(
             inst.port,
             kept,
             fault
@@ -628,7 +628,7 @@ do
             return #notes >= 1
         end, 1000)
         vim.wait(100)
-        local want = ('live-server: port %d asset_root "%s" resolves to "%s" since start; the asset request was answered 404'):format(
+        local want = ('kitehost: port %d asset_root "%s" resolves to "%s" since start; the asset request was answered 404'):format(
             inst.port,
             link,
             assert(uv.fs_realpath(second))

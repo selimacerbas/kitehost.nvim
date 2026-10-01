@@ -147,7 +147,7 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
     local port = inst and inst.port or -1
     eq(
         notes[1],
-        ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
+        ("kitehost: port %d started → %s at %s"):format(port, root, tostring(url)),
         "the start notice prints the opened URL"
     )
     ok(
@@ -183,7 +183,7 @@ H.case("Section 2: setup opens and prints its server's URL, the token included",
     port = inst and inst.port or -1
     eq(
         notes[1],
-        ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
+        ("kitehost: port %d started → %s at %s"):format(port, root, tostring(url)),
         "a tokenless start notice prints its URL with no query"
     )
     ok(
@@ -226,7 +226,7 @@ H.case("Section 3: the start notice is silenced, printed once, and is the opened
     eq(url, ("http://127.0.0.1:%d/?t=abc"):format(port), "a wildcard bind opens its loopback URL")
     eq(
         notes[1],
-        ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
+        ("kitehost: port %d started → %s at %s"):format(port, root, tostring(url)),
         "and its start notice prints that URL byte for byte"
     )
 
@@ -241,7 +241,7 @@ H.case("Section 3: the start notice is silenced, printed once, and is the opened
         port = inst and inst.port or -1
         eq(
             notes[1],
-            ("LiveServer %d started → %s at %s"):format(port, root, tostring(url)),
+            ("kitehost: port %d started → %s at %s"):format(port, root, tostring(url)),
             "a host the bind spells otherwise prints the opened URL byte for byte"
         )
     else
@@ -303,14 +303,14 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     local note = refused_with({ token = "" })
     eq(
         note.msg,
-        "LiveServer 0 did not start: token must be a non-empty string",
+        "kitehost: port 0 did not start: token must be a non-empty string",
         "a refused option is reported in the server's words, after what failed"
     )
     eq(note.level, vim.log.levels.ERROR, "as an error")
     -- TEST-NET-1 (RFC 5737) is assigned to no interface on any OS.
     note = refused_with({ host = "192.0.2.1" })
     ok(
-        raised[1] ~= nil and note.msg == "LiveServer 0 did not start: " .. raised[1],
+        raised[1] ~= nil and note.msg == "kitehost: port 0 did not start: " .. raised[1],
         ("a failed bind is reported as the server raised it: %s (raised %s)"):format(
             tostring(note.msg),
             tostring(raised[1])
@@ -332,7 +332,7 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     note = refused_with({ notify = false })
     picked_port = 0
     ok(
-        raised[1] ~= nil and note.msg == ("LiveServer %d did not start: "):format(held_port) .. raised[1],
+        raised[1] ~= nil and note.msg == ("kitehost: port %d did not start: "):format(held_port) .. raised[1],
         ("with notify = false a start on a taken port still says it did not start: %s (raised %s)"):format(
             tostring(note.msg),
             tostring(raised[1])
@@ -350,7 +350,7 @@ H.case("Section 5: a refused start says it did not start, then the server's caus
     picked_port = 0
     eq(
         notes[1] and notes[1].msg,
-        "No live-server instance on that port.",
+        "kitehost: no instance on that port.",
         "with notify = false a warning is still shown: " .. vim.inspect(notes, { newline = " ", indent = "" })
     )
     eq(notes[1] and notes[1].level, vim.log.levels.WARN, "as a warning")
@@ -727,7 +727,7 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     local note = notes[1] or {}
     eq(
         note.msg,
-        ("LiveServer %d could not retarget: update_target: root %s does not resolve (ENOENT)"):format(
+        ("kitehost: port %d could not retarget: update_target: root %s does not resolve (ENOENT)"):format(
             inst.port,
             unresolved
         ),
@@ -767,7 +767,7 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     local said = notes[1] or {}
     eq(
         said.msg,
-        ("LiveServer %d retargeted to %s; live reload is off"):format(inst.port, shown),
+        ("kitehost: port %d retargeted to %s; live reload is off"):format(inst.port, shown),
         ("and says live reload is off, naming the port, the root marked (its %s and U+202E)"):format(control)
     )
     eq(said.level, vim.log.levels.WARN, "as a warning")
@@ -874,7 +874,7 @@ H.case("Section 11: :KiteHost status prints under notify = false", function()
     ls.status()
     local shown = table.concat(notices, "\n")
     ok(
-        inst ~= nil and shown:find(("LiveServer status:\n  :%d "):format(inst.port), 1, true) ~= nil,
+        inst ~= nil and shown:find(("kitehost: status:\n  :%d "):format(inst.port), 1, true) ~= nil,
         "with a server running it lists the server: " .. shown
     )
     ls.stop_all()
@@ -933,7 +933,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 return held_port
             end,
             true,
-            "^LiveServer %s did not start: ",
+            "^kitehost: port %s did not start: ",
         },
         {
             "a file not yet on disk",
@@ -951,7 +951,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 return "x"
             end,
             true,
-            "^LiveServer %s did not start: port must be an integer",
+            "^kitehost: port %s did not start: port must be an integer",
         },
         {
             "a refused retarget",
@@ -967,7 +967,7 @@ H.case("Section 12: no auto-start notice raises out of the edit", function()
                 return inst.port
             end,
             true,
-            "^LiveServer %s could not retarget: update_target: stubbed$",
+            "^kitehost: port %s could not retarget: update_target: stubbed$",
         },
     }
     for i, shape in ipairs(shapes) do
@@ -1060,7 +1060,7 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     local said = notes[1] and notes[1].msg or ""
     eq(
         said:match("^(.-) at "),
-        ("LiveServer %s started → %s"):format(tostring(port), shown),
+        ("kitehost: port %s started → %s"):format(tostring(port), shown),
         ("the start notice shows the root's controls (%s and U+202E) as ?"):format(controls)
     )
     notes, target, picked_port = {}, other, port or 0
@@ -1068,7 +1068,7 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     picked_port = 0
     eq(
         notes[1] and notes[1].msg,
-        ("LiveServer %s retargeted → %s"):format(tostring(port), other_shown),
+        ("kitehost: port %s retargeted → %s"):format(tostring(port), other_shown),
         "the retarget notice shows them as ?"
     )
     notes = {}
@@ -1093,7 +1093,7 @@ H.case("Section 13: every notice naming a root shows its controls as ?", functio
     vim.uv.fs_realpath = real_realpath
     eq(
         notes[1] and notes[1].msg,
-        ("LiveServer 0 did not start: root %s does not resolve (ENOENT)"):format(shown),
+        ("kitehost: port 0 did not start: root %s does not resolve (ENOENT)"):format(shown),
         "a refused start shows the server's text with them as ?"
     )
 end)

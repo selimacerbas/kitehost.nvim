@@ -886,7 +886,7 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
         return inst
     end
     local function ignored(inst)
-        return ("live-server: port %d ignores %s: not a regular file"):format(
+        return ("kitehost: port %d ignores %s: not a regular file"):format(
             inst.port,
             util.joinpath(inst.root_real, ".liveignore")
         )
@@ -1052,7 +1052,7 @@ server.stop(inst)
     )
     local shown = type(child) == "table" and child or {}
     local want = shown.port
-        and ("live-server: port %d ignores %s: not a regular file"):format(
+        and ("kitehost: port %d ignores %s: not a regular file"):format(
             shown.port,
             util.joinpath(shown.root_real, ".liveignore")
         )
@@ -1066,7 +1066,7 @@ server.stop(inst)
     eq(shown.rules, 0, "and gives no rule")
     -- The kind was spent per server, so a second root's went unsaid.
     local want_again = shown.two_port
-        and ("live-server: port %d ignores %s: not a regular file"):format(
+        and ("kitehost: port %d ignores %s: not a regular file"):format(
             shown.two_port,
             util.joinpath(shown.two_root_real, ".liveignore")
         )
@@ -1120,7 +1120,7 @@ H.case("Section 10b: a .liveignore that cannot be read, or is too large, is name
             undo()
         end
         eq(#inst.ignore_patterns, 0, label .. " gives no rule")
-        local want = ("live-server: port %d ignores %s: %s"):format(
+        local want = ("kitehost: port %d ignores %s: %s"):format(
             inst.port,
             util.joinpath(inst.root_real, ".liveignore"),
             why
@@ -1352,7 +1352,7 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     end, 1000)
     vim.wait(100)
     vim.notify = real_notify
-    local want = ("live-server: port %d skips 2 lines of %s, the first line 2: each holds a NUL byte, which no path holds"):format(
+    local want = ("kitehost: port %d skips 2 lines of %s, the first line 2: each holds a NUL byte, which no path holds"):format(
         inst.port,
         util.joinpath(inst.root_real, ".liveignore")
     )

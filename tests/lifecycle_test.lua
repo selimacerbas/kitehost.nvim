@@ -2244,7 +2244,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
             ok(
                 #warned == 1
                     and warned[1]
-                        == ("live-server: port %d could not watch %s (%s); live reload is off"):format(
+                        == ("kitehost: port %d could not watch %s (%s); live reload is off"):format(
                             res.port,
                             site,
                             case[2]
@@ -2275,7 +2275,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     local warned = warnings(mark)
     ok(
         #warned == 1
-            and warned[1]:find(("live-server: port %d could not watch "):format(off.port), 1, true) == 1
+            and warned[1]:find(("kitehost: port %d could not watch "):format(off.port), 1, true) == 1
             and warned[1]:find("ENOSPC: stubbed", 1, true) ~= nil,
         "and warns once, naming the port and the cause: " .. vim.inspect(warned)
     )
@@ -2326,7 +2326,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     warned = warnings(mark)
     ok(
         #warned == 1
-            and warned[1]:find(("live-server: port %d could not watch "):format(on.port), 1, true) == 1
+            and warned[1]:find(("kitehost: port %d could not watch "):format(on.port), 1, true) == 1
             and warned[1]:find("ENOSPC: stubbed", 1, true) ~= nil,
         "and warns once, naming the port and the cause: " .. vim.inspect(warned)
     )
@@ -2355,7 +2355,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     ok(
         #warned == 1
             and warned[1]
-                == ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(
+                == ("kitehost: port %d cannot watch %s (ENOSPC: stubbed)"):format(
                     per.port,
                     util.joinpath(real_tree, "a")
                 ),
@@ -2372,7 +2372,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     warned = warnings(mark)
     ok(
         #warned == 1
-            and warned[1]:find(("live-server: port %d could not watch "):format(per.port), 1, true) == 1
+            and warned[1]:find(("kitehost: port %d could not watch "):format(per.port), 1, true) == 1
             and warned[1]:find("live reload is off", 1, true) ~= nil,
         "and warns that live reload is off, after a directory's warning: " .. vim.inspect(warned)
     )
@@ -2391,7 +2391,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     ok(
         #warned == 1
             and warned[1]
-                == ("live-server: port %d cannot watch the directories under %s (EACCES: stubbed)"):format(
+                == ("kitehost: port %d cannot watch the directories under %s (EACCES: stubbed)"):format(
                     unread.port,
                     util.joinpath(real_tree, "b")
                 ),
@@ -2414,7 +2414,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     eq(server.is_live_enabled(two_of), true, "and live reload stays on")
     warned = warnings(mark)
     local function counted(first)
-        return ("live-server: port %d cannot watch %s and 1 more under %s (ENOSPC: stubbed)"):format(
+        return ("kitehost: port %d cannot watch %s and 1 more under %s (ENOSPC: stubbed)"):format(
             two_of.port,
             util.joinpath(real_three, first),
             real_three
@@ -2571,7 +2571,7 @@ H.case("Section 9c: every notice goes out marked", function()
     local watch = notes[mark + 1] and notes[mark + 1].msg or ""
     eq(
         watch,
-        ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(
+        ("kitehost: port %d cannot watch %s (ENOSPC: stubbed)"):format(
             inst.port,
             util.joinpath(real_tree, "d?[31m?????e")
         ),
@@ -2587,7 +2587,7 @@ H.case("Section 9c: every notice goes out marked", function()
     local reload = notes[mark + 1] and notes[mark + 1].msg or ""
     eq(
         reload,
-        ("live-server: port %d reload → d?[31m?????e.html"):format(loud.port),
+        ("kitehost: port %d reload → d?[31m?????e.html"):format(loud.port),
         "the notify_on_reload notice naming a crafted path arrives marked, naming the port"
     )
     local clean_reload

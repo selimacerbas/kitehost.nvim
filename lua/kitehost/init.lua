@@ -273,15 +273,15 @@ function start_for_path(path, port, in_autocmd)
         -- By pcall itself, so a refused root is a notice with no position.
         local retargeted, answer = pcall(server.update_target, s, root, index)
         if not retargeted then
-            return say(("LiveServer %s could not retarget: %s"):format(tostring(port), tostring(answer)), "ERROR")
+            return say(("kitehost: port %s could not retarget: %s"):format(tostring(port), tostring(answer)), "ERROR")
         end
         -- The retarget read as done while its live reload went off unsaid;
         -- the server's own warning names the cause.
         if answer == false then
-            say(("LiveServer %d retargeted to %s; live reload is off"):format(port, root), "WARN")
+            say(("kitehost: port %d retargeted to %s; live reload is off"):format(port, root), "WARN")
         else
             say(
-                ("LiveServer %d retargeted → %s%s"):format(
+                ("kitehost: port %d retargeted → %s%s"):format(
                     port,
                     root,
                     index and (" (index " .. util.basename(index) .. ")") or ""
@@ -322,7 +322,7 @@ function start_for_path(path, port, in_autocmd)
             -- the one asked for, as the retarget notices name theirs; an
             -- auto_start port is the config's own, unchecked until start
             -- refuses it, so it is spelled by tostring, never by %d.
-            return say(("LiveServer %s did not start: %s"):format(tostring(port), tostring(inst_or_err)), "ERROR")
+            return say(("kitehost: port %s did not start: %s"):format(tostring(port), tostring(inst_or_err)), "ERROR")
         end
         active_port = inst_or_err.port
         M.state.servers[active_port] = inst_or_err
@@ -335,7 +335,7 @@ function start_for_path(path, port, in_autocmd)
     local s = M.state.servers[active_port]
     local url = browser_url(s.host, active_port, s.token)
     if started_here then
-        say(("LiveServer %d started → %s at %s"):format(active_port, root, url))
+        say(("kitehost: port %d started → %s at %s"):format(active_port, root, url))
     end
     if M.opts.open_on_start then
         util.open_browser(url)
@@ -394,7 +394,7 @@ function M.force_reload()
         end
         local s = M.state.servers[tonumber(port)]
         if not s then
-            return util.notify("No live-server instance on that port.", M.opts, "WARN")
+            return util.notify("kitehost: no instance on that port.", M.opts, "WARN")
         end
         server.reload(s, "manual")
     end)
@@ -411,7 +411,7 @@ function M.toggle_livereload()
         end
         local s = M.state.servers[tonumber(port)]
         if not s then
-            return util.notify("No live-server instance on that port.", M.opts, "WARN")
+            return util.notify("kitehost: no instance on that port.", M.opts, "WARN")
         end
         local want = not server.is_live_enabled(s)
         local enabled, cause = server.enable_live(s, want)
@@ -429,10 +429,10 @@ end
 function M.stop_one()
     local ports = vim.tbl_keys(M.state.servers)
     if #ports == 0 then
-        return util.notify("No live-server instances to stop.", M.opts, "WARN")
+        return util.notify("kitehost: no instances to stop.", M.opts, "WARN")
     end
     util.pick_list({
-        title = "Stop LiveServer on Port",
+        title = "kitehost: Stop on Port",
         items = vim.tbl_map(function(p)
             return tostring(p)
         end, ports),
@@ -445,7 +445,7 @@ function M.stop_one()
         if s then
             server.stop(s)
             M.state.servers[port] = nil
-            util.notify(("Stopped LiveServer %d"):format(port), M.opts)
+            util.notify(("kitehost: port %d stopped"):format(port), M.opts)
         end
     end)
 end
@@ -459,7 +459,7 @@ function M.stop_all()
         end
     end
     M.state.servers = {}
-    util.notify("Stopped all LiveServer instances.", M.opts)
+    util.notify("kitehost: stopped all instances.", M.opts)
 end
 
 -- Status. Printed whatever notify says: the command exists to print, and
@@ -472,7 +472,7 @@ function M.status()
         return util.notify("No running servers.", SHOWN)
     end
     table.sort(ports)
-    local lines = { "LiveServer status:" }
+    local lines = { "kitehost: status:" }
     for _, port in ipairs(ports) do
         local s = M.state.servers[port]
         local live = server.is_live_enabled(s) and "ON" or "OFF"

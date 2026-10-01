@@ -22,7 +22,7 @@ function U.notify(msg, opts, level)
     if opts and opts.notify == false and lvl < vim.log.levels.WARN then
         return
     end
-    vim.notify(msg, lvl, { title = "live-server.nvim" })
+    vim.notify(msg, lvl, { title = "kitehost.nvim" })
 end
 
 -- A name from before 2.0.0 warns once a session and goes in 3.0.0. The
@@ -288,7 +288,7 @@ function U.pick_path(cb)
 
         pickers
             .new({}, {
-                prompt_title = "LiveServer: Choose path",
+                prompt_title = "kitehost: Choose path",
                 finder = finders.new_table({
                     results = menu,
                     entry_maker = function(e)
@@ -303,7 +303,7 @@ function U.pick_path(cb)
                         local tag = entry and entry.value
                         if tag == "__PICK_FILE__" then
                             require("telescope.builtin").find_files({
-                                prompt_title = "LiveServer: Pick file",
+                                prompt_title = "kitehost: Pick file",
                                 cwd = cwd,
                                 attach_mappings = function(pb)
                                     actions.select_default:replace(function()
@@ -341,7 +341,7 @@ function U.pick_path(cb)
         -- Fallback: simple UI
         vim.ui.select(
             { "Pick file", "Pick directory", "Current file", "Current directory" },
-            { prompt = "LiveServer: Choose path" },
+            { prompt = "kitehost: Choose path" },
             function(choice)
                 if choice == "Pick file" then
                     vim.ui.input({ prompt = "File path: " }, cb)

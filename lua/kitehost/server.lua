@@ -239,7 +239,7 @@ end
 local function report_raise(port, path, raised)
     local cause = raise_line(raised)
     local shown = util.marked(path:match("^[^?#]*"), 200)
-    local line = ("live-server: port %d %s failed: %s"):format(port, shown, cause)
+    local line = ("kitehost: port %d %s failed: %s"):format(port, shown, cause)
     vim.schedule(function()
         util.notify(line, { notify = true }, "ERROR")
     end)
@@ -565,10 +565,10 @@ local CLIENT_ON = table.concat({
     "if(ls.length){ls.forEach(function(l){var h=l.href.replace(/[?&]_lr=\\d+/,'');",
     "l.href=h+(h.indexOf('?')>-1?'&':'?')+'_lr='+Date.now()});return}}",
     "location.reload()});",
-    "es.onopen=function(){console.log('[live-server.nvim] connected')};",
-    "es.onerror=function(e){console.warn('[live-server.nvim] SSE error',e)};",
+    "es.onopen=function(){console.log('[kitehost] connected')};",
+    "es.onerror=function(e){console.warn('[kitehost] SSE error',e)};",
 })
-local CLIENT_END = "}catch(e){console.warn('[live-server.nvim] no EventSource',e)}}();"
+local CLIENT_END = "}catch(e){console.warn('[kitehost] no EventSource',e)}}();"
 
 -- A tokenless server's client, byte for byte the one it always served.
 local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" .. CLIENT_ON .. CLIENT_END
@@ -592,9 +592,9 @@ local CLIENT_JS = "!function(){try{var es=new EventSource('/__live/events');" ..
 -- any page may load.
 local CLIENT_JS_TOKEN = table.concat({
     "!function(){try{",
-    "var k='live-server.nvim:t',q=new URLSearchParams(location.search).get('t'),s=null,x,o;",
+    "var k='kitehost:t',q=new URLSearchParams(location.search).get('t'),s=null,x,o;",
     "try{s=sessionStorage.getItem(k)}catch(e){x=e}",
-    "var w=function(m){console.warn('[live-server.nvim] '+m)},",
+    "var w=function(m){console.warn('[kitehost] '+m)},",
     "p=function(t){try{sessionStorage.setItem(k,t)}catch(e){w('the token could not be kept: '+e)}},",
     "c=function(t){o=1;var u,v,es=new EventSource('/__live/events?t='+encodeURIComponent(t));",
     "es.addEventListener('open',function(){u=v=1;if(t===q&&s&&s!==q)p(t)});",
@@ -783,7 +783,7 @@ local function warn_once(inst, kind, text)
         return
     end
     inst.warned[kind] = true
-    local line = util.marked(("live-server: port %d %s"):format(inst.port, text))
+    local line = util.marked(("kitehost: port %d %s"):format(inst.port, text))
     if inst.queued then
         table.insert(inst.queued, line)
         return
@@ -814,7 +814,7 @@ local function send_reload(inst, rp, css)
     -- The path may be a peer's file name, so the line is marked.
     if inst.notify_on_reload then
         local line = util.marked(
-            ("live-server: port %d reload%s → %s"):format(
+            ("kitehost: port %d reload%s → %s"):format(
                 inst.port,
                 is_css and " (CSS)" or "",
                 rp ~= "" and rp or "manual"
@@ -3445,7 +3445,7 @@ function S.start(cfg)
             if inst.handle:is_closing() then
                 return
             end
-            local line = "live-server: port %d answers any Host: allowed_hosts = true turns the Host check off;"
+            local line = "kitehost: port %d answers any Host: allowed_hosts = true turns the Host check off;"
                 .. " a DNS-rebinding page can read this server"
             util.notify(line:format(inst.port), { notify = true }, "WARN")
         end)

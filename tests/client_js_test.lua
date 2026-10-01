@@ -33,18 +33,20 @@ local function script(cfg)
     return H.http_get(("http://127.0.0.1:%d/__live/script.js"):format(inst.port))
 end
 
+-- v1.5.0's client but for its console prefix, now [kitehost]: written back
+-- to the former prefix, these bytes were v1.5.0's 576 (measured).
 H.case("Section 1: a tokenless server's client is the one it always served", function()
     local r = script()
     eq(r.status, 200, "the client is served")
-    eq(#r.body, 576, "576 bytes, as v1.5.0 served")
+    eq(#r.body, 552, "552 bytes, as v1.5.0 served but for the console prefix")
     eq(
         vim.fn.sha256(r.body),
-        "376cf1554a8830f105cc712512d33e040427288a9c94b9bcb19707627c3023b6",
-        "the same bytes as v1.5.0 served"
+        "6b2c7f5cbe5ae76a809a3ee199869b5a9b901c8efba74984790e6b68d339fc19",
+        "the same bytes as v1.5.0 served but for the console prefix"
     )
 end)
 
-local HINT = "[live-server.nvim] no token: open the page with ?t=<token> in its URL"
+local HINT = "[kitehost] no token: open the page with ?t=<token> in its URL"
 
 H.case("Section 2: a token server's client carries the page's token to the stream", function()
     local r = script({ token = "tok123" })
@@ -52,8 +54,8 @@ H.case("Section 2: a token server's client carries the page's token to the strea
     -- Substrings alone passed a client with a syntax error, which dies on
     -- every token server, so its bytes are pinned as the tokenless one's
     -- are; the rows after the pin say what those bytes must hold.
-    eq(#r.body, 1540, "1540 bytes, pinned as the tokenless client is")
-    eq(vim.fn.sha256(r.body), "e69bdfc7a8ccbe9a631529265dc0e2305c2597c887eeaf0858d8aa2183c06c4e", "and by its sha256")
+    eq(#r.body, 1500, "1500 bytes, pinned as the tokenless client is")
+    eq(vim.fn.sha256(r.body), "adb3dfd1bc7d0468f0ca42b3ab6609eec762efe60ffc337fbef26d47fb462b04", "and by its sha256")
     ok(r.body:find("location.search", 1, true) ~= nil, "it reads t from the page's query")
     ok(r.body:find("sessionStorage", 1, true) ~= nil, "and keeps it for reloads that drop the query")
     ok(r.body:find("'/__live/events?t='+encodeURIComponent(t)", 1, true) ~= nil, "and puts it on the event stream")
@@ -77,7 +79,7 @@ end)
 local RUNNER = [==[
 'use strict';
 const src = require('fs').readFileSync(process.argv[2], 'utf8');
-const K = 'live-server.nvim:t';
+const K = 'kitehost:t';
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 function tab(store) {
   const t = { store: store || {}, docs: [], queue: [] };
@@ -307,7 +309,7 @@ local function token_pages()
 end
 
 local EVENTS = "/__live/events"
-local REFUSED = "[live-server.nvim] the token was refused: open the page with the server's ?t=<token>"
+local REFUSED = "[kitehost] the token was refused: open the page with the server's ?t=<token>"
 
 -- Every page of the node run, each checked for a raise, its stream URLs as
 -- one line, and its own warnings: the SSE error line every closed stream
@@ -327,7 +329,7 @@ local function reader()
     local function warned(p)
         local own = {}
         for _, line in ipairs(p.warns or { "unread" }) do
-            if not vim.startswith(line, "[live-server.nvim] SSE error") then
+            if not vim.startswith(line, "[kitehost] SSE error") then
                 table.insert(own, line)
             end
         end

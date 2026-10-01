@@ -8,5 +8,5 @@
 -- indexes vim.fs, which Neovim before 0.8 lacks.
 return {
     ok = vim.fn.has("nvim-0.10") == 1 and vim.uv ~= nil,
-    message = "live-server.nvim requires Neovim 0.10 or newer; on Neovim 0.8 or 0.9 pin the plugin to v1.5.0",
+    message = "kitehost.nvim requires Neovim 0.10 or newer; on Neovim 0.8 or 0.9 pin the plugin to v1.5.0",
 }

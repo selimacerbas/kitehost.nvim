@@ -704,7 +704,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- The pattern is named marked and cut at 300 bytes, which start's 256
     -- leaves whole.
     local function warning(url)
-        return ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
+        return ("kitehost: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(url:match(":(%d+)/")),
             deep,
             "pattern too complex"
@@ -752,7 +752,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     if escaped then
         answers_401(escaped, "an unreadable pattern holding an escape is 401")
         local count = settled(seen + 1)
-        local want = ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
+        local want = ("kitehost: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(escaped:match(":(%d+)/")),
             "^/??" .. string.rep("x*/", 80),
             "pattern too complex"
