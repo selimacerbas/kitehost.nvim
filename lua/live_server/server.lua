@@ -1510,12 +1510,13 @@ end
 
 -- Whether a path needs ?t=<token>: the live endpoints and any
 -- protected_paths pattern, asked only for a request that does not carry
--- the token (authorized). Start refuses a malformed pattern, but a
--- well-formed one can nest past LuaJIT's depth on a path ("pattern too
--- complex") and raise here, in the read callback, where it left the
--- request unanswered: a raise reads as a match, since the gate cannot
--- tell what it protects. A match also costs time on the loop, which a
--- backtracking pattern spends on a long path; MAX_TARGET bounds the path.
+-- the token (authorized). Start refuses a malformed pattern, and none it
+-- takes is known to nest past LuaJIT's depth within 256 bytes (the
+-- deepest shapes found raised on no path tried), yet each read stays
+-- under pcall: a raise in the read callback left the request unanswered,
+-- so one reads as a match, since the gate cannot tell what it protects.
+-- A match also costs time on the loop, which a backtracking pattern
+-- spends on a long path; MAX_TARGET bounds the path.
 -- Every pattern is read, so the answer does not hang on the list's order.
 -- A 401 alone reads like a bad token, so the first pattern that raises is
 -- named once per instance (warn_once). dir: p names a directory, refused
