@@ -16,7 +16,7 @@ The plugin is kitehost.nvim from this release. Through 2.x the former lazy.nvim 
 | Entry module | `require("live_server")` | `require("kitehost")` |
 | Plugin-author modules | `require("live_server.server")`, `require("live_server.util")` | `require("kitehost.server")`, `require("kitehost.util")` |
 | Commands | `:LiveServerStart`, `:LiveServerStop`, `:LiveServerStopAll`, `:LiveServerOpen`, `:LiveServerReload`, `:LiveServerStatus`, `:LiveServerToggleLive` | `:KiteHost` with `start`, `stop`, `stop-all`, `open`, `reload`, `status` and `toggle-live`, one for each former command in that order, completed by `<Tab>`, none taking an argument; a bare `:KiteHost` runs `start` |
-| Notices | `LiveServer <port> ...`, `live-server: port <n> ...`, and some with no prefix | `kitehost: port <n> ...`; every notice starts `kitehost:` |
+| Notices | `LiveServer <port> ...`, and some with no prefix | `kitehost: port <n> ...`; every notice starts `kitehost:` but a deprecation warning, which is Neovim's own text (`:LiveServerStatus is deprecated, use :KiteHost status instead.`) |
 | Notification title | `live-server.nvim` | `kitehost.nvim` |
 | Statusline | `[LS :8000]` | `[kitehost :8000]` |
 | Help | `doc/live-server.txt`, `:help live-server.nvim` | `doc/kitehost.txt`, `:help kitehost.nvim`; the former command and function tags stay, under `:help kitehost-deprecated` |
@@ -121,7 +121,7 @@ A lazy.nvim spec named after neither repository (a fork, or a `name` or `dir` of
 
 ### Removed
 
-- **BREAKING:** Neovim 0.8 and 0.9 support (v1.5.0's README declared 0.8+). Below 0.10 the plugin shows one notification, "kitehost.nvim requires Neovim 0.10 or newer; on Neovim 0.8 or 0.9 pin the plugin to v1.5.0", every command refuses with the same message, the statusline component shows nothing, and requiring `kitehost.server` or `kitehost.util`, or either by its former name, raises the message. To stay on Neovim 0.8 or 0.9, pin v1.5.0, the last release that runs there (`tag = "v1.5.0"` in a lazy.nvim spec). v1.5.0 receives no fixes and keeps every hole this section's Security entries close.
+- **BREAKING:** Neovim 0.8 and 0.9 support (v1.5.0's README declared 0.8+). Below 0.10 the plugin shows one notification, "kitehost: requires Neovim 0.10 or newer; on Neovim 0.8 or 0.9 pin the plugin to v1.5.0", every command refuses with the same message, the statusline component shows nothing, and requiring `kitehost.server` or `kitehost.util`, or either by its former name, raises the message. To stay on Neovim 0.8 or 0.9, pin v1.5.0, the last release that runs there (`tag = "v1.5.0"` in a lazy.nvim spec). v1.5.0 receives no fixes and keeps every hole this section's Security entries close.
 
 ### Fixed
 

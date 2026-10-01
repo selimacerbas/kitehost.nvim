@@ -77,7 +77,7 @@ Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still
 | Entry module | `require("live_server")` | `require("kitehost")` |
 | Server module | `require("live_server.server")` | `require("kitehost.server")` |
 | Util module | `require("live_server.util")` | `require("kitehost.util")` |
-| Notice prefix | `LiveServer <port>` and `live-server: port <n>` | `kitehost: port <n>`, and every other notice starts `kitehost:` |
+| Notice prefix | `LiveServer <port>`, and some with no prefix | `kitehost: port <n>`, and every other notice starts `kitehost:` but a deprecation warning, which is Neovim's own text (`:LiveServerStatus is deprecated, use :KiteHost status instead.`) |
 | Notification title | `live-server.nvim` | `kitehost.nvim` |
 | Statusline | `[LS :8000]` | `[kitehost :8000]` |
 | Help | `:help live-server.nvim` | `:help kitehost.nvim` (the former tags: `:help kitehost-deprecated`) |

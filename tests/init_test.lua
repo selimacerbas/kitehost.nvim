@@ -897,8 +897,9 @@ H.case("Section 11b: the statusline reads kitehost and each port", function()
     eq(ls.statusline(), "", "none: an empty string")
 end)
 
--- Every notice starts kitehost:, so :messages names the plugin that sent
--- it; these had no prefix before 2.0.0.
+-- Every notice but a deprecation warning, which is Neovim's own text,
+-- starts kitehost:, so :messages names the plugin that sent it; these had
+-- no prefix before 2.0.0.
 H.case("Section 11c: the toggle's and the pickers' notices read kitehost:", function()
     local _, _, inst = start_with({ notify = true })
     local ls = require("kitehost")
