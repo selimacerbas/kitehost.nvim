@@ -25,8 +25,9 @@
 -- listener holds its port. Each construct of a well-formed pattern starts,
 -- one that nests too deep for LuaJIT on a path gates every path it is
 -- asked about with one warning, a zoned host reports the address it
--- bound, a table naming every key start reads starts, and each option is
--- read from the caller's table once.
+-- bound, a table naming every key start reads starts, START_KEYS names
+-- the keys check_start and S.start read in the source and no other, and
+-- each option is read from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -1942,6 +1943,111 @@ H.case("start refuses a key it does not read and takes every key it reads", func
         server.stop(res)
     end
     ok(started, ("a table naming every key start reads starts: %s"):format(started and "" or tostring(res)))
+end)
+
+-- The refusal of a key start does not read rests on START_KEYS, a list
+-- kept by hand: an entry nothing reads took that key without a word, and
+-- a read with no entry refused a key start reads. The keys start reads
+-- are the source's: every cfg.<key> in check_start and S.start, and each
+-- field read from a local that holds a section (live.enabled, then
+-- features.dirlist's fields through dirlist), with the comments and the
+-- strings left out, so a word there is no read.
+local function code_only(src)
+    local out, i, n = {}, 1, #src
+    local function long_end(at)
+        local level = src:match("^%[(=*)%[", at)
+        if not level then
+            return nil
+        end
+        local _, stop = src:find("]" .. level .. "]", at, true)
+        return stop or n
+    end
+    while i <= n do
+        local c = src:sub(i, i)
+        if src:sub(i, i + 1) == "--" then
+            i = long_end(i + 2) or src:find("\n", i, true) or n + 1
+            i = src:sub(i, i) == "\n" and i or i + 1
+        elseif c == '"' or c == "'" then
+            local j = i + 1
+            while j <= n and src:sub(j, j) ~= c do
+                j = j + (src:sub(j, j) == "\\" and 2 or 1)
+            end
+            table.insert(out, '""')
+            i = j + 1
+        elseif c == "[" and long_end(i) then
+            table.insert(out, '""')
+            i = long_end(i) + 1
+        else
+            table.insert(out, c)
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+
+H.case("START_KEYS names every key start reads, and no other", function()
+    local src = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n") .. "\n"
+    local listed = {}
+    local function flatten(t, prefix)
+        for k, v in pairs(t) do
+            listed[prefix .. k] = true
+            if type(v) == "table" then
+                flatten(v, prefix .. k .. ".")
+            end
+        end
+    end
+    local literal = src:match("\nlocal START_KEYS = (%b{})")
+    ok(literal ~= nil, "server.lua holds START_KEYS")
+    flatten(assert(loadstring("return " .. (literal or "{}")))(), "")
+    local code = code_only(src)
+    local read = {}
+    for _, header in ipairs({ "\nlocal function check_start(cfg)\n", "\nfunction S.start(cfg)\n" }) do
+        local from = code:find(header, 1, true)
+        ok(from ~= nil, ("server.lua holds %s"):format(vim.trim(header)))
+        local body = from and code:sub(from, (code:find("\nend\n", from, true))) or ""
+        -- A local bound to an option or a section, by its dotted key.
+        local holds = { cfg = "" }
+        for names, values in body:gmatch("local ([%w_, ]+) = ([^\n]+)") do
+            local ns, vs = vim.split(names, ", ", { plain = true }), vim.split(values, ", ", { plain = true })
+            for k, name in ipairs(#ns == #vs and ns or {}) do
+                local key = vs[k]:match("^cfg%.([%a_][%w_]*)$")
+                local base, again, field = vs[k]:match("^([%a_][%w_]*) and ([%a_][%w_]*)%.([%a_][%w_]*)$")
+                if key then
+                    holds[name] = key
+                elseif base and base == again and holds[base] and holds[base] ~= "" then
+                    holds[name] = holds[base] .. "." .. field
+                end
+            end
+        end
+        for base, chain in body:gmatch("%f[%w_]([%a_][%w_]*)(%.[%a_][%w_%.]*)") do
+            -- Each .<field> in turn, so a concatenation (a.b..c) ends it.
+            local key, field = holds[base], nil
+            while key do
+                field, chain = chain:match("^%.([%a_][%w_]*)(.*)$")
+                if not field then
+                    break
+                end
+                key = key == "" and field or (key .. "." .. field)
+                read[key] = true
+            end
+        end
+    end
+    local unread, unlisted = {}, {}
+    for key in pairs(listed) do
+        if not read[key] then
+            table.insert(unread, key)
+        end
+    end
+    for key in pairs(read) do
+        if not listed[key] then
+            table.insert(unlisted, key)
+        end
+    end
+    table.sort(unread)
+    table.sort(unlisted)
+    ok(read.token and read["features.dirlist.show_hidden"], "the reads were found in the source")
+    eq(table.concat(unread, ", "), "", "every START_KEYS entry is a key start reads")
+    eq(table.concat(unlisted, ", "), "", "every key start reads has a START_KEYS entry")
 end)
 
 -- A table that computes a field could pass a check with one value and

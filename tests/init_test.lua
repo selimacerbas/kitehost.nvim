@@ -2,6 +2,8 @@
 -- The setup() layer: the options it hands server.start and the URL it
 -- opens and prints. The pickers, the browser and vim.notify are stubbed, so
 -- a start runs with no UI and the opened URL and the notices are recorded.
+-- SETUP_KEYS names the keys the module's source reads and no other
+-- (Section 7b).
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/init_test.lua"
 
@@ -616,6 +618,102 @@ H.case("Section 7: setup refuses a section that is neither a table nor a boolean
     })
     ok(set, "every key setup reads is taken: " .. tostring(err))
     pcall(vim.api.nvim_del_augroup_by_name, "LiveServerAutoStart")
+end)
+
+-- The refusal of a key setup does not read rests on SETUP_KEYS, a list
+-- kept by hand: an entry nothing reads took that key without a word, and
+-- a read with no entry refused a key setup reads. The keys setup reads
+-- are the module's, read as the documentation suite reads them: each key
+-- of the defaults table (one whose default is nil included) and each
+-- field of a section default whose keys are all names, then every
+-- M.opts.<key> and M.opts.<key>.<field> the source spells, with the
+-- comments and the strings left out, so a word there is no read.
+local function code_only(src)
+    local out, i, n = {}, 1, #src
+    local function long_end(at)
+        local level = src:match("^%[(=*)%[", at)
+        if not level then
+            return nil
+        end
+        local _, stop = src:find("]" .. level .. "]", at, true)
+        return stop or n
+    end
+    while i <= n do
+        local c = src:sub(i, i)
+        if src:sub(i, i + 1) == "--" then
+            i = long_end(i + 2) or src:find("\n", i, true) or n + 1
+            i = src:sub(i, i) == "\n" and i or i + 1
+        elseif c == '"' or c == "'" then
+            local j = i + 1
+            while j <= n and src:sub(j, j) ~= c do
+                j = j + (src:sub(j, j) == "\\" and 2 or 1)
+            end
+            table.insert(out, '""')
+            i = j + 1
+        elseif c == "[" and long_end(i) then
+            table.insert(out, '""')
+            i = long_end(i) + 1
+        else
+            table.insert(out, c)
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+
+H.case("Section 7b: SETUP_KEYS names every key setup reads, and no other", function()
+    local code = code_only(table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n") .. "\n")
+    local function literal(name)
+        local text = code:match("\nlocal " .. name .. " = (%b{})")
+        ok(text ~= nil, ("init.lua holds %s"):format(name))
+        return text or "{}", assert(loadstring("return " .. (text or "{}")))()
+    end
+    local listed = {}
+    local function flatten(t, prefix)
+        for k, v in pairs(t) do
+            listed[prefix .. k] = true
+            if type(v) == "table" then
+                flatten(v, prefix .. k .. ".")
+            end
+        end
+    end
+    flatten(select(2, literal("SETUP_KEYS")), "")
+    local read = {}
+    local text, defaults = literal("defaults")
+    for k in text:gmatch("\n    ([%a_][%w_]*) = ") do
+        read[k] = true
+    end
+    for k, v in pairs(defaults) do
+        local names = type(v) == "table" and not vim.islist(v) and next(v) ~= nil
+        for f in pairs(type(v) == "table" and v or {}) do
+            names = names and type(f) == "string" and f:find("^[%a_][%w_]*$") ~= nil
+        end
+        for f in pairs(names and v or {}) do
+            read[k .. "." .. f] = true
+        end
+    end
+    for k in code:gmatch("M%.opts%.([%a_][%w_]*)") do
+        read[k] = true
+    end
+    for k, f in code:gmatch("M%.opts%.([%a_][%w_]*)%.([%a_][%w_]*)") do
+        read[k .. "." .. f] = true
+    end
+    local unread, unlisted = {}, {}
+    for key in pairs(listed) do
+        if not read[key] then
+            table.insert(unread, key)
+        end
+    end
+    for key in pairs(read) do
+        if not listed[key] then
+            table.insert(unlisted, key)
+        end
+    end
+    table.sort(unread)
+    table.sort(unlisted)
+    ok(read.auto_start and read["auto_start.port"] and read.notify, "the reads were found in the source")
+    eq(table.concat(unread, ", "), "", "every SETUP_KEYS entry is a key setup reads")
+    eq(table.concat(unlisted, ", "), "", "every key setup reads has a SETUP_KEYS entry")
 end)
 
 -- update_target raises on a root it cannot serve, and the retarget called
