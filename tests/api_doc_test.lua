@@ -734,8 +734,8 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     local aliased = H.tmpdir()
     vim.fn.mkdir(aliased .. "/pub", "p")
     H.write_file(aliased .. "/pub/page.txt", "PUB")
-    local named_link = vim.uv.fs_symlink(aliased .. "/pub", aliased .. "/__Live")
-    local into = vim.uv.fs_symlink(reserved .. "/__Live/x.txt", reserved .. "/into.txt")
+    local named_link, named_err = vim.uv.fs_symlink(aliased .. "/pub", aliased .. "/__Live")
+    local into, into_err = vim.uv.fs_symlink(reserved .. "/__Live/x.txt", reserved .. "/into.txt")
     local hard, hard_err = vim.uv.fs_link(reserved .. "/__Live/x.txt", reserved .. "/hard.txt")
     if named_link and into then
         local alias = server.start({ port = 0, root = aliased })
@@ -749,7 +749,7 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
         ok(get(alias.port, "/pub/page.txt").status == 200, "and that directory is served by its own name")
         ok(get(held.port, "/into.txt").status == 404, "a link elsewhere in the root into the entry is not served")
     else
-        H.skip("no symbolic link could be made")
+        H.skip("no symbolic link could be made: " .. tostring(named_err or into_err))
     end
     states("or a link of that name to anything", "the reserved entry's link")
     states("nor a file a link elsewhere in the root resolves into it", "a link elsewhere into the entry")
@@ -841,9 +841,10 @@ H.case("Section 12: the README's request order holds as the server answers", fun
     ok(send("GET /a.txt HTTP/1.1", "X-A: a\0b\r\n").status == 400, "a NUL in a value is 400")
     says("a CR or a NUL in a header value", "the 400 for a value")
 
-    -- A target over 8 KiB, its query counted, is 414 once the request line
-    -- is read, before any field: a Host the check refuses gets no 421 and
-    -- no pattern runs. One byte less is read and gated as usual.
+    -- A target over 8 KiB, its query counted, is 414 once the head has
+    -- arrived, its request line read before any field: a Host the check
+    -- refuses gets no 421 and no pattern runs. One byte less is read and
+    -- gated as usual.
     local gated = server.start({ port = 0, root = root, token = "tok", protected_paths = { "^/a" } })
     H.defer(function()
         server.stop(gated)
@@ -891,7 +892,8 @@ H.case("Section 12: the README's request order holds as the server answers", fun
     -- where any other path answers 405 or the preflight.
     vim.fn.mkdir(root .. "/__live", "p")
     H.write_file(root .. "/__live/other.txt", "OTHER")
-    if vim.uv.fs_symlink(root .. "/__live/other.txt", root .. "/link.txt") then
+    local linked, link_err = vim.uv.fs_symlink(root .. "/__live/other.txt", root .. "/link.txt")
+    if linked then
         local through = send("OPTIONS /link.txt HTTP/1.1", asked)
         ok(
             through.status == 404 and through.headers["access-control-allow-origin"] == nil,
@@ -900,7 +902,7 @@ H.case("Section 12: the README's request order holds as the server answers", fun
         ok(send("POST /link.txt HTTP/1.1").status == 404, "a POST through it is 404")
         ok(send("POST /a.txt HTTP/1.1").status == 405, "and a POST elsewhere 405")
     else
-        H.skip("no symbolic link could be made")
+        H.skip("no symbolic link could be made: " .. tostring(link_err))
     end
     says(
         "or a path whose file resolves into an entry named `__live` at the root through a link elsewhere in the root",
