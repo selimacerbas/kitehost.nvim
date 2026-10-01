@@ -30,7 +30,9 @@
 -- ) included), each malformed shape is one LuaJIT raises on, and one
 -- that nests too deep for LuaJIT on a path gates every path it is
 -- asked about with one warning, a zoned host reports the address it
--- bound, a table naming every key start reads starts, START_KEYS names
+-- bound (a zone of digits, as Windows spells one, among them, and the
+-- loopback's own name skipped where it is no zone the host takes), a
+-- table naming every key start reads starts, START_KEYS names
 -- the keys check_start and S.start read in the source and no other, and
 -- each option is read from the caller's table once.
 --
@@ -378,12 +380,20 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     -- The shapes the check takes, each started and stopped: a zone is bound
     -- as given, so the loopback's own zone (lo0 on macOS, lo on Linux) is
     -- read from the machine, and the zoned row is skipped where no IPv6
-    -- loopback exists.
-    local zone
+    -- loopback exists. Windows names an interface by its adapter's name,
+    -- "Loopback Pseudo-Interface 1", which holds spaces and is no zone the
+    -- host takes, so that row skips naming it; a Windows zone is its
+    -- digits, which the host takes, as the digit row shows on every OS.
+    local zone, unfit, loopback
     for name, list in pairs(vim.uv.interface_addresses() or {}) do
         for _, a in ipairs(list) do
             if a.ip == "::1" then
-                zone = name
+                loopback = true
+                if name:find("^[%w._-]+$") then
+                    zone = name
+                else
+                    unfit = name
+                end
             end
         end
     end
@@ -398,10 +408,19 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     else
         H.skip('host = "::FFFF:127.0.0.1" starts (this machine binds no v4-mapped address)')
     end
-    if zone then
-        vim.list_extend(accepted, { "::1", "::1%" .. zone })
+    if loopback then
+        vim.list_extend(accepted, { "::1", "::1%1" })
     else
-        H.skip('host = "::1" and "::1%<loopback zone>" start (no IPv6 loopback on this machine)')
+        H.skip('host = "::1" and "::1%1" start (no IPv6 loopback on this machine)')
+    end
+    if zone then
+        table.insert(accepted, "::1%" .. zone)
+    elseif unfit then
+        H.skip(
+            ('host = "::1%%<loopback zone>" starts (the loopback is named %q, no zone the host takes)'):format(unfit)
+        )
+    else
+        H.skip('host = "::1%<loopback zone>" starts (no IPv6 loopback on this machine)')
     end
     for _, host in ipairs(accepted) do
         local started, res = pcall(server.start, { port = 0, root = root, host = host })
@@ -1159,21 +1178,30 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         eq(lan_got.tcp, 0, "and leaves no socket")
     end
     -- The IPv6 twin: an address other than ::1 shadows a :: listener too,
-    -- and only ::1 was probed. A link-local address binds with its scope.
-    local v6
+    -- and only ::1 was probed. A link-local address binds with its scope,
+    -- named by its interface, which on Windows is an adapter's name with
+    -- spaces, no zone the host takes, so such an address is not used.
+    local v6, unfit
     for name, addrs in pairs(vim.uv.interface_addresses()) do
         for _, a in ipairs(addrs) do
             if a.family == "inet6" and not a.internal then
-                local spelled = a.ip:lower():match("^fe[89ab]") and (a.ip .. "%" .. name) or a.ip
-                if not v6 or (v6:find("%", 1, true) and not spelled:find("%", 1, true)) then
-                    v6 = spelled
+                local linked = a.ip:lower():match("^fe[89ab]") ~= nil
+                if linked and not name:find("^[%w._-]+$") then
+                    unfit = unfit or name
+                else
+                    local spelled = linked and (a.ip .. "%" .. name) or a.ip
+                    if not v6 or (v6:find("%", 1, true) and not spelled:find("%", 1, true)) then
+                        v6 = spelled
+                    end
                 end
             end
         end
     end
     -- Bindable only when a probe bind succeeds: luv raises on an address
     -- it cannot parse and returns nil, err on one it cannot bind.
-    local v6_cause = "this machine has no IPv6 address other than ::1"
+    local v6_cause = unfit
+            and ("this machine's other IPv6 address is link-local on %q, no zone the host takes"):format(unfit)
+        or "this machine has no IPv6 address other than ::1"
     if v6 then
         local t = assert(vim.uv.new_tcp())
         local called, bound, bind_err = pcall(t.bind, t, v6, 0)
