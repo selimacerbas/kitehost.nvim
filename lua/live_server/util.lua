@@ -546,22 +546,21 @@ function U.parse_liveignore(root)
                 line = ""
             end
             if line ~= "" and line:sub(1, 1) ~= "#" then
-                -- Every pattern character is escaped: an unescaped bracket
-                -- raised inside the watcher once its literal prefix matched
-                -- a path, and an unescaped question mark made the character
-                -- before it optional, so a line a?b dropped every path
-                -- holding a b. A run of stars is one .*, which matches what
-                -- the run did: a .* per star backtracked on every changed
-                -- path, and eight stars before a letter held the loop 5.8 s
-                -- on one 29-byte path (measured).
+                -- The list holds each rule as the Lua pattern it reads as,
+                -- which nothing in the plugin matches: match_ignore reads
+                -- the parts below, the server the list's length. Every
+                -- pattern character is escaped, since a line's bracket or
+                -- ? is that character; a run of stars is one .*, as it
+                -- matches what one star matches; a line starting with / is
+                -- anchored with ^, since a path is matched with a leading
+                -- slash (schedule_reload).
                 local pat = line:gsub("([%.%+%-%^%$%(%)%%%[%]%?])", "%%%1"):gsub("%*+", ".*")
-                -- The path is matched with a leading slash (schedule_reload),
-                -- so a line starting with one is anchored at the root.
                 if pat:sub(1, 1) == "/" then
                     pat = "^" .. pat
                 end
                 table.insert(patterns, pat)
-                -- The same rule as literal parts between star runs.
+                -- What match_ignore reads: the line's literal parts between
+                -- runs of stars, and whether it is anchored at the root.
                 table.insert(rules, { anchored = line:sub(1, 1) == "/", parts = vim.split(line, "%*+") })
             end
         end
