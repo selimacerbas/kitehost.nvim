@@ -551,9 +551,8 @@ function U.parse_liveignore(root)
                 -- the parts below, the server the list's length. Every
                 -- pattern character is escaped, since a line's bracket or
                 -- ? is that character; a run of stars is one .*, as it
-                -- matches what one star matches; a line starting with / is
-                -- anchored with ^, since a path is matched with a leading
-                -- slash (schedule_reload).
+                -- matches what one star matches; a line starting with /
+                -- reads as anchored at the root, ^ in front.
                 local pat = line:gsub("([%.%+%-%^%$%(%)%%%[%]%?])", "%%%1"):gsub("%*+", ".*")
                 if pat:sub(1, 1) == "/" then
                     pat = "^" .. pat
