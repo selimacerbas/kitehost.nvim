@@ -33,6 +33,26 @@ H.write_file(f2, "# secret content")
 local uv = vim.uv
 H.write_file(vim.fs.joinpath(tmpdir, "asset_root"), "/some/dir")
 
+-- Windows takes a / in a link's target unconverted, leaving the link
+-- dangling, and opens no link to a directory made without dir = true
+-- (measured on the hosted runner): a target here carries the platform's
+-- separator and a link to a directory is made as one. A row through a
+-- link runs only where the link resolves to the name it is about;
+-- unresolved says why it does not, the reason the row is skipped with.
+local sep = package.config:sub(1, 1)
+local function unresolved(made, made_err, name, want)
+    if not made then
+        return "no link: " .. tostring(made_err)
+    end
+    local real, err = uv.fs_realpath(name)
+    if not real then
+        return "the link does not resolve: " .. tostring(err)
+    end
+    if not H.same_path(real, want) then
+        return ("the link resolves to %s, not %s"):format(real, want)
+    end
+end
+
 -- ─── Section 1: random_token / secure_compare ───────────────────────────────
 H.section("Section 1: helpers")
 local t1 = util.random_token(16)
@@ -424,17 +444,16 @@ local listed = server.start({
     live = { inject_script = false },
     features = { dirlist = { enabled = true } },
 })
-local dlinked, dlink_err = uv.fs_symlink("secret", vim.fs.joinpath(tmpdir, "pub"))
-if dlinked and uv.fs_stat(vim.fs.joinpath(tmpdir, "pub")) then
+local dlinked, dlink_err = uv.fs_symlink("secret", vim.fs.joinpath(tmpdir, "pub"), { dir = true })
+local dlink_why = unresolved(dlinked, dlink_err, vim.fs.joinpath(tmpdir, "pub"), vim.fs.joinpath(tmpdir, "secret"))
+if not dlink_why then
     eq(
         http_get(("http://127.0.0.1:%d/pub/"):format(listed.port)).status,
         401,
         "a link to a protected directory lists nothing"
     )
 else
-    H.skip(
-        "a link to a protected directory lists nothing (" .. tostring(dlink_err or "the link does not resolve") .. ")"
-    )
+    H.skip("a link to a protected directory lists nothing (" .. dlink_why .. ")")
 end
 if H.fs_folds_case then
     eq(
@@ -529,18 +548,14 @@ eq(
 eq(http_get(("http://127.0.0.1:%d/secret/?t=%s"):format(slashed_dir.port, TOKEN)).status, 200, "and 200 with it")
 server.stop(slashed_dir)
 local bare_dir = dir_gated("^/secret$")
-if dlinked and uv.fs_stat(vim.fs.joinpath(tmpdir, "pub")) then
+if not dlink_why then
     eq(
         http_get(("http://127.0.0.1:%d/pub/"):format(bare_dir.port)).status,
         401,
         "a link to secret/ under ^/secret$ is 401 without the token"
     )
 else
-    H.skip(
-        "a link to secret/ under ^/secret$ is 401 without the token ("
-            .. tostring(dlink_err or "the link does not resolve")
-            .. ")"
-    )
+    H.skip("a link to secret/ under ^/secret$ is 401 without the token (" .. dlink_why .. ")")
 end
 server.stop(bare_dir)
 -- default_index may sit outside the root and is served for / alone: a link
@@ -775,15 +790,12 @@ H.case("a directory the gate refuses serves no index", function()
         )
     end
     local pub = vim.fs.joinpath(site, "pub")
-    local linked, link_err = uv.fs_symlink("secret", pub)
-    if linked and uv.fs_stat(pub) then
+    local linked, link_err = uv.fs_symlink("secret", pub, { dir = true })
+    local link_why = unresolved(linked, link_err, pub, vim.fs.joinpath(site, "secret"))
+    if not link_why then
         eq(http_get(base .. "/pub/").status, 401, "a link pub -> secret without the token is 401, never its index")
     else
-        H.skip(
-            "a link pub -> secret without the token is 401, never its index ("
-                .. tostring(link_err or "the link does not resolve")
-                .. ")"
-        )
+        H.skip("a link pub -> secret without the token is 401, never its index (" .. link_why .. ")")
     end
     local slashed = gated({ "^/secret/", "^/nosuch/" })
     eq(http_get(slashed .. "/secret/").status, 401, "/secret/ under ^/secret/ is 401 without the token")
@@ -916,7 +928,7 @@ H.case("the injected client is never gated", function()
     -- files the root route never serves, so a link to it reads the gate.
     vim.fn.mkdir(site .. "/lib", "p")
     H.write_file(site .. "/lib/script.js", "var linked = 1")
-    local linked, link_err = uv.fs_symlink("lib" .. package.config:sub(1, 1) .. "script.js", site .. "/alias.txt")
+    local linked, link_err = uv.fs_symlink("lib" .. sep .. "script.js", site .. "/alias.txt")
     local gated = server.start({
         port = 0,
         root = site,
@@ -969,20 +981,10 @@ H.case("the injected client is never gated", function()
             )
         end
     end
-    -- Windows may refuse the link (no symlink privilege), and took a / in
-    -- its target unconverted, leaving it dangling (measured on the hosted
-    -- runner), so the target carries the platform's separator. The rows run
+    -- Windows may refuse the link (no symlink privilege). The rows run
     -- only where the link resolves to lib/script.js: a dangling one is a
     -- missing name, whose 404 is no answer about the token.
-    local why
-    local real, real_err = uv.fs_realpath(site .. "/alias.txt")
-    if not linked then
-        why = tostring(link_err)
-    elseif not real then
-        why = "the link does not resolve: " .. tostring(real_err)
-    elseif not H.same_path(real, site .. "/lib/script.js") then
-        why = "the link resolves to " .. real
-    end
+    local why = unresolved(linked, link_err, site .. "/alias.txt", site .. "/lib/script.js")
     if not why then
         eq(http_get(base .. "/alias.txt").status, 401, "a file named script.js reached through a link wants the token")
         local r = http_get(base .. "/alias.txt?t=" .. TOKEN)

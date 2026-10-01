@@ -25,6 +25,26 @@ local uv = vim.uv
 local server = require("live_server.server")
 local eq, ok = H.eq, H.ok
 
+-- Windows takes a / in a link's target unconverted, leaving the link
+-- dangling, and opens no link to a directory made without dir = true
+-- (measured on the hosted runner): a target here carries the platform's
+-- separator and a link to a directory is made as one. A row through a
+-- link runs only where the link resolves to the name it is about;
+-- unresolved says why it does not, the reason the row is skipped with.
+local sep = package.config:sub(1, 1)
+local function unresolved(made, made_err, name, want)
+    if not made then
+        return "no link: " .. tostring(made_err)
+    end
+    local real, err = uv.fs_realpath(name)
+    if not real then
+        return "the link does not resolve: " .. tostring(err)
+    end
+    if not H.same_path(real, want) then
+        return ("the link resolves to %s, not %s"):format(real, want)
+    end
+end
+
 local root = H.tmpdir()
 vim.fn.mkdir(root .. "/assets", "p")
 H.write_file(root .. "/index.html", "<html><body>ok</body></html>")
@@ -584,25 +604,10 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
     -- it, as the dot rule reads one. The case variant holds on every
     -- volume: where case is kept it names no file and is 404 all the same,
     -- which its label says, since there the rule is never reached.
-    -- Windows took a / in a link's target unconverted and opened no file
-    -- link to a directory (measured on the hosted runner), so each target
-    -- carries the platform's separator and the directory link is made as
-    -- one. A row runs only where its name resolves into __live/, since a
-    -- link that dangles answers as a missing name does, the same 404 these
-    -- rows want; elsewhere it is skipped with the reason.
-    local sep = package.config:sub(1, 1)
-    local function unresolved(made, made_err, name, want)
-        if not made then
-            return "no link: " .. tostring(made_err)
-        end
-        local real, err = uv.fs_realpath(name)
-        if not real then
-            return "the link does not resolve: " .. tostring(err)
-        end
-        if not H.same_path(real, want) then
-            return ("the link resolves to %s, not %s"):format(real, want)
-        end
-    end
+    -- A row runs only where its name resolves into __live/: a link that
+    -- dangles is answered as a missing name, so a GET's 404 then holds
+    -- with no rule reached, and OPTIONS or POST gets the root route's 204
+    -- or 405.
     local file_link, file_link_err = uv.fs_symlink("__live" .. sep .. "other.txt", site .. "/link.txt")
     local dir_link, dir_link_err = uv.fs_symlink("__live", site .. "/dirlink", { dir = true })
     local file_why = unresolved(file_link, file_link_err, site .. "/link.txt", site .. "/__live/other.txt")
@@ -731,17 +736,20 @@ H.case("Section 9: a listing names nothing behind /__live/", function()
     vim.fn.mkdir(site .. "/__live", "p")
     H.write_file(site .. "/__live/other.txt", "USERFILE")
     H.write_file(site .. "/plain.txt", "plain")
-    for _, l in ipairs({ { "__live/other.txt", site .. "/lo.txt" }, { "__live", site .. "/dl" } }) do
-        local made, err = uv.fs_symlink(l[1], l[2])
-        if not made or not uv.fs_stat(l[2]) then
-            local why = " (" .. tostring(err or "the link does not resolve") .. ")"
+    for _, l in ipairs({
+        { "__live" .. sep .. "other.txt", "/lo.txt", "/__live/other.txt" },
+        { "__live", "/dl", "/__live", { dir = true } },
+    }) do
+        local made, err = uv.fs_symlink(l[1], site .. l[2], l[4])
+        local why = unresolved(made, err, site .. l[2], site .. l[3])
+        if why then
             for _, row in ipairs({
                 "the root listing names plain.txt",
                 "and not the __live directory",
                 "nor a link to a file in it",
                 "nor a link to it",
             }) do
-                H.skip(row .. why)
+                H.skip(row .. " (" .. why .. ")")
             end
             return
         end
@@ -767,11 +775,11 @@ H.case("Section 10: an index that resolves behind /__live/ is not the directory'
     H.write_file(site .. "/both/index.htm", "<html><body>PLAIN</body></html>")
     for _, dir in ipairs({ "both", "solo" }) do
         local link = site .. "/" .. dir .. "/index.html"
-        local made, err = uv.fs_symlink("../__live/page.html", link)
-        if not made or not uv.fs_stat(link) then
-            local why = " (" .. tostring(err or "the link does not resolve") .. ")"
-            H.skip("an index.htm beside an index.html linking into __live/ is served" .. why)
-            H.skip("with no other index the directory is listed" .. why)
+        local made, err = uv.fs_symlink(".." .. sep .. "__live" .. sep .. "page.html", link)
+        local why = unresolved(made, err, link, site .. "/__live/page.html")
+        if why then
+            H.skip("an index.htm beside an index.html linking into __live/ is served (" .. why .. ")")
+            H.skip("with no other index the directory is listed (" .. why .. ")")
             return
         end
     end
@@ -801,7 +809,8 @@ H.case("Section 11: the directory behind /__live/ is matched in any case", funct
     H.write_file(site .. "/plain.txt", "plain")
     vim.fn.mkdir(site .. "/solo", "p")
     local link = site .. "/solo/index.html"
-    local made, made_err = uv.fs_symlink("../__LIVE/page.html", link)
+    local made, made_err = uv.fs_symlink(".." .. sep .. "__LIVE" .. sep .. "page.html", link)
+    local link_why = unresolved(made, made_err, link, site .. "/__LIVE/page.html")
     local inst = serve({ root = site, cors = true, features = { dirlist = { enabled = true } } })
     for _, target in ipairs({ "/__LIVE/x.txt", "/__Live/x.txt", "/__live/x.txt", "/__LIVE/" }) do
         local r = raw(inst.port, get(target, inst.port))
@@ -812,18 +821,14 @@ H.case("Section 11: the directory behind /__live/ is matched in any case", funct
     local listing = raw(inst.port, get("/", inst.port)).body
     ok(listing:find('href="/plain.txt"', 1, true) ~= nil, "the root listing names plain.txt")
     ok(not listing:find("__LIVE", 1, true), "and not the __LIVE directory")
-    if made and uv.fs_stat(link) then
+    if not link_why then
         local r = raw(inst.port, get("/solo/", inst.port))
         ok(
             r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("LIVEPAGE", 1, true),
             ("an index linking into __LIVE/ is not the directory's, which is listed (got %d)"):format(r.status)
         )
     else
-        H.skip(
-            "an index linking into __LIVE/ is not the directory's ("
-                .. tostring(made_err or "the link does not resolve")
-                .. ")"
-        )
+        H.skip("an index linking into __LIVE/ is not the directory's (" .. link_why .. ")")
     end
 end)
 
