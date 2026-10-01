@@ -22,7 +22,7 @@ Before 2.0.0 this plugin was live-server.nvim: [Upgrading from live-server.nvim]
 
 ## Requirements
 
-* Neovim **0.10+** (on Neovim 0.8 or 0.9, pin the plugin to v1.5.0, the last release that runs there, which receives no fixes and keeps every hole the CHANGELOG's Security entries after it close; the two holes its own Security notes name, the path-normalization bypass of the token gate and the event stream's fixed `Access-Control-Allow-Origin: *`, it closed itself).
+* Neovim **0.10+** (on Neovim 0.8 or 0.9, pin the plugin to v1.5.0, the last release that runs there, which receives no fixes and keeps every hole the CHANGELOG's Security entries after it close; the two holes its own Security notes name, the path-normalization bypass of the token gate and the event stream's fixed `Access-Control-Allow-Origin: *`, it closed itself). v1.5.0 has only the names before 2.0.0: pinned there, a spec keeps `require("live_server")` and the `:LiveServer*` commands.
 * Linux, macOS, or Windows.
 * [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) **recommended** for the best picking UX (falls back to `vim.ui.select/input` if missing).
 * [which-key.nvim](https://github.com/folke/which-key.nvim) recommended.
@@ -69,7 +69,7 @@ return {
 
 ## Upgrading from live-server.nvim
 
-Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still installs it, since GitHub redirects the repository's former name, and the former modules and commands still work, each warning once a session and naming its replacement; they are removed in 3.0.0. The notices, the notification title, the statusline and the help take the new name now.
+Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still installs it, since GitHub redirects the repository's former name, and the former modules and commands still work, each warning once a session and naming its replacement; they are removed in 3.0.0. The notices, the notification title, the statusline and the help take the new name now. On Neovim 0.8 or 0.9, which 2.0.0 no longer runs on, pin v1.5.0: v1.5.0 has only the names before 2.0.0: pinned there, a spec keeps `require("live_server")` and the `:LiveServer*` commands.
 
 | What | live-server.nvim | kitehost.nvim |
 | --- | --- | --- |
@@ -80,6 +80,8 @@ Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still
 | Notice prefix | `LiveServer <port>`, and some with no prefix | `kitehost: port <n>`, and every other notice starts `kitehost:` but a deprecation warning, which is Neovim's own text (`:LiveServerStatus is deprecated, use :KiteHost status instead.`) |
 | Notification title | `live-server.nvim` | `kitehost.nvim` |
 | Statusline | `[LS :8000]` | `[kitehost :8000]` |
+| Auto-start augroup | `LiveServerAutoStart` | `KiteHostAutoStart` |
+| Browser console prefix | `[live-server.nvim]` | `[kitehost]` |
 | Help | `:help live-server.nvim` | `:help kitehost.nvim` (the former tags: `:help kitehost-deprecated`) |
 
 | Command before 2.0.0, removed in 3.0.0 | Runs, after a warning once a session |
@@ -92,7 +94,7 @@ Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still
 | `:LiveServerStatus` | `:KiteHost status` |
 | `:LiveServerToggleLive` | `:KiteHost toggle-live` |
 
-Through 2.x the plugin ships two top-level modules, `kitehost` and `live_server`, so lazy.nvim finds the module an `opts` table goes to only by the spec's name. `"selimacerbas/kitehost.nvim"` and the former spec both name one; a spec named otherwise (a fork, or a `name` or `dir` of your own) sets `main = "kitehost"`, or its `opts` reach no `setup()`.
+Through 2.x the plugin ships two top-level modules, `kitehost` and `live_server`, and lazy.nvim finds the module an `opts` table goes to by the spec's name. A spec that relies on `opts` and is named after neither repository (a `name` or `dir` of your own, or a fork under another name) sets `main = "kitehost"`: lazy.nvim cannot choose between the two modules for it and reports `Lua module not found for config of <name>`. `"selimacerbas/kitehost.nvim"`, the former spec, a fork that keeps the name kitehost.nvim and a spec with its own `config` function need none.
 
 ---
 

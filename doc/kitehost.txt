@@ -36,7 +36,9 @@ The plugin, module and command names before 2.0.0 keep working through
 REQUIREMENTS                                    *kitehost-requirements*
 
 - Neovim 0.10+ (on Neovim 0.8 or 0.9 pin the plugin to v1.5.0, which
-  receives no further fixes)
+  receives no further fixes; v1.5.0 has only the names before 2.0.0:
+  pinned there, a spec keeps `require("live_server")` and the
+  `:LiveServer*` commands)
 - Linux, macOS, or Windows
 
 Optional:
@@ -633,9 +635,10 @@ DEPRECATED NAMES                                *kitehost-deprecated*
 Before 2.0.0 this plugin was live-server.nvim. The names it had then keep
 working through 2.x, each after a warning once a session, and go in
 3.0.0: a command runs its subcommand, and a module is the very table its
-new name returns. Below Neovim 0.10 a former module raises as its new
-name does, and a former command answers with the floor notice, as
-|:KiteHost| does.
+new name returns. Below Neovim 0.10 a former module answers as its new
+name does: the entry module is the stub, and the two plugin-author
+modules raise the floor text; a former command answers with the floor
+notice, as |:KiteHost| does.
 
                                                 *live-server.nvim*
 live-server.nvim        |kitehost.nvim|. A lazy.nvim spec names
