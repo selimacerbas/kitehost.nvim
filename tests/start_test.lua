@@ -2083,7 +2083,7 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "()x",
         "%f[%w]word",
         "^a*b",
-        "^c-d?",
+        "^c-/d?",
         "x$y^z",
         "%%",
         string.rep("()", 32),
@@ -2228,6 +2228,37 @@ H.case("an unanchored pattern with ^.* in front starts and finds the same paths"
         end
         eq(table.concat(differ, " "), "", ("%s finds the paths %s finds"):format(rewritten, c[1]))
     end
+end)
+
+-- A - after an item repeats it, lazily, so ^/my-notes%.md$ asked for no
+-- hyphen: it gated /mynotes.md and served /my-notes.md without the token
+-- (measured). A - between two letters or digits is a name's hyphen, so
+-- it is refused; %- and a - after a set or a class are taken.
+H.case("start refuses a - between letters or digits, which finds no hyphen", function()
+    local hyphen = "a - between two letters or digits repeats the one before it and finds no hyphen;"
+        .. " write %- for a hyphen"
+    for _, c in ipairs({ { "^/my-notes%.md$", 5 }, { "my-notes", 3 }, { "^/v2-0%.md$", 5 }, { "^/.*a-b", 6 } }) do
+        local started, res = pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { c[1] } })
+        if started then
+            server.stop(res)
+        end
+        eq(
+            not started and tostring(res) or "started",
+            ("protected_paths pattern is refused at byte %d (%s): %s"):format(c[2], hyphen, c[1]),
+            ("%s is refused at its hyphen"):format(c[1])
+        )
+    end
+    for _, pattern in ipairs({ "^/my%-notes%.md$", "^/[a-z]-x", "^/%d-x", "^/%a-1", "^/a-/b", "^/a-$" }) do
+        local started, res =
+            pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { pattern } })
+        if started then
+            server.stop(res)
+        end
+        ok(started, ("%s starts: %s"):format(pattern, started and "" or tostring(res)))
+    end
+    H.write_file(vim.fs.joinpath(root, "my-notes.md"), "# notes")
+    local inst = serve({ token = TOKEN, protected_paths = { "^/my%-notes%.md$" } })
+    eq(http_get(("http://127.0.0.1:%d/my-notes.md"):format(inst.port)).status, 401, "and %- gates the hyphenated name")
 end)
 
 -- The misspelled keys of a gated server: each dropped, the file started
