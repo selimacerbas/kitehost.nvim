@@ -630,41 +630,8 @@ end)
 -- field of a section default whose keys are all names, then every
 -- M.opts.<key> and M.opts.<key>.<field> the source spells, with the
 -- comments and the strings left out, so a word there is no read.
-local function code_only(src)
-    local out, i, n = {}, 1, #src
-    local function long_end(at)
-        local level = src:match("^%[(=*)%[", at)
-        if not level then
-            return nil
-        end
-        local _, stop = src:find("]" .. level .. "]", at, true)
-        return stop or n
-    end
-    while i <= n do
-        local c = src:sub(i, i)
-        if src:sub(i, i + 1) == "--" then
-            i = long_end(i + 2) or src:find("\n", i, true) or n + 1
-            i = src:sub(i, i) == "\n" and i or i + 1
-        elseif c == '"' or c == "'" then
-            local j = i + 1
-            while j <= n and src:sub(j, j) ~= c do
-                j = j + (src:sub(j, j) == "\\" and 2 or 1)
-            end
-            table.insert(out, '""')
-            i = j + 1
-        elseif c == "[" and long_end(i) then
-            table.insert(out, '""')
-            i = long_end(i) + 1
-        else
-            table.insert(out, c)
-            i = i + 1
-        end
-    end
-    return table.concat(out)
-end
-
 H.case("Section 7b: SETUP_KEYS names every key setup reads, and no other", function()
-    local code = code_only(table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n") .. "\n")
+    local code = H.code_only(table.concat(vim.fn.readfile(H.root .. "/lua/live_server/init.lua"), "\n") .. "\n")
     local function literal(name)
         local text = code:match("\nlocal " .. name .. " = (%b{})")
         ok(text ~= nil, ("init.lua holds %s"):format(name))

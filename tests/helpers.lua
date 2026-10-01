@@ -291,6 +291,44 @@ function H.rtp()
     return H.root
 end
 -- parity: own lines end
+-- parity: own lines begin (tests/parity.sh compares the rest with the sibling)
+-- A Lua source with its comments and strings blanked, so a word in
+-- either is no read: start_test and init_test read the keys start and
+-- setup read from this checkout's source, which the sibling's suites do
+-- not.
+function H.code_only(src)
+    local out, i, n = {}, 1, #src
+    local function long_end(at)
+        local level = src:match("^%[(=*)%[", at)
+        if not level then
+            return nil
+        end
+        local _, stop = src:find("]" .. level .. "]", at, true)
+        return stop or n
+    end
+    while i <= n do
+        local c = src:sub(i, i)
+        if src:sub(i, i + 1) == "--" then
+            i = long_end(i + 2) or src:find("\n", i, true) or n + 1
+            i = src:sub(i, i) == "\n" and i or i + 1
+        elseif c == '"' or c == "'" then
+            local j = i + 1
+            while j <= n and src:sub(j, j) ~= c do
+                j = j + (src:sub(j, j) == "\\" and 2 or 1)
+            end
+            table.insert(out, '""')
+            i = j + 1
+        elseif c == "[" and long_end(i) then
+            table.insert(out, '""')
+            i = long_end(i) + 1
+        else
+            table.insert(out, c)
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+-- parity: own lines end
 
 function H.tmpdir()
     local dir = vim.fn.tempname()

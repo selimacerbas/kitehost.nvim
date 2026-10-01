@@ -2184,39 +2184,6 @@ end)
 -- field read from a local that holds a section (live.enabled, then
 -- features.dirlist's fields through dirlist), with the comments and the
 -- strings left out, so a word there is no read.
-local function code_only(src)
-    local out, i, n = {}, 1, #src
-    local function long_end(at)
-        local level = src:match("^%[(=*)%[", at)
-        if not level then
-            return nil
-        end
-        local _, stop = src:find("]" .. level .. "]", at, true)
-        return stop or n
-    end
-    while i <= n do
-        local c = src:sub(i, i)
-        if src:sub(i, i + 1) == "--" then
-            i = long_end(i + 2) or src:find("\n", i, true) or n + 1
-            i = src:sub(i, i) == "\n" and i or i + 1
-        elseif c == '"' or c == "'" then
-            local j = i + 1
-            while j <= n and src:sub(j, j) ~= c do
-                j = j + (src:sub(j, j) == "\\" and 2 or 1)
-            end
-            table.insert(out, '""')
-            i = j + 1
-        elseif c == "[" and long_end(i) then
-            table.insert(out, '""')
-            i = long_end(i) + 1
-        else
-            table.insert(out, c)
-            i = i + 1
-        end
-    end
-    return table.concat(out)
-end
-
 H.case("START_KEYS names every key start reads, and no other", function()
     local src = table.concat(vim.fn.readfile(H.root .. "/lua/live_server/server.lua"), "\n") .. "\n"
     local listed = {}
@@ -2231,7 +2198,7 @@ H.case("START_KEYS names every key start reads, and no other", function()
     local literal = src:match("\nlocal START_KEYS = (%b{})")
     ok(literal ~= nil, "server.lua holds START_KEYS")
     flatten(assert(loadstring("return " .. (literal or "{}")))(), "")
-    local code = code_only(src)
+    local code = H.code_only(src)
     local read = {}
     for _, header in ipairs({ "\nlocal function check_start(cfg)\n", "\nfunction S.start(cfg)\n" }) do
         local from = code:find(header, 1, true)
