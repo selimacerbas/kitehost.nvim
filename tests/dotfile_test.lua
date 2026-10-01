@@ -4,10 +4,11 @@
 -- the file served by its path under the root, never the root's own path.
 -- Since the rule the listing hides them too, where show_hidden alone named
 -- them, and a change to one sends no reload, nor does one in the
--- directory behind /__live/ (Section 7). A .liveignore that is not a
--- regular file (a FIFO, a directory), cannot be read or is over 64 KiB (a
--- link to a large file among them) is never read, gives no rule and is
--- named once; the FIFO row starts in a child Neovim bounded at 5 s. A
+-- directory behind /__live/ (Section 7), nor a change naming a directory
+-- below the root, as Windows sends one (Section 7c). A .liveignore that
+-- is not a regular file (a FIFO, a directory), cannot be read or is over
+-- 64 KiB (a link to a large file among them) is never read, gives no rule
+-- and is named once; the FIFO row starts in a child Neovim bounded at 5 s. A
 -- start refused after reading it warns nothing, and a retarget to another
 -- root warns anew. A run of stars in a line is one star, and stars apart
 -- are matched with no going back, each timed on a path, every line
@@ -298,9 +299,9 @@ H.case("Section 7: a dot path's change sends no reload", function()
     -- but .git, whose changes the rule drops, and none on .git when
     -- serve_dotfiles admits it.
     H.write_file(open_site .. "/.hidden/x", "x")
-    ok(reloaded(open_c, open_mark, 2000, ".hidden/x"), "and a write to .hidden/x")
+    ok(reloaded(open_c, open_mark, 2000, ".hidden/x"), "and a write to .hidden/x " .. named(open_c, open_mark))
     H.write_file(open_site .. "/.git/index", "index")
-    ok(reloaded(open_c, open_mark, 2000, ".git/index"), "and a write to .git/index")
+    ok(reloaded(open_c, open_mark, 2000, ".git/index"), "and a write to .git/index " .. named(open_c, open_mark))
     local own_site = H.tmpdir()
     H.write_file(own_site .. "/.draft.html", "<html><body>DRAFT</body></html>")
     local _, oc, omark = watched({ default_index = own_site .. "/.draft.html" }, own_site)
@@ -397,6 +398,45 @@ H.case("Section 7: a dot path's change sends no reload", function()
     ok(
         reloaded(uc, umark, 2000, "page.html") and not streamed(uc, umark, "dist/"),
         "and a line dist drops both " .. named(uc, umark)
+    )
+    -- Windows also sends a change naming the directory whose entry changed,
+    -- which the reload named: a dot file or a .liveignore'd one in a
+    -- subdirectory reloaded through that name, and a stylesheet there
+    -- reloaded the page (measured on the hosted runner).
+    local env_site, log_site, sheet_site = H.tmpdir(), H.tmpdir(), H.tmpdir()
+    vim.fn.mkdir(env_site .. "/sub", "p")
+    vim.fn.mkdir(log_site .. "/sub/logs", "p")
+    H.write_file(log_site .. "/.liveignore", "*.log\n")
+    vim.fn.mkdir(sheet_site .. "/css", "p")
+    H.write_file(sheet_site .. "/css/style.css", "body{}")
+    -- FSEvents replays a fixture written just before the watcher starts
+    -- (measured: the reload named css).
+    vim.wait(1000)
+    local _, ec, emark = watched(nil, env_site)
+    H.write_file(env_site .. "/sub/.env", "API_KEY=SECRET-16")
+    vim.wait(300)
+    H.write_file(env_site .. "/page.html", "<html><body>env</body></html>")
+    ok(
+        reloaded(ec, emark, 2000, "page.html") and not streamed(ec, emark, "^sub"),
+        "a write to sub/.env sends no reload " .. named(ec, emark)
+    )
+    local _, gc, gmark = watched(nil, log_site)
+    H.write_file(log_site .. "/sub/logs/a.log", "log")
+    vim.wait(300)
+    H.write_file(log_site .. "/page.html", "<html><body>log</body></html>")
+    ok(
+        reloaded(gc, gmark, 2000, "page.html") and not streamed(gc, gmark, "^sub"),
+        "with *.log in .liveignore, a write to sub/logs/a.log sends none " .. named(gc, gmark)
+    )
+    local _, sc, smark = watched({ live = { enabled = true, debounce = 300, inject_script = false } }, sheet_site)
+    H.write_file(sheet_site .. "/css/style.css", "body{color:red}")
+    reloaded(sc, smark, 2000)
+    -- A second frame from a late event would land in this wait.
+    vim.wait(600)
+    local swaps = reloads(table.concat(sc.chunks), smark)
+    ok(
+        #swaps == 1 and swaps[1].path == "css/style.css" and swaps[1].css == true,
+        "a rewrite of css/style.css sends one stylesheet swap naming it " .. named(sc, smark)
     )
     -- A started-on file with a plain name keeps its path in the payload, so
     -- a stylesheet started on still swaps instead of reloading the page.
@@ -554,6 +594,90 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
         end
         ok(reloads_for(got, mark, "/"), ("%s (named: %s)"):format(row[2], table.concat(named, " ")))
     end
+end)
+
+-- Only Windows sends a change naming a directory whose entry changed: the
+-- macOS watcher reports each change here as a rename (measured), and the
+-- per-directory one names the file. So the callback the server hands its
+-- root watcher is fed such a change as Windows sends it.
+H.case("Section 7c: a change naming a directory below the root sends no reload", function()
+    local site = H.tmpdir()
+    vim.fn.mkdir(site .. "/sub", "p")
+    H.write_file(site .. "/sub/page.html", "<html><body>sub</body></html>")
+    local real_new = uv.new_fs_event
+    H.defer(function()
+        uv.new_fs_event = real_new
+    end)
+    -- The root's watcher starts first, on either watcher.
+    local feed
+    uv.new_fs_event = function()
+        local ev, err, name = real_new()
+        if not ev then
+            return ev, err, name
+        end
+        return setmetatable({}, {
+            __index = function(_, method)
+                return function(_, ...)
+                    if method == "start" then
+                        feed = feed or select(3, ...)
+                    end
+                    return ev[method](ev, ...)
+                end
+            end,
+        })
+    end
+    local inst = server.start({
+        port = 0,
+        root = site,
+        live = { enabled = true, debounce = 20, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    uv.new_fs_event = real_new
+    H.defer(function()
+        server.stop(inst)
+    end)
+    local c = assert(H.raw_connect(inst.port))
+    H.defer(function()
+        c:close()
+    end)
+    assert(c:send(("GET /__live/events HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(inst.port)))
+    c:read(2000, function(b)
+        return b:find("retry: 1000\n\n", 1, true) ~= nil
+    end)
+    -- FSEvents delivered a fixture written just before the watcher
+    -- started after the stream opened (measured), so it settles first.
+    vim.wait(600)
+    ok(type(feed) == "function", "the root watcher's callback is held")
+    if type(feed) ~= "function" then
+        return
+    end
+    -- Whether one fed change is taken into the debounce window, and the
+    -- paths the reloads after it name.
+    local function fed(name, events)
+        local mark, seq = #table.concat(c.chunks), inst.reload_seq
+        feed(nil, name, events)
+        local taken = inst.reload_seq ~= seq
+        c:read(300, function(b)
+            return #reloads(b, mark) > 0
+        end)
+        vim.wait(100)
+        local paths = {}
+        for _, obj in ipairs(reloads(table.concat(c.chunks), mark)) do
+            paths[#paths + 1] = tostring(obj.path)
+        end
+        return taken, table.concat(paths, " ")
+    end
+    local taken, paths = fed("sub", { change = true })
+    ok(not taken and paths == "", ("a change naming sub, a directory, sends no reload (named: %s)"):format(paths))
+    taken, paths = fed("sub/page.html", { change = true })
+    ok(taken and paths == "sub/page.html", ("a change naming sub/page.html still reloads (named: %s)"):format(paths))
+    taken, paths = fed("sub", { rename = true })
+    ok(
+        taken and paths == "sub",
+        ("and a rename naming sub, a directory made or removed, does (named: %s)"):format(paths)
+    )
+    taken = fed(nil, { change = true })
+    ok(taken, "and a change the watcher could not name is kept")
 end)
 
 -- The listing read an entry's own name, so a plain-named link to a dot name

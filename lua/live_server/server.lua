@@ -867,11 +867,22 @@ local function window_send(inst, window)
     return alive[#alive], true
 end
 
-local function schedule_reload(inst, changed_path)
+local function schedule_reload(inst, changed_path, events)
     if not inst.live_enabled then
         return
     end
     local rel = changed_path and changed_rel(inst, changed_path)
+    -- Windows also sends a change naming the directory whose entry changed
+    -- (measured), so a reload named the directory, and a dot path or a
+    -- .liveignore'd file under it reloaded through that name. A change of
+    -- a directory but the root names no file; one lstat cannot read is
+    -- kept, as a file's would be.
+    if events and events.change and not events.rename and rel and rel ~= "" and rel ~= "/" then
+        local st = uv.fs_lstat(util.joinpath(inst.root_real, rel))
+        if st and st.type == "directory" then
+            return
+        end
+    end
     local own = rel and is_own_index(inst, rel)
     -- A dot path's change names it to every events client, the name the
     -- listing hides, and reloads a page for a file the server never serves;
@@ -1008,12 +1019,12 @@ local function add_dir_watch(inst, dir)
     if not ev then
         return nil, new_err, new_name
     end
-    local cb = function(err, fname, _status)
+    local cb = function(err, fname, events)
         if err then
             return
         end
         local full = fname and fname ~= "" and util.joinpath(dir, fname) or dir
-        schedule_reload(inst, full)
+        schedule_reload(inst, full, events)
         -- Watch newly created subdirectories
         if fname and fname ~= "" then
             local st = uv.fs_stat(full)
@@ -1061,11 +1072,11 @@ local function start_fs_watch(inst)
         -- macOS / Windows: single recursive watcher
         local single = uv.new_fs_event()
         if single then
-            local cb = function(err, fname, _status)
+            local cb = function(err, fname, events)
                 if err then
                     return
                 end
-                schedule_reload(inst, fname or "")
+                schedule_reload(inst, fname or "", events)
             end
             if single:start(inst.root_real, { recursive = true }, cb) then
                 inst.fs_event = single
