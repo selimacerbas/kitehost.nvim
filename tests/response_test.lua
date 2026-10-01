@@ -776,27 +776,33 @@ H.case("Section 10: an index that resolves behind /__live/ is not the directory'
         vim.fn.mkdir(site .. "/" .. dir, "p")
     end
     H.write_file(site .. "/both/index.htm", "<html><body>PLAIN</body></html>")
+    -- Each row reads its own directory's link, so a link that does not
+    -- resolve skips its own row alone.
+    local why = {}
     for _, dir in ipairs({ "both", "solo" }) do
         local link = site .. "/" .. dir .. "/index.html"
         local made, err = uv.fs_symlink(".." .. sep .. "__live" .. sep .. "page.html", link)
-        local why = unresolved(made, err, link, site .. "/__live/page.html")
-        if why then
-            H.skip("an index.htm beside an index.html linking into __live/ is served (" .. why .. ")")
-            H.skip("with no other index the directory is listed (" .. why .. ")")
-            return
-        end
+        why[dir] = unresolved(made, err, link, site .. "/__live/page.html")
     end
     local inst = serve({ root = site, features = { dirlist = { enabled = true } } })
-    local r = raw(inst.port, get("/both/", inst.port))
-    ok(
-        r.status == 200 and r.body:find("PLAIN", 1, true) ~= nil,
-        ("an index.htm beside an index.html linking into __live/ is served (got %d)"):format(r.status)
-    )
-    r = raw(inst.port, get("/solo/", inst.port))
-    ok(
-        r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("LIVEPAGE", 1, true),
-        ("with no other index the directory is listed (got %d)"):format(r.status)
-    )
+    if why.both then
+        H.skip("an index.htm beside an index.html linking into __live/ is served (" .. why.both .. ")")
+    else
+        local r = raw(inst.port, get("/both/", inst.port))
+        ok(
+            r.status == 200 and r.body:find("PLAIN", 1, true) ~= nil,
+            ("an index.htm beside an index.html linking into __live/ is served (got %d)"):format(r.status)
+        )
+    end
+    if why.solo then
+        H.skip("with no other index the directory is listed (" .. why.solo .. ")")
+    else
+        local r = raw(inst.port, get("/solo/", inst.port))
+        ok(
+            r.status == 200 and r.body:find("Index of /solo/", 1, true) ~= nil and not r.body:find("LIVEPAGE", 1, true),
+            ("with no other index the directory is listed (got %d)"):format(r.status)
+        )
+    end
 end)
 
 -- A directory made as __LIVE is the reserved one on a case-folding
