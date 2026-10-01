@@ -700,12 +700,27 @@ H.case("Section 7c: a change naming a directory below the root sends no reload",
     )
     taken = fed(nil, { change = true })
     ok(taken, "and a change the watcher could not name is kept")
+    -- Windows reports no change of the watched root itself (measured), so
+    -- there the name is the child's alone and its change is dropped.
     local own = util.basename(inst.root_real)
     taken, paths = fed(own, { change = true })
-    ok(
-        taken,
-        ("and a change naming %s, the root's own name and a child directory's, is kept (named: %s)"):format(own, paths)
-    )
+    if is_win then
+        ok(
+            not taken and paths == "",
+            ("and a change naming %s, a child directory named as the root, sends no reload on Windows (named: %s)"):format(
+                own,
+                paths
+            )
+        )
+    else
+        ok(
+            taken,
+            ("and a change naming %s, the root's own name and a child directory's, is kept (named: %s)"):format(
+                own,
+                paths
+            )
+        )
+    end
 end)
 
 -- The listing read an entry's own name, so a plain-named link to a dot name

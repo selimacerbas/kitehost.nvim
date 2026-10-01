@@ -867,6 +867,10 @@ local function window_send(inst, window)
     return alive[#alive], true
 end
 
+-- Windows, by the path separator the process fixes at load, which no
+-- failed call can hide.
+local WINDOWS = package.config:sub(1, 1) == "\\"
+
 local function schedule_reload(inst, changed_path, events)
     if not inst.live_enabled then
         return
@@ -879,8 +883,9 @@ local function schedule_reload(inst, changed_path, events)
     -- kept, as a file's would be.
     local changed_dir = events and events.change and not events.rename and rel and rel ~= "" and rel ~= "/"
     -- Beside a child named as the root, changed_rel reads the root's own
-    -- change as the child's, so that one name is kept.
-    if changed_dir and rel ~= util.basename(inst.root_real) then
+    -- change as the child's, so that one name is kept, but on Windows,
+    -- which reports no change of the watched root itself (measured).
+    if changed_dir and (WINDOWS or rel ~= util.basename(inst.root_real)) then
         local st = uv.fs_lstat(util.joinpath(inst.root_real, rel))
         if st and st.type == "directory" then
             return
@@ -1666,7 +1671,6 @@ end
 -- no root yet, the caller's to say, and never reaches here. Absolute is
 -- read per OS: a drive letter or a leading backslash is a relative name
 -- on macOS and Linux, which followed the working directory there.
-local WINDOWS = package.config:sub(1, 1) == "\\"
 local function is_absolute(path)
     if WINDOWS then
         return path:find("^[/\\]") ~= nil or path:find("^%a:[/\\]") ~= nil
