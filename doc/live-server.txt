@@ -362,9 +362,11 @@ live_server.setup({opts})                       *live_server.setup()*
     metatable supplies through `__index` is never refused, and the merge
     does not read it: of {opts}'s own options only `headers` is read
     through it, and inside a section only an `auto_start` table's
-    fields, that table being kept as given, while any other (`notify`,
-    `auto_start` itself, a `live_reload` field) is left out without a
-    word, so give it a plain table.
+    fields, and those only on a `setup()` that finds no earlier
+    `auto_start` table, which then keeps the table as given (a later
+    call merges into the kept one and reads none of them); any other
+    (`notify`, `auto_start` itself, a `live_reload` field) is left out
+    without a word, so give it a plain table.
 
 live_server.start_picker()                      *live_server.start_picker()*
     UI flow: pick a path (Telescope or vim.ui), pick a port, start.
