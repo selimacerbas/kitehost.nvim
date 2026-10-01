@@ -2441,8 +2441,22 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     -- An entry the scan leaves untyped was never walked, so its subtree
     -- went unwatched without a word.
     -- A link to a directory stays unwalked, untyped or not, as a typed
-    -- link is: the entry is lstat'ed, never followed.
-    assert(uv.fs_symlink(real_three .. "/a", three .. "/l"))
+    -- link is: the entry is lstat'ed, never followed. Windows opens no
+    -- link to a directory made without dir = true (measured on the hosted
+    -- runner), and a link that does not resolve is unwalked whether or not
+    -- it is followed, so the link half of the row runs only where the link
+    -- resolves to a.
+    local link, want = three .. "/l", util.joinpath(real_three, "a")
+    local linked, link_err = uv.fs_symlink(want, link, { dir = true })
+    local link_real, real_err = uv.fs_realpath(link)
+    local link_why
+    if not linked then
+        link_why = "no link: " .. tostring(link_err)
+    elseif not link_real then
+        link_why = "the link does not resolve: " .. tostring(real_err)
+    elseif not H.same_path(link_real, want) then
+        link_why = ("the link resolves to %s, not %s"):format(link_real, want)
+    end
     mark = #notes
     before = counts()
     uv.fs_scandir_next = function(handle)
@@ -2451,11 +2465,13 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     end
     local untyped = serve({ root = three, live = live })
     uv.fs_scandir_next = real_scandir_next
-    eq(
-        counts().fs_event - before.fs_event,
-        4,
-        "an entry the scan leaves untyped is lstat'ed, a directory watched and a link to one not"
-    )
+    local watched = counts().fs_event - before.fs_event
+    if link_why then
+        eq(watched, 4, "an entry the scan leaves untyped is lstat'ed and a directory watched")
+        H.skip("and a link to a directory is not (" .. link_why .. ")")
+    else
+        eq(watched, 4, "an entry the scan leaves untyped is lstat'ed, a directory watched and a link to one not")
+    end
     eq(server.is_live_enabled(untyped), true, "and live reload stays on")
     eq(#warnings(mark), 0, "and nothing is warned")
 end)
