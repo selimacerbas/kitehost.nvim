@@ -1856,7 +1856,19 @@ H.case("Section 8f: update_target checks its root and its index as start does", 
     local got, err = refused(("update_target: root %s is not a directory"):format(file), file, nil)
     ok(got, "a file root raises at the caller, naming it: " .. err)
     local fifo = H.tmpdir() .. "/pipe"
-    if vim.system({ "mkfifo", fifo }):wait().code == 0 then
+    -- The mkfifo on the Windows runner's PATH exits 0 where the system has
+    -- no FIFO, and leaves a name this Neovim cannot resolve (ENOENT,
+    -- measured), so the rows run only on a FIFO the stat reads as one.
+    local fifo_why
+    if vim.system({ "mkfifo", fifo }):wait().code ~= 0 then
+        fifo_why = "mkfifo failed"
+    else
+        local st = uv.fs_stat(fifo)
+        if not st or st.type ~= "fifo" then
+            fifo_why = "no FIFO this Neovim can stat; Windows has none"
+        end
+    end
+    if not fifo_why then
         got, err = refused(("update_target: root %s is not a directory"):format(fifo), fifo, nil)
         ok(got, "a FIFO root raises at the caller, naming it: " .. err)
         -- With live reload on, the watcher's start on a FIFO blocked the
@@ -1904,8 +1916,8 @@ io.stdout:write(vim.json.encode({ moved = moved, res = tostring(res) }))
             )
         )
     else
-        H.skip("a FIFO root raises at the caller, naming it (mkfifo failed)")
-        H.skip("a live server's retarget to a FIFO root raises within 5 s (mkfifo failed)")
+        H.skip("a FIFO root raises at the caller, naming it (" .. fifo_why .. ")")
+        H.skip("a live server's retarget to a FIFO root raises within 5 s (" .. fifo_why .. ")")
     end
     got, err = refused("update_target: root is not a string (nil)", nil, nil)
     ok(got, "a nil root raises at the caller: " .. err)
