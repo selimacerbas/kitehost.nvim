@@ -1847,6 +1847,8 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         { "/[", 2, "a set is not closed", nil, "/" },
         { "a%", 2, "a % ends it", nil, "a" },
         { "^/x(", 4, "a capture is not closed", nil, "/x" },
+        -- ( alone makes a pattern of it, as the plain-text rows below need.
+        { "/x(", 3, "a capture is not closed", nil, "/x" },
         { "^/x)", 4, "a ) closes no capture", nil, "/x" },
         { "^/(a(b)", 3, "a capture is not closed", nil, "/ab" },
         { "%b", 1, "%b takes two characters", nil, "x" },
