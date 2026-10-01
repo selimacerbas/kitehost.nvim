@@ -514,31 +514,46 @@ function U.parse_liveignore(root)
     if not content then
         return nil, tostring(read_err)
     end
-    local patterns = {}
-    for line in content:gmatch("[^\r\n]+") do
-        -- Two anchored trims, as parse_head's: a lazy capture with a
-        -- greedy tail rescans an inner run of blanks from every position,
-        -- and 60000 of them took 16.8 s of CPU time.
-        line = line:gsub("^%s+", "")
-        line = line:match("^(.*%S)") or ""
-        if line ~= "" and line:sub(1, 1) ~= "#" then
-            -- Every pattern character is escaped: an unescaped bracket raised
-            -- inside the watcher once its literal prefix matched a path, and an
-            -- unescaped question mark made the character before it optional,
-            -- so a line a?b dropped every path holding a b. A run of stars
-            -- is one .*, which matches what the run did: a .* per star
-            -- backtracked on every changed path, and eight stars before a
-            -- letter held the loop 5.8 s on one 29-byte path (measured).
-            local pat = line:gsub("([%.%+%-%^%$%(%)%%%[%]%?])", "%%%1"):gsub("%*+", ".*")
-            -- The path is matched with a leading slash (schedule_reload), so
-            -- a line starting with one is anchored at the root.
-            if pat:sub(1, 1) == "/" then
-                pat = "^" .. pat
+    -- Lines are numbered by their line feeds, a lone CR splitting a line
+    -- in two as it always has, so a warning can name the line skipped.
+    local patterns, skipped, number = {}, {}, 0
+    for numbered in (content .. "\n"):gmatch("([^\n]*)\n") do
+        number = number + 1
+        for line in numbered:gmatch("[^\r]+") do
+            -- Two anchored trims, as parse_head's: a lazy capture with a
+            -- greedy tail rescans an inner run of blanks from every
+            -- position, and 60000 of them took 16.8 s of CPU time.
+            line = line:gsub("^%s+", "")
+            line = line:match("^(.*%S)") or ""
+            -- LuaJIT's matcher ended a rule at a NUL wherever the line made
+            -- a pattern, so *<NUL>* ignored every change; no path holds a
+            -- NUL, so the line is skipped and named.
+            if line ~= "" and line:sub(1, 1) ~= "#" and line:find("%z") then
+                if skipped[#skipped] ~= number then
+                    table.insert(skipped, number)
+                end
+                line = ""
             end
-            table.insert(patterns, pat)
+            if line ~= "" and line:sub(1, 1) ~= "#" then
+                -- Every pattern character is escaped: an unescaped bracket
+                -- raised inside the watcher once its literal prefix matched
+                -- a path, and an unescaped question mark made the character
+                -- before it optional, so a line a?b dropped every path
+                -- holding a b. A run of stars is one .*, which matches what
+                -- the run did: a .* per star backtracked on every changed
+                -- path, and eight stars before a letter held the loop 5.8 s
+                -- on one 29-byte path (measured).
+                local pat = line:gsub("([%.%+%-%^%$%(%)%%%[%]%?])", "%%%1"):gsub("%*+", ".*")
+                -- The path is matched with a leading slash (schedule_reload),
+                -- so a line starting with one is anchored at the root.
+                if pat:sub(1, 1) == "/" then
+                    pat = "^" .. pat
+                end
+                table.insert(patterns, pat)
+            end
         end
     end
-    return patterns
+    return patterns, nil, #skipped > 0 and skipped or nil
 end
 
 -- Whether path holds one of parse_liveignore's patterns, read without the

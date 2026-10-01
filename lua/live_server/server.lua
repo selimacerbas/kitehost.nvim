@@ -2912,11 +2912,18 @@ local function check_start(cfg)
     }
 end
 
+-- A .liveignore that cannot be read, or lines of it skipped for a NUL, is
+-- named once under one kind, re-armed by a retarget to another root.
 local function read_liveignore(inst)
-    local rules, why = util.parse_liveignore(inst.root_real)
+    local rules, why, skipped = util.parse_liveignore(inst.root_real)
     inst.ignore_patterns = rules or {}
+    local file = util.joinpath(inst.root_real, ".liveignore")
     if not rules then
-        warn_once(inst, "liveignore", ("ignores %s: %s"):format(util.joinpath(inst.root_real, ".liveignore"), why))
+        warn_once(inst, "liveignore", ("ignores %s: %s"):format(file, why))
+    elseif skipped then
+        local which = #skipped == 1 and ("line %d of %s: it holds"):format(skipped[1], file)
+            or ("%d lines of %s, the first line %d: each holds"):format(#skipped, file, skipped[1])
+        warn_once(inst, "liveignore", ("skips %s a NUL byte, which no path holds"):format(which))
     end
 end
 

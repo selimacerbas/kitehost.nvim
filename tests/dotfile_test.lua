@@ -11,11 +11,12 @@
 -- start refused after reading it warns nothing, and a retarget to another
 -- root warns anew. A run of stars in a line is one star, and stars apart
 -- are matched with no going back, each timed on a path, every line
--- matching what its pattern finds (Section 10c). One debounce window
--- reloads the page when any change in it is not a stylesheet, a path
--- gone by the send is dropped (a save's probe and backup files, a
--- temporary name renamed away), and a window names its latest page
--- change however long the burst.
+-- matching what its pattern finds; a line is trimmed in linear time, and
+-- one holding a NUL is skipped and named once (Section 10c). One
+-- debounce window reloads the page when any change in it is not a
+-- stylesheet, a path gone by the send is dropped (a save's probe and
+-- backup files, a temporary name renamed away), and a window names its
+-- latest page change however long the burst.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/dotfile_test.lua"
 
@@ -1104,6 +1105,52 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     ok(spent < 50, ("a line with 60000 inner blanks is read in under 50 ms of CPU time (%.1f ms)"):format(spent))
     eq(wide[1], "a" .. (" "):rep(60000) .. "b", "and keeps its inner blanks")
     eq(rule(" \t dist \t "), "dist", "a line's outer blanks and tabs are trimmed")
+    -- LuaJIT's matcher ended a rule at a NUL wherever the line made a
+    -- pattern, so *<NUL>* ignored every change; no path holds a NUL, so
+    -- such a line is skipped, and one warning names its line.
+    local nul_site = H.tmpdir()
+    H.write_file(nul_site .. "/.liveignore", "dist\n*\0*\n# x\0y\n/a\0b\n")
+    local rules, err, nul_lines = util.parse_liveignore(nul_site)
+    eq(rules and #rules, 1, "a line holding a NUL gives no rule, a comment none either: " .. tostring(err))
+    eq(rules and util.match_ignore("/a", rules), false, "so it ignores no path")
+    eq(rules and util.match_ignore("/dist/x.js", rules), true, "and the other lines are read")
+    eq(table.concat(nul_lines or {}, ","), "2,4", "and the lines skipped come back by number")
+    local notes = {}
+    local real_notify = vim.notify
+    H.defer(function()
+        vim.notify = real_notify
+    end)
+    vim.notify = function(msg, level)
+        table.insert(notes, { msg = msg, level = level })
+    end
+    local inst = server.start({
+        port = 0,
+        root = nul_site,
+        live = { enabled = false, inject_script = false },
+        features = { dirlist = { enabled = false } },
+    })
+    H.defer(function()
+        server.stop(inst)
+    end)
+    H.wait_for(function()
+        return #notes >= 1
+    end, 1000)
+    vim.wait(100)
+    vim.notify = real_notify
+    local want = ("live-server: port %d skips 2 lines of %s, the first line 2: each holds a NUL byte, which no path holds"):format(
+        inst.port,
+        vim.fs.joinpath(inst.root_real, ".liveignore")
+    )
+    ok(
+        #notes == 1 and notes[1].msg == want and notes[1].level == vim.log.levels.WARN,
+        "a start warns once, naming the first line skipped: " .. vim.inspect(notes, { newline = " ", indent = "" })
+    )
+    eq(#inst.ignore_patterns, 1, "and keeps the one rule")
+    local single = H.tmpdir()
+    H.write_file(single .. "/.liveignore", "dist\n\n*\0*\n")
+    local one_rules, _, one_lines = util.parse_liveignore(single)
+    eq(one_rules and #one_rules, 1, "an empty line between counts as a line")
+    eq(table.concat(one_lines or {}, ","), "3", "so the NUL line is line 3")
 end)
 
 -- Two changes inside one debounce window kept the last path alone, so
