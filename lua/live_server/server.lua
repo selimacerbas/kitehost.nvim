@@ -359,7 +359,8 @@ local SINGLE_FIELDS = { "Origin", "Sec-Fetch-Site", "Sec-Fetch-Mode" }
 
 -- The longest request target read. The gate matches every protected_paths
 -- pattern against the path on the loop, where a well-formed pattern
--- backtracks: /.*%.md$ held the editor 4.7 s on a 16 KiB path (measured).
+-- backtracks: /.*%.md$ cost 880 ms of CPU time on a 16 KiB path and 270
+-- ms on an 8 KiB one (0.12.5; 620 and 160 ms on 0.10.0, measured).
 -- The cap bounds the request's spelling; the name on disk the gate reads
 -- second is bounded by the OS's path limit.
 local MAX_TARGET = 8 * 1024
