@@ -2492,6 +2492,8 @@ end
 --     /.*%.md$ 535 ms, ^/.*%.md$ 0.2 ms. It is taken unanchored when the
 --     pattern starts with a literal that item cannot match, which ends
 --     each run at the next place a match can start (the same pattern).
+--     The refusal names ^.* in front, which finds what the pattern found
+--     since a leading .* takes any prefix; a bare ^ narrowed it.
 --   * Each ? item doubles the ways a path is tried: twenty-four took 1 s
 --     on a 26-byte path, and eight after a wildcard 175 ms on 8 KiB, so
 --     two are taken.
@@ -2509,7 +2511,7 @@ end
 --     the README states the figure below its start-key table.
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
-    .. " so a request path costs the square of its length"
+    .. " so a request path costs the square of its length; write ^.* in front to keep the same matches"
 local OPTIONAL = "more than two ? items double a request path's cost with each one"
 local LONG = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
 local BALANCED = "a balanced match (%b) scans a request path without bound and has no place in a path rule"

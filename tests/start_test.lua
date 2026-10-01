@@ -2114,7 +2114,7 @@ end)
 H.case("start refuses a second unbounded quantifier that can run on", function()
     local second = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
     local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
-        .. " so a request path costs the square of its length"
+        .. " so a request path costs the square of its length; write ^.* in front to keep the same matches"
     local optional = "more than two ? items double a request path's cost with each one"
     local long = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
     local balanced = "a balanced match (%b) scans a request path without bound and has no place in a path rule"
@@ -2191,6 +2191,42 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
             server.stop(res)
         end
         ok(started, ("%s starts: %s"):format(pattern:sub(1, 40), started and "" or tostring(res)))
+    end
+end)
+
+-- The anchor rule's refusal names the rewrite that keeps a pattern's
+-- matches: a leading .* takes any prefix, so ^.*P finds a path wherever
+-- P does, where a bare ^ in front keeps only the paths P matched at
+-- their first byte (^/secret/.* served /a/secret/x.txt without the
+-- token). Each pattern here is refused, and ^.* in front of it starts.
+H.case("an unanchored pattern with ^.* in front starts and finds the same paths", function()
+    local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
+        .. " so a request path costs the square of its length; write ^.* in front to keep the same matches"
+    local paths = { "/drafts/a.md", "/x/drafts/a.md", "/drafts/b/a.md", "/private/k", "/a/private/k" }
+    vim.list_extend(paths, { "/private/m/l", "/cache/x", "/a/cache/x/y", "/a/bcache/z", "/a.md", "/" })
+    for _, c in ipairs({ { "drafts/[^/]+%.md$", 12 }, { "private/[^/]*$", 13 }, { "cache/[^/]*", 11 } }) do
+        local started, res = pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { c[1] } })
+        if started then
+            server.stop(res)
+        end
+        eq(
+            not started and tostring(res) or "started",
+            ("protected_paths pattern is refused at byte %d (%s): %s"):format(c[2], unanchored, c[1]),
+            ("%s is refused and its refusal names the rewrite"):format(c[1])
+        )
+        local rewritten = "^.*" .. c[1]
+        started, res = pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { rewritten } })
+        if started then
+            server.stop(res)
+        end
+        ok(started, ("%s starts: %s"):format(rewritten, started and "" or tostring(res)))
+        local differ = {}
+        for _, path in ipairs(paths) do
+            if (path:find(c[1]) ~= nil) ~= (path:find(rewritten) ~= nil) then
+                table.insert(differ, path)
+            end
+        end
+        eq(table.concat(differ, " "), "", ("%s finds the paths %s finds"):format(rewritten, c[1]))
     end
 end)
 
