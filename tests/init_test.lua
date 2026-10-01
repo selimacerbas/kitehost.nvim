@@ -838,6 +838,7 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
         -- no instance is opened the same way.
         { "fe80::1%lo0", "http://[fe80::1]:8123/" },
         { "::1%1", "http://[::1]:8123/" },
+        { "[fe80::1%lo0]", "http://[fe80::1]:8123/" },
     }) do
         package.loaded["live_server"] = nil
         local ls = require("live_server")
