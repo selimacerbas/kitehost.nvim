@@ -562,11 +562,21 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
     H.write_file(site .. "/index.html", "<html><body>ok</body></html>")
     vim.fn.mkdir(site .. "/__live", "p")
     H.write_file(site .. "/__live/other.txt", "USERFILE")
+    -- The mkfifo on the Windows runner's PATH exits 0 where the system has
+    -- no FIFO (measured), and with none at /__live/x the FIFO rows hold
+    -- whatever a FIFO there would do, so they run only on a FIFO the stat
+    -- reads as one.
     local fifo, fifo_why = false, "mkfifo is not on PATH"
     if vim.fn.executable("mkfifo") == 1 then
         local made = vim.system({ "mkfifo", site .. "/__live/x" }):wait()
-        fifo = made.code == 0
-        fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. tostring(made.stderr)
+        local st = uv.fs_stat(site .. "/__live/x")
+        if made.code ~= 0 then
+            fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. tostring(made.stderr)
+        elseif not st or st.type ~= "fifo" then
+            fifo_why = "no FIFO this Neovim can stat; Windows has none"
+        else
+            fifo = true
+        end
     end
     -- The directory behind the namespace is reached under other request
     -- spellings too: a case variant on a case-folding volume, a link to a

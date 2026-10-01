@@ -1857,11 +1857,15 @@ H.case("Section 8f: update_target checks its root and its index as start does", 
     local got, err = refused(("update_target: root %s is not a directory"):format(file), file, nil)
     ok(got, "a file root raises at the caller, naming it: " .. err)
     local fifo = H.tmpdir() .. "/pipe"
-    -- The mkfifo on the Windows runner's PATH exits 0 where the system has
-    -- no FIFO, and leaves a name this Neovim cannot resolve (ENOENT,
-    -- measured), so the rows run only on a FIFO the stat reads as one.
+    -- vim.system raises where mkfifo is not on PATH, which cut the rest of
+    -- the case off. The mkfifo on the Windows runner's PATH exits 0 where
+    -- the system has no FIFO, and leaves a name this Neovim cannot resolve
+    -- (ENOENT, measured), so the rows run only on a FIFO the stat reads as
+    -- one.
     local fifo_why
-    if vim.system({ "mkfifo", fifo }):wait().code ~= 0 then
+    if vim.fn.executable("mkfifo") ~= 1 then
+        fifo_why = "mkfifo is not on PATH"
+    elseif vim.system({ "mkfifo", fifo }):wait().code ~= 0 then
         fifo_why = "mkfifo failed"
     else
         local st = uv.fs_stat(fifo)
