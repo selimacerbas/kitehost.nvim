@@ -99,6 +99,17 @@ H.case("Section 2: completion lists the subcommands, then their arguments", func
     )
     eq(table.concat(vim.fn.getcompletion("KiteHost t", "cmdline"), ", "), "toggle-live", "one subcommand by its start")
     eq(table.concat(vim.fn.getcompletion("KiteHost x", "cmdline"), ", "), "", "none for a start no subcommand has")
+    eq(
+        table.concat(vim.fn.getcompletion("silent KiteHost st", "cmdline"), ", "),
+        "start, stop, stop-all, status",
+        "the same after a command modifier"
+    )
+    eq(table.concat(vim.fn.getcompletion("vert KiteHost ", "cmdline"), ", "), KNOWN, "every one after :vert")
+    eq(
+        table.concat(vim.fn.getcompletion("silent! KiteHost start ", "cmdline"), ", "),
+        "",
+        "and no argument after a modifier either"
+    )
     for _, sub in ipairs(SUBCOMMANDS) do
         eq(
             table.concat(vim.fn.getcompletion("KiteHost " .. sub[1] .. " ", "cmdline"), ", "),
