@@ -519,6 +519,12 @@ function U.parse_liveignore(root)
     if not content then
         return nil, tostring(read_err)
     end
+    -- An editor may save a UTF-8 byte order mark ahead of the first line,
+    -- which no trim takes: /dist began with U+FEFF, was anchored at no
+    -- root and ignored nothing, without a word (measured).
+    if content:sub(1, 3) == "\239\187\191" then
+        content = content:sub(4)
+    end
     -- Lines are numbered by their line feeds, a lone CR splitting a line
     -- in two as it always has, so a warning can name the line skipped.
     local patterns, rules, skipped, number = {}, {}, {}, 0

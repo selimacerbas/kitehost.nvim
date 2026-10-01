@@ -1113,6 +1113,15 @@ H.case("Section 10c: a run of stars in a .liveignore line is one star", function
     ok(spent < 50, ("a line with 60000 inner blanks is read in under 50 ms of CPU time (%.1f ms)"):format(spent))
     eq(wide[1], "a" .. (" "):rep(60000) .. "b", "and keeps its inner blanks")
     eq(rule(" \t dist \t "), "dist", "a line's outer blanks and tabs are trimmed")
+    -- An editor may save a UTF-8 byte order mark ahead of the first line,
+    -- which the trim kept: /dist then started with U+FEFF, was anchored at
+    -- no root and ignored nothing, without a word (measured).
+    local bom_site = H.tmpdir()
+    H.write_file(bom_site .. "/.liveignore", "\239\187\191/dist\n*.log\n")
+    local bom = assert(util.parse_liveignore(bom_site))
+    eq(util.match_ignore("/dist/x.js", bom), true, "a .liveignore saved with a byte order mark reads its /dist")
+    eq(util.match_ignore("/sub/dist/x.js", bom), false, "anchored at the root")
+    eq(util.match_ignore("/a.log", bom), true, "and its later lines as before")
     -- LuaJIT's matcher ended a rule at a NUL wherever the line made a
     -- pattern, so *<NUL>* ignored every change; no path holds a NUL, so
     -- such a line is skipped, and one warning names its line.
