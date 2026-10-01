@@ -544,10 +544,12 @@ serve).
 The `reload` event's data is JSON,
 `{"ts":<seconds>,"path":<string>,"css":<boolean>}`, keys in that order;
 Neovim 0.10 writes a slash as `\/`, so a reader decodes it and never
-compares its bytes. The watcher sends no reload for a change under a
-dot path while `serve_dotfiles` is off or under the `__live` entry at
-the root, the file the server was started on excepted, nor for one the
-root's `.liveignore` matches. On Linux, where each directory is watched
+compares its bytes. A change the watcher could not name (on Windows, a
+burst of changes that overflowed its buffer) gives `""` as the path.
+The watcher sends no reload for a change under a dot path while
+`serve_dotfiles` is off or under the `__live` entry at the root, the
+file the server was started on excepted, nor for one the root's
+`.liveignore` matches. On Linux, where each directory is watched
 on its own, a directory named `node_modules` that is there when the
 watch starts is not watched, nor anything under it, so a change there
 sends no reload; one made later is watched. The README's section holds
