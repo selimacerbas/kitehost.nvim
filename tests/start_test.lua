@@ -2134,7 +2134,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
     local second = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
     local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
         .. " so a request path costs the square of its length; write ^.* in front to keep the same matches,"
-        .. " and drop a .* it starts or ends with: it adds nothing to a find"
+        .. " and drop a .* it starts or ends with, a final $ aside: it adds nothing to a find"
     local optional = "more than two ? items double a request path's cost with each one"
     local long = "a pattern longer than 256 bytes multiplies a request path's cost by its length"
     local balanced = "a balanced match (%b) scans a request path without bound and has no place in a path rule"
@@ -2220,12 +2220,13 @@ end)
 -- their first byte (^/secret/.* served /a/secret/x.txt without the
 -- token). A .* the pattern starts or ends with adds nothing to a find,
 -- and kept it would make ^.* in front a second unbounded quantifier,
--- which start refuses (^.*/secret/.*), so the refusal names dropping it.
--- Each pattern here is refused, and its rewrite starts.
+-- which start refuses (^.*/secret/.*), so the refusal names dropping it,
+-- a final $ aside: .*$ matches any end. Each pattern here is refused, and
+-- its rewrite starts.
 H.case("an unanchored pattern with ^.* in front starts and finds the same paths", function()
     local unanchored = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
         .. " so a request path costs the square of its length; write ^.* in front to keep the same matches,"
-        .. " and drop a .* it starts or ends with: it adds nothing to a find"
+        .. " and drop a .* it starts or ends with, a final $ aside: it adds nothing to a find"
     local paths = { "/drafts/a.md", "/x/drafts/a.md", "/drafts/b/a.md", "/private/k", "/a/private/k" }
     vim.list_extend(paths, { "/private/m/l", "/cache/x", "/a/cache/x/y", "/a/bcache/z", "/a.md", "/" })
     vim.list_extend(paths, { "/secret/a.txt", "/x/secret/b", "/secretx/c", "/.env", "/a/.envrc", "/env" })
@@ -2236,6 +2237,7 @@ H.case("an unanchored pattern with ^.* in front starts and finds the same paths"
         { ".*%.md$", 2, "^.*%.md$" },
         { "/secret/.*", 10, "^.*/secret/" },
         { "%.env.*", 7, "^.*%.env" },
+        { "/secret/.*$", 10, "^.*/secret/" },
     }) do
         local started, res = pcall(server.start, { port = 0, root = root, token = TOKEN, protected_paths = { c[1] } })
         if started then
