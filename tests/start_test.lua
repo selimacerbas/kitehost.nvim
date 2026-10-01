@@ -314,6 +314,11 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "token", "\237\160\128", "token must be valid UTF-8" },
         { "token", "\244\144\128\128", "token must be valid UTF-8" },
         { "token", "\195\40", "token must be valid UTF-8" },
+        -- The 8 KiB target cap counts the query, where the token travels
+        -- URL-encoded: 1400 of U+00E9, 8400 bytes so, started and turned
+        -- every request carrying it into a 414 (measured).
+        { "token", ("a"):rep(4097), "token must be at most 4096 bytes once URL-encoded, got 4097" },
+        { "token", ("\195\169"):rep(683), "token must be at most 4096 bytes once URL-encoded, got 4098" },
         -- libuv reads a path as a C string and cut it at a NUL, and LuaJIT
         -- reads a pattern whole, so a NUL started a server whose option
         -- meant another than the one written.
@@ -506,6 +511,17 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     ok(started, "a token in valid UTF-8 starts: " .. tostring(started and "" or res))
     if started then
         server.stop(res)
+    end
+    -- The longest token random_token makes, and a token 4096 bytes long
+    -- once URL-encoded, start, and a request carrying the latter is served.
+    for _, token in ipairs({ util.random_token(1024), ("a"):rep(4096), ("\195\169"):rep(682) }) do
+        started, res = pcall(server.start, { port = 0, root = root, token = token })
+        ok(started, ("a token of %d bytes starts: %s"):format(#token, started and "" or tostring(res)))
+        if started then
+            local url = ("http://127.0.0.1:%d/index.html?t=%s"):format(res.port, util.url_encode(token))
+            eq(http_get(url).status, 200, ("and a request carrying it is served (%d bytes)"):format(#url))
+            server.stop(res)
+        end
     end
     -- The reader's bounds no row above reaches: F0 80..8F is an overlong
     -- lead, and a 4-byte sequence reads its third and fourth bytes too.

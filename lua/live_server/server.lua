@@ -2685,6 +2685,14 @@ local function check_start(cfg)
             end
             i = i + n
         end
+        -- The token travels URL-encoded in the query, which the 8 KiB
+        -- target cap counts: 1400 of U+00E9 encode to 8400 bytes, and every
+        -- request carrying them was a 414 (measured). Half the cap leaves
+        -- room for a path; random_token makes at most 2048 characters.
+        local encoded = #util.url_encode(token)
+        if encoded > 4096 then
+            error(("token must be at most 4096 bytes once URL-encoded, got %d"):format(encoded), 0)
+        end
     end
     -- luv truncates a port it cannot hold and listens on another one.
     local p = cfg.port
