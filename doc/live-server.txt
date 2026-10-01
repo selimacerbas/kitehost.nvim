@@ -110,12 +110,15 @@ Options:
     `127.0.0.1`; a start refuses any other string. An IPv6 address may
     carry a `%zone` of letters, digits, `.`, `_` and `-`, not checked
     against the interfaces; on macOS a zoned link-local bind starts and
-    answers no request, and `inst.host` and the opened URL carry no
-    zone. `"0.0.0.0"` serves every file under the root, except a dot
-    path (unless `serve_dotfiles` is set) and an entry named `__live` at
-    the root in any letter case, and the file you started on, at `/`, to
-    anyone who can reach the port; set `token` there and read SECURITY.md
-    first.
+    answers no request. On Windows write the zone as the interface's
+    number (`"::1%1"`), since a name there such as
+    `Loopback Pseudo-Interface 1` holds spaces. `inst.host` carries no
+    zone, nor does any URL the plugin opens, |:LiveServerOpen| on a port
+    no server of this plugin holds included. `"0.0.0.0"` serves every
+    file under the root, except a dot path (unless `serve_dotfiles` is
+    set) and an entry named `__live` at the root in any letter case, and
+    the file you started on, at `/`, to anyone who can reach the port;
+    set `token` there and read SECURITY.md first.
 
 `token` (string|nil, default nil)
     When set, the event stream, the inject endpoint and the paths
@@ -132,7 +135,17 @@ Options:
     cased otherwise gates only the spellings it matches, and a request in
     the disk's spelling is served without the token. A hard link to a
     protected file under another name is not gated. A non-empty list
-    needs `token`.
+    needs `token`. A pattern is read as LuaJIT's `string.find` reads it,
+    so one holding none of `^$*+?.([%-` is plain text (`/draft)` gates
+    every path holding `/draft)`). A request without the token is matched
+    against every pattern on the editor's loop, so a start refuses a
+    pattern over 256 bytes, one holding `%b` or more than two `?` items,
+    and an unbounded quantifier (`*`, `+`, `-`) in a pattern that starts
+    neither with `^` nor with a literal its item cannot match, or a
+    second one unless the character right before its item is a literal
+    that item cannot match: write `^/.*%.md$`, not `/.*%.md$`. The
+    paragraph below the README's start-key table states the rules and the
+    cost they leave; a request carrying the token runs no pattern.
 
 `asset_root` is not a setup option: a plugin that calls
 `require("live_server.server").start()` passes it, and the token then
@@ -262,8 +275,9 @@ gates `/__live/asset` too.
 LIVEIGNORE                                      *live-server-liveignore*
 
 Create a `.liveignore` file in the served root to exclude files from the
-file watcher. One pattern per line. `*` matches any characters. Lines
-starting with `#` are comments. >
+file watcher. One pattern per line. `*` matches any characters, and a
+run of `*` matches as one `*` does. Lines starting with `#` are
+comments. >
 
     # Skip these
     node_modules
@@ -271,7 +285,10 @@ starting with `#` are comments. >
     dist
 <
 A line starting with `/` is anchored at the served root: `/dist` skips
-`dist/` and not `sub/dist/`. A dot path such as `.git/` needs no line:
+`dist/` and not `sub/dist/`. A line's text between its stars is found
+in the changed path in order, with no backtracking. A line holding a NUL
+byte matches no path and is skipped, with one warning naming the first
+such line. A dot path such as `.git/` needs no line:
 a change under one pushes no reload unless `serve_dotfiles` is set.
 
 The ignore file is re-parsed when the server retargets to a new root.
@@ -303,14 +320,20 @@ a plugin rely on: the |live-server-options|, the `:LiveServer*`
 commands, the functions below and |live-server-server-api|; a release
 that breaks any of it is a major release, while the wording of a notice,
 the statusline's text and anything these do not name may change in any
-release.
+release. Since `setup()` refuses an option it does not read, an option
+a minor release adds comes with a `server.features` flag
+(|live-server-server-api|), which a configuration shared across installs
+checks before it sets the option, and an option is removed only in a
+major release.
 
 live_server.setup({opts})                       *live_server.setup()*
     Merge {opts} with defaults and apply configuration.
     If `auto_start` is set, registers a `FileType` autocmd. A key it
     does not read, a misspelled one among them, is refused, naming it
     (`setup does not read the key live_reload.debounc`), and the options
-    stay as they were.
+    stay as they were. It reads the table's own keys alone: a key a
+    metatable supplies through `__index` is neither read nor refused, so
+    give it a plain table.
 
 live_server.start_picker()                      *live_server.start_picker()*
     UI flow: pick a path (Telescope or vim.ui), pick a port, start.
@@ -346,7 +369,10 @@ that SemVer covers, as the README's "Server-level API (for plugin
 authors)" section lists it: the calls and what they answer, the `start`
 keys, the two instance fields, the capability flags, the HTTP routes with
 their gating and refusals, and the event framing. A release that breaks
-any of it is a major release.
+any of it is a major release. Since `start` refuses a key it does not
+read, a key a minor release adds comes with a `server.features` flag,
+which a plugin checks before it sets the key, and a key is removed
+only in a major release.
 Everything else in these two modules is internal and may change in any
 release: every other field of the instance table (read
 `server.connected_client_count(inst)`, never the event-stream list
@@ -357,8 +383,11 @@ the requests the README lists as admitted stay admitted. A minor release
 may also change how a method other than GET is answered (a `HEAD` and
 the `cors` preflight's answer, which the README's request order states
 as it is today, among them, and the `Allow` field), how a request line
-naming `HTTP/1.2` to `HTTP/1.9` is answered, and the 64 KiB cap on a
-request head.
+naming `HTTP/1.2` to `HTTP/1.9` is answered, the 64 KiB cap on a
+request head, and the 8 KiB cap on a request target (a longer one,
+query included, is 414), which bounds the path every `protected_paths`
+pattern is matched against and so the time a request without the token
+costs the editor.
 
 Below Neovim 0.10 `live_server.server` and `live_server.util` raise on
 every `require`, so a plugin that also runs on an older Neovim loads them
@@ -416,13 +445,15 @@ line: `reload` with a path that is neither a string nor nil,
 a string nor nil or a name holding a line break, `enable_live` with a
 flag that is not a boolean, `update_target` with a root that is not a
 string, an index that is neither a string nor nil, a root or index
-holding a NUL byte or, on a running server, a root it cannot serve,
-changing nothing, and `util.random_token` with a length outside 1 to
-1024. `util.random_token` also raises when the OS offers no random
-source. The instance argument is not checked: given nil, or a table
-`start` did not return, a call raises from inside the module, its
-message naming the module's line rather than the caller's, or returns;
-a stopped instance is taken, and a call on it changes nothing.
+holding a NUL byte, an empty index (`update_target: index is empty`)
+or, on a running server, a root it cannot serve, changing nothing, and
+`util.random_token` with a length outside 1 to 1024.
+`util.random_token` also raises when the OS offers no random source.
+The instance argument is not checked: given nil, or a table `start` did
+not return, a call raises, its message naming a line of the module or
+of the Neovim function it calls rather than the caller's (`send_event`,
+`reload` and `stop` given `{}` name Neovim's own `vim/shared` file), or
+returns; a stopped instance is taken, and a call on it changes nothing.
 
 A relative `default_index` is joined to the working directory at start,
 and on a running server a relative `update_target` index at the call; a
