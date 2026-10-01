@@ -2339,8 +2339,14 @@ end
 -- matcher reads a part only when a subject reaches it, so trying a pattern
 -- on one subject left a fault past its first literal to raise in the
 -- gate. A quantifier or an anchor never faults: out of place, each is a
--- literal character. LuaJIT holds at most 32 captures.
+-- literal character. LuaJIT holds at most 32 captures. A pattern holding
+-- none of ^$*+?.([%- is read by LuaJIT's find as plain text, where a lone
+-- ) is a literal and nothing faults: /draft) gated /draft) in every
+-- release, and the walk refused it.
 local function pattern_fault(pat)
+    if not pat:find("[%^%$%*%+%?%.%(%[%%%-]") then
+        return nil
+    end
     local i, n = 1, #pat
     local open, closed, count = {}, {}, 0
     while i <= n do

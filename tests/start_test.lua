@@ -23,7 +23,9 @@
 -- unless the loopback address its URL names is free, and its probe of that
 -- address is never left open; a loopback bind raises when a wildcard
 -- listener holds its port. Each construct of a well-formed pattern starts,
--- one that nests too deep for LuaJIT on a path gates every path it is
+-- a pattern LuaJIT reads as plain text starts and gates its path (a lone
+-- ) included), each malformed shape is one LuaJIT raises on, and one
+-- that nests too deep for LuaJIT on a path gates every path it is
 -- asked about with one warning, a zoned host reports the address it
 -- bound, a table naming every key start reads starts, START_KEYS names
 -- the keys check_start and S.start read in the source and no other, and
@@ -1839,31 +1841,39 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         end
         return started, res
     end
+    -- Each shape with a subject LuaJIT raises on when it reads the pattern
+    -- (the fifth field), so the walk refuses what the matcher raises on.
     for _, c in ipairs({
-        { "/[", 2, "a set is not closed" },
-        { "a%", 2, "a % ends it" },
-        { "^/x(", 4, "a capture is not closed" },
-        { "^/x)", 4, "a ) closes no capture" },
-        { "^/(a(b)", 3, "a capture is not closed" },
-        { "%b", 1, "%b takes two characters" },
-        { "x%ba", 2, "%b takes two characters" },
-        { "%f", 1, "%f takes a set" },
-        { "%fx", 1, "%f takes a set" },
-        { "%f[a", 3, "a set is not closed" },
-        { "[]", 1, "a set is not closed" },
-        { "[a%", 1, "a set is not closed" },
-        { "[^", 1, "a set is not closed" },
+        { "/[", 2, "a set is not closed", nil, "/" },
+        { "a%", 2, "a % ends it", nil, "a" },
+        { "^/x(", 4, "a capture is not closed", nil, "/x" },
+        { "^/x)", 4, "a ) closes no capture", nil, "/x" },
+        { "^/(a(b)", 3, "a capture is not closed", nil, "/ab" },
+        { "%b", 1, "%b takes two characters", nil, "x" },
+        { "x%ba", 2, "%b takes two characters", nil, "x" },
+        { "%f", 1, "%f takes a set", nil, "x" },
+        { "%fx", 1, "%f takes a set", nil, "x" },
+        { "%f[a", 3, "a set is not closed", nil, "x" },
+        { "[]", 1, "a set is not closed", nil, "x" },
+        { "[a%", 1, "a set is not closed", nil, "x" },
+        { "[^", 1, "a set is not closed", nil, "x" },
         -- An escaped ] belongs to the set, so it does not close it.
-        { "[%]", 1, "a set is not closed" },
-        { "%1", 1, "%1 names no closed capture" },
-        { "(a%1)", 3, "%1 names no closed capture" },
-        { "(a)%2", 4, "%2 names no closed capture" },
-        { "(a)%0", 4, "%0 names no closed capture" },
-        { string.rep("()", 33), 65, "more than 32 captures" },
+        { "[%]", 1, "a set is not closed", nil, "x" },
+        { "%1", 1, "%1 names no closed capture", nil, "x" },
+        { "(a%1)", 3, "%1 names no closed capture", nil, "a" },
+        { "(a)%2", 4, "%2 names no closed capture", nil, "a" },
+        { "(a)%0", 4, "%0 names no closed capture", nil, "a" },
+        { string.rep("()", 33), 65, "more than 32 captures", nil, "x" },
         -- The pattern is shown as a notice shows a caller's text: a
         -- control byte as ?, cut at 300 bytes. It went out raw, whole.
-        { "^/a[\27[2J", 4, "a set is not closed", "^/a[?[2J" },
-        { string.rep("a", 10240) .. "[", 10241, "a set is not closed", string.rep("a", 300) },
+        { "^/a[\27[2J", 4, "a set is not closed", "^/a[?[2J", "/a" },
+        {
+            string.rep("a", 10240) .. "[",
+            10241,
+            "a set is not closed",
+            string.rep("a", 300),
+            string.rep("a", 10240),
+        },
     }) do
         local started, res = start_with(c[1])
         eq(
@@ -1871,7 +1881,33 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
             ("protected_paths pattern is malformed at byte %d (%s): %s"):format(c[2], c[3], c[4] or c[1]),
             ("%s is refused, naming the byte"):format(vim.inspect(c[1]:sub(1, 40)))
         )
+        ok(
+            not pcall(string.find, c[5], c[1]),
+            ("and LuaJIT raises reading %s on %s"):format(vim.inspect(c[1]:sub(1, 40)), vim.inspect(c[5]:sub(1, 40)))
+        )
     end
+    -- LuaJIT's find reads a pattern holding none of ^$*+?.([%- as plain
+    -- text, where a lone ) is a literal and nothing raises: /draft) gated
+    -- the path /draft) in every release before the walk refused it.
+    for _, pattern in ipairs({ "/draft)", "draft)notes", ")", "a]b)" }) do
+        local started, res = start_with(pattern)
+        ok(started, ("%s starts, read as plain text: %s"):format(vim.inspect(pattern), started and "" or tostring(res)))
+        local found, at = pcall(string.find, "/x" .. pattern, pattern)
+        ok(found and at == 3, ("and LuaJIT finds it as plain text (%s)"):format(tostring(at)))
+    end
+    local plain = server.start({
+        port = 0,
+        root = root,
+        token = TOKEN,
+        protected_paths = { "/draft)" },
+        live = { enabled = false, inject_script = false },
+    })
+    H.defer(function()
+        server.stop(plain)
+    end)
+    local base = ("http://127.0.0.1:%d"):format(plain.port)
+    eq(http_get(base .. "/draft)").status, 401, "and a plain-text pattern gates the path it names")
+    eq(http_get(base .. "/draft").status, 404, "and no path it does not hold")
     -- Each construct well-formed: a set with ] first, a negated set, an
     -- escape in a set, classes, a capture and its back-reference, a
     -- position capture, %b, %f, each quantifier, both anchors and an
