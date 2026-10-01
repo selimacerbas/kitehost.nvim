@@ -139,11 +139,12 @@ Options:
     so one holding none of `^$*+?.([%-` is plain text (`/draft)` gates
     every path holding `/draft)`). A request without the token is matched
     against every pattern on the editor's loop, so a start refuses a
-    pattern over 256 bytes, one holding `%b` or more than two `?` items,
-    and an unbounded quantifier (`*`, `+`, `-`) in a pattern that starts
-    neither with `^` nor with a literal its item cannot match, or a
-    second one unless the character right before its item is a literal
-    that item cannot match: write `^/.*%.md$`, not `/.*%.md$`. The
+    pattern over 256 bytes, one holding a balanced match (`%b`) or more
+    than two `?` items, and an unbounded quantifier (`*`, `+`, `-`) in a
+    pattern that starts neither with `^` nor with a literal its item
+    cannot match, or a second one unless the character right before its
+    item is a literal that item cannot match, a capture's parenthesis
+    aside: write `^/.*%.md$`, not `/.*%.md$`. The
     paragraph below the README's start-key table states the rules and the
     cost they leave; a request carrying the token runs no pattern.
 
@@ -286,10 +287,11 @@ comments. >
 <
 A line starting with `/` is anchored at the served root: `/dist` skips
 `dist/` and not `sub/dist/`. A line's text between its stars is found
-in the changed path in order, with no backtracking. A line holding a NUL
-byte matches no path and is skipped, with one warning naming the first
-such line. A dot path such as `.git/` needs no line:
-a change under one pushes no reload unless `serve_dotfiles` is set.
+in the changed path in order, with no backtracking. A rule line holding
+a NUL byte matches no path and is skipped, with one warning naming the
+first such line; a comment holding one stays a comment. A dot path such
+as `.git/` needs no line: a change under one pushes no reload unless
+`serve_dotfiles` is set.
 
 The ignore file is re-parsed when the server retargets to a new root.
 
@@ -320,20 +322,24 @@ a plugin rely on: the |live-server-options|, the `:LiveServer*`
 commands, the functions below and |live-server-server-api|; a release
 that breaks any of it is a major release, while the wording of a notice,
 the statusline's text and anything these do not name may change in any
-release. Since `setup()` refuses an option it does not read, an option
-a minor release adds comes with a `server.features` flag
-(|live-server-server-api|), which a configuration shared across installs
-checks before it sets the option, and an option is removed only in a
-major release.
+release. From the release after this one, an option a minor release
+adds comes with a `server.features` flag (|live-server-server-api|),
+which a configuration shared across installs checks before it sets the
+option, since this release refuses an option `setup()` does not read;
+an option is removed only in a major release. Of the options this
+release adds, `allowed_hosts` comes with `host_check` and
+`serve_dotfiles` with no flag; v1.5.0 ignored an option it did not
+read, so a configuration may set them there.
 
 live_server.setup({opts})                       *live_server.setup()*
     Merge {opts} with defaults and apply configuration.
     If `auto_start` is set, registers a `FileType` autocmd. A key it
     does not read, a misspelled one among them, is refused, naming it
     (`setup does not read the key live_reload.debounc`), and the options
-    stay as they were. It reads the table's own keys alone: a key a
-    metatable supplies through `__index` is neither read nor refused, so
-    give it a plain table.
+    stay as they were. It checks the table's own keys alone: a key a
+    metatable supplies through `__index` is never refused, and is read
+    or not as the merge reaches it (a whole `auto_start` table is read
+    through it), so give it a plain table.
 
 live_server.start_picker()                      *live_server.start_picker()*
     UI flow: pick a path (Telescope or vim.ui), pick a port, start.
@@ -369,10 +375,14 @@ that SemVer covers, as the README's "Server-level API (for plugin
 authors)" section lists it: the calls and what they answer, the `start`
 keys, the two instance fields, the capability flags, the HTTP routes with
 their gating and refusals, and the event framing. A release that breaks
-any of it is a major release. Since `start` refuses a key it does not
-read, a key a minor release adds comes with a `server.features` flag,
-which a plugin checks before it sets the key, and a key is removed
-only in a major release.
+any of it is a major release. From the release after this one, a key a
+minor release adds comes with a `server.features` flag, which a plugin
+checks before it sets the key, since this release refuses a key
+`start` does not read; a key is removed only in a major release. Of
+the keys this release adds, `allowed_hosts` comes with `host_check`,
+and `serve_dotfiles`, `header_timeout_ms`, `max_connections` and
+`sse_heartbeat_ms` with no flag; v1.5.0 ignored a key it did not read,
+so a plugin may set them there.
 Everything else in these two modules is internal and may change in any
 release: every other field of the instance table (read
 `server.connected_client_count(inst)`, never the event-stream list
@@ -452,7 +462,7 @@ or, on a running server, a root it cannot serve, changing nothing, and
 The instance argument is not checked: given nil, or a table `start` did
 not return, a call raises, its message naming a line of the module or
 of the Neovim function it calls rather than the caller's (`send_event`,
-`reload` and `stop` given `{}` name Neovim's own `vim/shared` file), or
+`reload` and `stop` given `{}` name a line of Neovim's own runtime), or
 returns; a stopped instance is taken, and a call on it changes nothing.
 
 A relative `default_index` is joined to the working directory at start,
