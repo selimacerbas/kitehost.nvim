@@ -938,12 +938,21 @@ H.case("Section 10: a .liveignore that is not a regular file is not opened", fun
     local fifo_site = H.tmpdir()
     H.write_file(fifo_site .. "/index.html", "<html><body>fifo</body></html>")
     local fifo = fifo_site .. "/.liveignore"
-    local made = vim.system({ "mkfifo", fifo }):wait()
-    if made.code ~= 0 then
-        H.skip("a FIFO named .liveignore starts and serves within 5 s (mkfifo: " .. tostring(made.stderr) .. ")")
-        H.skip("and warns once, naming it")
-        H.skip("and gives no rule")
-        H.skip("and a retarget to it from a root already warned about warns again")
+    -- vim.system raises for a command PATH does not hold.
+    local fifo_why
+    if vim.fn.executable("mkfifo") ~= 1 then
+        fifo_why = "mkfifo is not on PATH"
+    else
+        local made = vim.system({ "mkfifo", fifo }):wait()
+        if made.code ~= 0 then
+            fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. vim.trim(tostring(made.stderr))
+        end
+    end
+    if fifo_why then
+        H.skip("a FIFO named .liveignore starts and serves within 5 s (" .. fifo_why .. ")")
+        H.skip("and warns once, naming it (" .. fifo_why .. ")")
+        H.skip("and gives no rule (" .. fifo_why .. ")")
+        H.skip("and a retarget to it from a root already warned about warns again (" .. fifo_why .. ")")
         return
     end
     local script = H.tmpdir() .. "/child.lua"

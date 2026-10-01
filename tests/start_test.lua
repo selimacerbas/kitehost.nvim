@@ -1974,9 +1974,15 @@ H.case("a root that is no directory is refused before any socket opens", functio
     eq(after, tcps, "and opens no socket")
     local site = H.tmpdir()
     local fifo = vim.fs.joinpath(site, "pipe")
+    -- vim.system raises for a command PATH does not hold.
+    if vim.fn.executable("mkfifo") ~= 1 then
+        H.skip("a FIFO root is refused within 5 s (mkfifo is not on PATH)")
+        return
+    end
     local made = vim.system({ "mkfifo", fifo }):wait()
     if made.code ~= 0 then
-        H.skip("a FIFO root is refused within 5 s (mkfifo: " .. tostring(made.stderr) .. ")")
+        local why = "mkfifo exited " .. tostring(made.code) .. ": " .. vim.trim(tostring(made.stderr))
+        H.skip("a FIFO root is refused within 5 s (" .. why .. ")")
         return
     end
     -- The mkfifo on the Windows runner's PATH exits 0 where the system has
