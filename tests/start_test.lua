@@ -2128,6 +2128,10 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         { "^.*a.-b", 6, second },
         { "^/x.*%d+", 8, second },
         { "/[^/]*/.*", 9, second },
+        -- A $ item is read as text: as a pattern of its own "$" is an
+        -- anchor that finds no "$", which took this one at 337 ms on an
+        -- 8 KiB path of $ (measured).
+        { "^/.*%$$*x", 8, second },
         { "/.*%.md$", 3, unanchored },
         { ".*%.md$", 2, unanchored },
         { "[%w_]+%.key$", 6, unanchored },
