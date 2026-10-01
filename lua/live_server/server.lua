@@ -1413,17 +1413,17 @@ local function wildcard_of(ip)
 end
 
 -- Whether ip:port is free, by binding a socket that never listens and
--- closing it: true, or nil, the cause and its name. libuv holds a bind's
--- EADDRINUSE until getsockname and opens the descriptor at the bind, so an
--- EMFILE comes from there; bind raises on an address it cannot read, and
--- that raise past start left both sockets open (measured).
-local function address_free(ip, port)
+-- closing it, IPv6-only when ipv6only is set: true, or nil, the cause and
+-- its name. libuv holds a bind's EADDRINUSE until getsockname and opens
+-- the descriptor at the bind, so an EMFILE comes from there; bind raises
+-- on an address it cannot read, and that raise past start left both
+-- sockets open (measured).
+local function address_free(ip, port, ipv6only)
     local probe, err, name = uv.new_tcp()
     if not probe then
         return nil, err, name
     end
-    -- ipv6only, so a probe of :: never meets an IPv4 socket (Linux).
-    local flags = ip == "::" and { ipv6only = true } or nil
+    local flags = ipv6only and { ipv6only = true } or nil
     local called, bound, bind_err, bind_name = pcall(probe.bind, probe, ip, port, flags)
     local free
     if not called then
@@ -3132,6 +3132,14 @@ local function bind_probed(host, port)
         close_once(tcp)
         return nil, ("Failed to bind %s: the loopback rule raised: %s"):format(here, tostring(loopback))
     end
+    -- Windows meets a bind only in the same mode, IPv4, IPv6-only or
+    -- dual-stack (measured): a specific bind there sits beside a
+    -- dual-stack :: listener of either family, and a :: bind beside an
+    -- IPv6-only one, which then takes the [::1] requests the URL sends, so
+    -- there each also probes :: in the mode its own bind does not meet.
+    local info = uv.os_uname()
+    local sysname = info and info.sysname
+    local windows = sysname == "Windows_NT"
     if loopback then
         local free, why, why_name = address_free(loopback, bound.port)
         if not free and why_name ~= "EADDRNOTAVAIL" then
@@ -3149,20 +3157,43 @@ local function bind_probed(host, port)
             return nil,
                 ("Failed to bind %s: cannot check %s, the address the URL names: %s"):format(here, there, tostring(why))
         end
+        if windows and bound.ip == "::" then
+            free, why, why_name = address_free("::", bound.port, true)
+            if not free then
+                close_once(tcp)
+                local there = "::" .. ":" .. tostring(bound.port) .. " IPv6-only"
+                if why_name == "EADDRINUSE" then
+                    local held = "Failed to bind %s: another socket holds %s,"
+                        .. " which would take %s, the address the URL names (%s)"
+                    local url = tostring(loopback) .. ":" .. tostring(bound.port)
+                    return nil, held:format(here, there, url, tostring(why)), true
+                end
+                return nil, ("Failed to bind %s: cannot check %s: %s"):format(here, there, tostring(why))
+            end
+        end
     end
 
     -- macOS lets a loopback bind shadow another program's wildcard
     -- listener (measured). This socket, bound and not listening, never
     -- meets the probe (measured on macOS).
     -- Linux refuses that bind at the bind; a probe there refuses free ones.
-    local info = uv.os_uname()
-    local shadows = not (info and info.sysname == "Linux")
+    local shadows = sysname ~= "Linux"
     local wildcard = shadows and wildcard_of(bound.ip)
     if wildcard then
-        local free, why, why_name = address_free(wildcard, bound.port)
+        local probed, mode = wildcard, ""
+        local free, why, why_name = address_free(wildcard, bound.port, wildcard == "::")
+        if free and windows then
+            probed, mode = "::", " dual-stack"
+            free, why, why_name = address_free("::", bound.port)
+            -- A host with no IPv6 has no dual-stack listener to shadow.
+            local no_v6 = why_name == "EAFNOSUPPORT" or why_name == "EADDRNOTAVAIL"
+            if not free and wildcard == "0.0.0.0" and no_v6 then
+                free = true
+            end
+        end
         if not free then
             close_once(tcp)
-            local there = wildcard .. ":" .. tostring(bound.port)
+            local there = probed .. ":" .. tostring(bound.port) .. mode
             if why_name == "EADDRINUSE" then
                 local held = "Failed to bind %s: another socket holds"
                     .. " a wildcard on port %d, which this address would"
@@ -3189,9 +3220,11 @@ end
 -- option, a failed bind or listen, a port in use, a reload timer it cannot
 -- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check, or
--- a loopback bind whose wildcard of its family the same holds for. A root
--- whose watcher cannot start is served with live reload off and one
--- warning. A caller reads S.features.start_raises before it relies on that.
+-- a loopback bind whose wildcard of its family the same holds for, and
+-- on Windows either one beside a :: in the mode its bind does not meet.
+-- A root whose watcher cannot start is served with live reload off and
+-- one warning. A caller reads S.features.start_raises before it relies on
+-- that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host

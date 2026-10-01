@@ -23,7 +23,9 @@
 -- that cannot be made leaves no socket, timer or watcher, the timer's
 -- raise naming it. A wildcard bind raises unless the loopback address its
 -- URL names is free, and its probe of that address is never left open; a
--- loopback bind raises when a wildcard listener holds its port. Each
+-- loopback bind raises when a wildcard listener holds its port, and a ::
+-- bind beside a :: IPv6-only one; read as Windows, each also probes :: in
+-- the mode its own bind does not meet. Each
 -- construct of a well-formed pattern starts, a pattern LuaJIT reads as
 -- plain text starts and gates its path (a lone ) included), each
 -- malformed shape is one LuaJIT raises on, a second unbounded quantifier
@@ -949,8 +951,15 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
         return started, tostring(res), sockets, open, used
     end
 
+    -- Linux probes no wildcard for a specific bind, which it refuses at the
+    -- bind itself, and Windows probes :: dual-stack beside 0.0.0.0.
+    local sysname = vim.uv.os_uname().sysname
     local _, _, loop_made, loop_open = start_counted({ port = 0 })
-    eq(loop_made, 2, "a loopback start makes its own socket and the probe of its wildcard")
+    eq(
+        loop_made,
+        sysname == "Linux" and 1 or sysname == "Windows_NT" and 3 or 2,
+        ("a loopback start makes its own socket and the probes of its wildcard (%s)"):format(sysname)
+    )
     eq(loop_open, 1, "and leaves that one open")
 
     -- One skip per row below, so a machine that refuses a wildcard bind
@@ -1116,7 +1125,8 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
         w:close()
         return {
             started = started,
-            res = tostring(res),
+            -- A start that served read as a raised table: its instance.
+            res = started and "started" or tostring(res),
             port = port,
             tcp = tcps_after - tcps,
             fd = (fds_after or 0) - (fds or 0),
@@ -1496,7 +1506,10 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             server.stop(res_held)
         end
         ok(up_os, ("a 127.0.0.1 start read as %s serves: %s"):format(sysname, tostring(up_os and "" or res_os)))
-        eq(free_made, 2, ("with one socket and its probe, read as %s"):format(sysname))
+        -- Windows probes :: dual-stack too, which its 0.0.0.0 probe misses.
+        local probes = sysname == "Windows_NT" and 2 or 1
+        local its = probes == 1 and "its probe" or "its two probes"
+        eq(free_made, 1 + probes, ("with one socket and %s, read as %s"):format(its, sysname))
         ok(
             not up_held and tostring(res_held):find("another socket holds a wildcard", 1, true) ~= nil,
             ("and beside a held wildcard it raises, read as %s: %s"):format(sysname, tostring(res_held))
@@ -1551,6 +1564,212 @@ H.case("an IPv6 wildcard bind raises unless ::1, its URL's address, is free", fu
         H.skip("a :: start beside a ::1 listener raises (the bind beside it fails: " .. tostring(shares_err) .. ")")
     end
     eq(open, 0, "a :: start beside a ::1 listener leaves no socket")
+end)
+
+-- Windows lets a :: start bind beside another program's :: IPv6-only
+-- listener, which then took the [::1] requests the URL sends, token and
+-- all (measured on the hosted runner); macOS and Linux refuse the bind.
+H.case("a :: start beside a :: IPv6-only listener raises", function()
+    local only = assert(vim.uv.new_tcp())
+    H.defer(function()
+        if not only:is_closing() then
+            only:close()
+        end
+    end)
+    local listening, listen_err = only:bind("::", 0, { ipv6only = true })
+    if listening then
+        listening, listen_err = only:listen(8, function() end)
+    end
+    if not listening then
+        only:close()
+        local why = (" (no IPv6-only listener here: %s)"):format(tostring(listen_err))
+        H.skip("a :: start beside a :: IPv6-only listener raises, naming its port" .. why)
+        H.skip("leaving no socket" .. why)
+        return
+    end
+    local port = only:getsockname().port
+    local before = H.handle_count("tcp")
+    local started, res = pcall(server.start, { host = "::", port = port, root = root })
+    if started then
+        server.stop(res)
+    end
+    local open = H.handle_count("tcp") - before
+    res = started and "started" or tostring(res)
+    local refused = not started
+        and res:find("Failed to bind :::" .. port .. ":", 1, true) == 1
+        and res:find("EADDRINUSE", 1, true) ~= nil
+    local how = "the bind refusing the port"
+    if vim.uv.os_uname().sysname == "Windows_NT" then
+        how = "the probe naming the listener and the URL's address"
+        local held = ("another socket holds :::%d IPv6-only, which would take ::1:%d, the address the URL names"):format(
+            port,
+            port
+        )
+        refused = refused and res:find(held, 1, true) ~= nil
+    end
+    ok(refused, ("a :: start beside a :: IPv6-only listener raises, %s: %s"):format(how, res))
+    eq(open, 0, "leaving no socket")
+end)
+
+-- A listener in the one mode a Windows probe adds cannot be made beside
+-- a bind here, since macOS and Linux meet a bind across modes, so these
+-- rows read the system as Windows and answer that probe's bind: a
+-- specific bind probes :: dual-stack after its own family's wildcard, and
+-- a :: bind :: IPv6-only after its URL's address.
+H.case("read as Windows, a bind probes :: in the mode its own does not meet", function()
+    local real_new_tcp, real_uname = vim.uv.new_tcp, vim.uv.os_uname
+    H.defer(function()
+        vim.uv.new_tcp, vim.uv.os_uname = real_new_tcp, real_uname
+    end)
+    -- Counts the sockets a start makes; a bind of :: IPv6-only (only set)
+    -- or dual-stack answers as answer says, or, answered "free", binds a
+    -- port of its own: macOS meets a :: start's own socket in either mode,
+    -- where Windows finds :: IPv6-only free beside it (measured).
+    local made, ipv6only, answer = 0, false, nil
+    vim.uv.new_tcp = function(...)
+        made = made + 1
+        local handle, err, name = real_new_tcp(...)
+        if not handle then
+            return handle, err, name
+        end
+        return setmetatable({}, {
+            __index = function(_, key)
+                if key == "bind" then
+                    return function(_, ip, port, flags)
+                        local asked = type(flags) == "table" and flags.ipv6only == true
+                        if answer == "free" and ip == "::" and asked == ipv6only then
+                            return handle:bind(ip, 0, flags)
+                        elseif answer and ip == "::" and asked == ipv6only then
+                            return nil, answer[1], answer[2]
+                        end
+                        return handle:bind(ip, port, flags)
+                    end
+                end
+                return function(_, ...)
+                    return handle[key](handle, ...)
+                end
+            end,
+        })
+    end
+    -- A start read as sysname, with the :: bind of that mode answered: it
+    -- served, the refusal, the sockets it made and the ones it left open.
+    local function start_as(sysname, host, only, stub)
+        made, ipv6only, answer = 0, only, stub
+        vim.uv.os_uname = function()
+            return { sysname = sysname }
+        end
+        local before = H.handle_count("tcp")
+        local started, res = pcall(server.start, { host = host, port = 0, root = root })
+        vim.uv.os_uname = real_uname
+        local open = H.handle_count("tcp") - before
+        if started then
+            server.stop(res)
+        end
+        local sockets = made
+        made, ipv6only, answer = 0, false, nil
+        return started, started and "started" or tostring(res), sockets, open
+    end
+    local function binds(ip)
+        local t = assert(real_new_tcp())
+        local bound = t:bind(ip, 0) and t:getsockname()
+        t:close()
+        return bound ~= nil and bound ~= false
+    end
+    local held = { "EADDRINUSE: stubbed", "EADDRINUSE" }
+    local mfile = { "EMFILE: stubbed", "EMFILE" }
+    -- The refusal a specific bind gives when the probe finds the port held,
+    -- on the port its last bind took.
+    local function shadowed(res, spelled)
+        local port = res:match("^Failed to bind " .. vim.pesc(spelled) .. ":(%d+): ")
+        local text = "another socket holds a wildcard on port %s, which this address would shadow (EADDRINUSE: stubbed)"
+        return port ~= nil and res:find(text:format(port), 1, true) ~= nil
+    end
+
+    local up, res, sockets, open = start_as("Windows_NT", "127.0.0.1", false, nil)
+    ok(up, "a 127.0.0.1 start read as Windows serves: " .. res)
+    eq(sockets, 3, "with its socket, the 0.0.0.0 probe and the :: dual-stack one")
+    up, res, sockets, open = start_as("Windows_NT", "127.0.0.1", false, held)
+    ok(not up and shadowed(res, "127.0.0.1"), "and raises when :: dual-stack holds the port: " .. res)
+    eq(open, 0, "leaving no socket")
+    for _, absent in ipairs({ "EAFNOSUPPORT", "EADDRNOTAVAIL" }) do
+        up, res = start_as("Windows_NT", "127.0.0.1", false, { absent .. ": stubbed", absent })
+        ok(up, ("and serves when :: dual-stack is %s, a host with no IPv6: %s"):format(absent, res))
+    end
+    up, res, sockets, open = start_as("Windows_NT", "127.0.0.1", false, mfile)
+    ok(
+        not up and res:match("cannot check :::%d+ dual%-stack: EMFILE: stubbed$") ~= nil,
+        "and raises when it cannot check :: dual-stack, naming it and the cause: " .. res
+    )
+    eq(open, 0, "leaving no socket")
+    up, res, sockets = start_as("Darwin", "127.0.0.1", false, held)
+    ok(up, "read as macOS, a 127.0.0.1 start makes no :: dual-stack probe and serves: " .. res)
+    eq(sockets, 2, "with its socket and the 0.0.0.0 probe")
+
+    if binds("::ffff:127.0.0.1") then
+        up, res = start_as("Windows_NT", "::ffff:127.0.0.1", false, held)
+        ok(not up and shadowed(res, "::ffff:127.0.0.1"), "a ::ffff:127.0.0.1 start read as Windows raises too: " .. res)
+    else
+        H.skip("a ::ffff:127.0.0.1 start read as Windows raises too (this machine binds no ::ffff:127.0.0.1)")
+    end
+
+    if binds("::1") then
+        up, res, sockets = start_as("Windows_NT", "::1", false, nil)
+        ok(up, "a ::1 start read as Windows serves: " .. res)
+        eq(sockets, 3, "with its socket, the :: IPv6-only probe and the :: dual-stack one")
+        up, res, sockets, open = start_as("Windows_NT", "::1", false, held)
+        ok(not up and shadowed(res, "::1"), "and raises when :: dual-stack holds the port: " .. res)
+        eq(open, 0, "leaving no socket")
+        -- The exemption is an IPv4 bind's: an IPv6 one has IPv6.
+        up, res = start_as("Windows_NT", "::1", false, { "EADDRNOTAVAIL: stubbed", "EADDRNOTAVAIL" })
+        ok(
+            not up and res:match("cannot check :::%d+ dual%-stack: EADDRNOTAVAIL: stubbed$") ~= nil,
+            "and raises when :: dual-stack is EADDRNOTAVAIL: " .. res
+        )
+    else
+        for _, row in ipairs({
+            "a ::1 start read as Windows serves",
+            "with its socket, the :: IPv6-only probe and the :: dual-stack one",
+            "and raises when :: dual-stack holds the port",
+            "leaving no socket",
+            "and raises when :: dual-stack is EADDRNOTAVAIL",
+        }) do
+            H.skip(row .. " (this machine binds no ::1)")
+        end
+    end
+
+    if binds("::") then
+        up, res, sockets = start_as("Windows_NT", "::", true, "free")
+        ok(up, "a :: start read as Windows serves where :: IPv6-only is free: " .. res)
+        eq(sockets, 3, "with its socket, the ::1 probe and the :: IPv6-only one")
+        up, res, sockets, open = start_as("Windows_NT", "::", true, held)
+        local port = res:match("^Failed to bind :::(%d+): ")
+        local text = "another socket holds :::%s IPv6-only, which would take ::1:%s, the address the URL names"
+        ok(
+            not up
+                and port ~= nil
+                and res:find(text:format(port, port), 1, true) ~= nil
+                and res:find("(EADDRINUSE: stubbed)", 1, true) ~= nil,
+            "and raises when :: IPv6-only holds the port, naming it and the URL's address: " .. res
+        )
+        eq(open, 0, "leaving no socket")
+        up, res, sockets, open = start_as("Windows_NT", "::", true, mfile)
+        ok(
+            not up and res:match("cannot check :::%d+ IPv6%-only: EMFILE: stubbed$") ~= nil,
+            "and raises when it cannot check :: IPv6-only, naming it and the cause: " .. res
+        )
+        eq(open, 0, "leaving no socket")
+    else
+        for _, row in ipairs({
+            "a :: start read as Windows serves where :: IPv6-only is free",
+            "with its socket, the ::1 probe and the :: IPv6-only one",
+            "and raises when :: IPv6-only holds the port, naming it and the URL's address",
+            "leaving no socket",
+            "and raises when it cannot check :: IPv6-only, naming it and the cause",
+            "leaving no socket",
+        }) do
+            H.skip(row .. " (this machine binds no ::)")
+        end
+    end
 end)
 
 -- An absent address has no listener, so that probe failure alone serves.
