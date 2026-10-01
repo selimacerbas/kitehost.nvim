@@ -24,8 +24,9 @@
 -- pending window; the directories under the root a scan cannot watch or
 -- read are dropped with one warning per scan. Every notice goes out
 -- marked. update_target refuses a root that does not resolve or is no
--- directory, and an argument of the wrong type, and changes nothing; a
--- relative index names the file it named when it was set.
+-- directory, and an argument of the wrong type, and changes nothing,
+-- each value it repeats marked and cut at 300 bytes and an error by its
+-- name; a relative index names the file it named when it was set.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
@@ -1865,6 +1866,41 @@ io.stdout:write(vim.json.encode({ moved = moved, res = tostring(res) }))
     ok(got, "a root holding a NUL raises at the caller: " .. err)
     got, err = refused("update_target: index holds a NUL byte", root, root .. "/hello.txt\0.html")
     ok(got, "an index holding a NUL raises at the caller: " .. err)
+    -- The root and the index were repeated raw and whole, and libuv's text
+    -- after the error's name repeated the root again: each is shown marked
+    -- and cut at 300 bytes, the error by its name.
+    got, err = refused("update_target: root /nonexistent/?[31mRED does not resolve (ENOENT)", "/nonexistent/\27[31mRED")
+    ok(got, "a root with an escape is named marked: " .. err)
+    -- The error's name is the OS's, so the row reads its shape.
+    local long = "/nonexistent/" .. ("x"):rep(400)
+    local long_raised, long_err = pcall(server.update_target, inst, long, nil)
+    ok(
+        not long_raised
+            and tostring(long_err):find(
+                    "update_target: root " .. vim.pesc(long:sub(1, 300)) .. " does not resolve %(%u+%)$"
+                )
+                ~= nil,
+        "a 413-byte root is named cut at 300 bytes, the error by its name: " .. tostring(long_err):sub(-60)
+    )
+    local marked_file = H.tmpdir() .. "/f\27[31m.txt"
+    H.write_file(marked_file, "x")
+    got, err =
+        refused(("update_target: root %s is not a directory"):format((marked_file:gsub("\27", "?"))), marked_file)
+    ok(got, "a file root with an escape is named marked: " .. err)
+    local real_cwd = uv.cwd
+    H.defer(function()
+        uv.cwd = real_cwd
+    end)
+    uv.cwd = function()
+        return nil, "ENOENT: stubbed"
+    end
+    got, err = refused(
+        "update_target: index ?[31mx is relative and the working directory is unknown (ENOENT: stubbed)",
+        root,
+        "\27[31mx"
+    )
+    uv.cwd = real_cwd
+    ok(got, "a relative index with an escape is named marked: " .. err)
     ok(
         inst.root == was_root and inst.root_real == was_real and inst.default_index == was_index,
         "and none of them changes the target"

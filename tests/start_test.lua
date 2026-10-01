@@ -16,7 +16,8 @@
 -- max_connections, asset_root (a string naming no directory or inside a
 -- credential directory among them), a NUL in any string option, a port
 -- it cannot hold or a root that is no string, does not resolve or is no
--- directory (a relative default_index is fixed at start); a bind to an
+-- directory (a relative default_index is fixed at start), each value a
+-- refusal repeats shown marked and cut at 300 bytes; a bind to an
 -- address this machine lacks or to a port in use raises naming it and
 -- leaves no socket, a socket that cannot be made raises naming it, and a
 -- failed listen or a reload timer that cannot be made leaves no socket,
@@ -158,7 +159,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         { "headers", { ["X-Custom"] = "a\nb" }, "headers: a name must be a token and a value a line: X-Custom" },
         { "headers", { ["X-Custom"] = 1 }, "headers: a name must be a token and a value a line: X-Custom" },
         { "headers", { [""] = "x" }, "headers: a name must be a token and a value a line: " },
-        { "headers", { ["X\tA"] = "x" }, "headers: a name must be a token and a value a line: X\tA" },
+        { "headers", { ["X\tA"] = "x" }, "headers: a name must be a token and a value a line: X?A" },
         -- RFC 9110 5.5: a value holds visible characters, spaces and tabs. A
         -- NUL started the server, and then Chromium (ERR_INVALID_HTTP_RESPONSE)
         -- and curl refused every response that carried it.
@@ -429,18 +430,18 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
         end
         eq(
             not started and tostring(res) or "started",
-            ('host must be an IP address or "localhost", got %s'):format(vim.inspect(host)),
+            ('host must be an IP address or "localhost", got "%s"'):format(util.marked(host)),
             ("host = %s is refused, naming host"):format(vim.inspect(host))
         )
     end
     -- libuv's own text repeats the path raw, a control byte included, so
-    -- the refusal names it once, escaped, and keeps the error's name.
+    -- the refusal names it once, marked, and keeps the error's name.
     local odd = root .. "/mi\27[2Jss\nx"
     local refused, why = pcall(server.start, { port = 0, root = root, asset_root = odd })
     eq(
         not refused and tostring(why) or "started",
-        ("asset_root is not a directory: %s (ENOENT)"):format(vim.inspect(odd)),
-        "a missing asset_root is named once, escaped, with the error's name"
+        ('asset_root is not a directory: "%s" (ENOENT)'):format(util.marked(odd)),
+        "a missing asset_root is named once, marked, with the error's name"
     )
     -- A cfg that is no table raised at the server's own line, naming
     -- nothing a user could act on.
@@ -605,10 +606,12 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     H.defer(function()
         vim.notify = real_notify
     end)
+    -- The pattern is named cut at 300 bytes, as its start refusal cuts
+    -- what it shows: deep is 402 bytes, and a 10 KiB one came back whole.
     local function warning(url)
         return ("live-server: port %d cannot read protected_paths pattern %s (%s); the request was refused"):format(
             tonumber(url:match(":(%d+)/")),
-            deep,
+            deep:sub(1, 300),
             "pattern too complex"
         )
     end
@@ -1822,6 +1825,60 @@ H.case("a start that cannot make its reload timer raises, naming it, and leaves 
         eq(after.tcp, before.tcp, label .. ", it leaves no socket")
         eq(after.timer, before.timer, label .. ", no timer")
         eq(after.fs_event, before.fs_event, label .. ", and no watcher")
+    end
+end)
+
+-- A refusal repeats the value it refuses, which a caller shows to the
+-- user through a notifier that may forward to a terminal: an index_names
+-- entry, a header name, the root and a port went out raw and whole, an
+-- escape or a C1 control acting there, and a host, a cors entry, an
+-- asset_root and a key's name went out escaped by vim.inspect, which
+-- leaves a C1 or a bidi control raw and cuts nothing. Each is shown as a
+-- notice shows a caller's text: a control as ?, cut at 300 bytes.
+H.case("every value a start refusal repeats is marked and cut at 300 bytes", function()
+    local file = vim.fs.joinpath(H.tmpdir(), "f\27[31m.txt")
+    H.write_file(file, "x")
+    local shown_file = file:gsub("\27", "?")
+    local x400 = ("x"):rep(400)
+    for _, c in ipairs({
+        { { index_names = { "a/\27[31mRED" } }, "index_names entry is not a file name: a/?[31mRED" },
+        { { index_names = { "/" .. x400 } }, "index_names entry is not a file name: /" .. x400:sub(1, 299) },
+        {
+            { headers = { ["X\27[31mY"] = "v" } },
+            "headers: a name must be a token and a value a line: X?[31mY",
+        },
+        { { headers = { ["X\194\155Y"] = "v" } }, "headers: a name must be a token and a value a line: X?Y" },
+        {
+            { headers = { [" " .. x400] = "v" } },
+            "headers: a name must be a token and a value a line:  " .. x400:sub(1, 299),
+        },
+        { { host = "\27[31m" }, 'host must be an IP address or "localhost", got "?[31m"' },
+        { { host = "\194\155x" }, 'host must be an IP address or "localhost", got "?x"' },
+        { { host = x400 }, ('host must be an IP address or "localhost", got "%s"'):format(x400:sub(1, 300)) },
+        {
+            { cors = "http://a.example\27" },
+            'cors entry is not an origin (scheme://host[:port]): "http://a.example?"',
+        },
+        {
+            { asset_root = root .. "/\27[31m" },
+            ('asset_root is not a directory: "%s/?[31m" (ENOENT)'):format(root),
+        },
+        { { root = "/nonexistent/\27[31mRED" }, "Invalid root: /nonexistent/?[31mRED" },
+        { { root = "/nonexistent/" .. x400 }, "Invalid root: /nonexistent/" .. x400:sub(1, 287) },
+        { { root = file }, "root must be a directory: " .. shown_file },
+        { { port = "\27[31m" }, "port must be an integer from 0 to 65535, got ?[31m (string)" },
+        { { ["\194\155x"] = 1 }, 'start does not read the key "?x"' },
+    }) do
+        local cfg = vim.tbl_extend("keep", c[1], { port = 0, root = root })
+        local started, res = pcall(server.start, cfg)
+        if started then
+            server.stop(res)
+        end
+        eq(
+            not started and tostring(res) or "started",
+            c[2],
+            ("%s is refused, the value marked and cut"):format(util.marked(vim.inspect(c[1]), 60))
+        )
     end
 end)
 

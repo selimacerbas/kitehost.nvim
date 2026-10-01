@@ -219,6 +219,14 @@ local function raise_line(raised)
     return util.marked(tostring(raised):match("^[^\n]*"), 300)
 end
 
+-- A caller's value as a refusal or a warning repeats it, marked and cut
+-- to 300 bytes as a notice's text is. Raw, an escape or a C1 control in
+-- it acted in the terminal a notifier forwards to, and vim.inspect
+-- escaped C0 controls alone and cut nothing.
+local function shown(value)
+    return util.marked(value, 300)
+end
+
 -- Tells the user, once and on one line, that answering path raised on
 -- port, which the line names, as every notice does, for a user with two
 -- servers. 0.10's v:errmsg kept a traceback's last line alone, so the
@@ -1520,7 +1528,10 @@ local function needs_auth(inst, p)
             warn_once(
                 inst,
                 "pattern",
-                ("cannot read protected_paths pattern %s (%s); the request was refused"):format(pat, tostring(hit))
+                ("cannot read protected_paths pattern %s (%s); the request was refused"):format(
+                    shown(pat),
+                    tostring(hit)
+                )
             )
             return true, true
         end
@@ -2481,7 +2492,7 @@ local function check_start(cfg)
     -- luv truncates a port it cannot hold and listens on another one.
     local p = cfg.port
     if type(p) ~= "number" or p ~= math.floor(p) or p < 0 or p > 65535 then
-        error(("port must be an integer from 0 to 65535, got %s (%s)"):format(tostring(p), type(p)), 0)
+        error(("port must be an integer from 0 to 65535, got %s (%s)"):format(shown(tostring(p)), type(p)), 0)
     end
     -- A host that is no string reached the bind, and a table raised while
     -- the bind's error was written, naming no option.
@@ -2501,7 +2512,7 @@ local function check_start(cfg)
     -- word. "localhost" is read as 127.0.0.1 below.
     local address = host and (host:match("^(.-)%%[%w._-]+$") or host)
     if host ~= nil and host ~= "localhost" and not (is_ipv4(host) or is_ipv6(address)) then
-        error(('host must be an IP address or "localhost", got %s'):format(vim.inspect(host)), 0)
+        error(('host must be an IP address or "localhost", got "%s"'):format(shown(host)), 0)
     end
     local allowed = cfg.allowed_hosts
     local allowed_set = {}
@@ -2575,7 +2586,7 @@ local function check_start(cfg)
             -- A name is joined to the directory it indexes, so a path in it
             -- read another directory's file as this one's index.
             if iname:find("[/\\]") or iname == "." or iname == ".." then
-                error("index_names entry is not a file name: " .. iname, 0)
+                error("index_names entry is not a file name: " .. shown(iname), 0)
             end
         end
     end
@@ -2617,18 +2628,18 @@ local function check_start(cfg)
             or type(v) ~= "string"
             or v:find("[%z\1-\8\10-\31\127]")
         then
-            error("headers: a name must be a token and a value a line: " .. tostring(k), 0)
+            error("headers: a name must be a token and a value a line: " .. shown(tostring(k)), 0)
         end
         local name = k:lower()
         if SERVER_FIELDS[name] then
-            error(("headers: %s is the server's own field"):format(k), 0)
+            error(("headers: %s is the server's own field"):format(shown(k)), 0)
         end
         if spelled[name] then
             local a, b = spelled[name], k
             if b < a then
                 a, b = b, a
             end
-            error(("headers: %s and %s name one field"):format(a, b), 0)
+            error(("headers: %s and %s name one field"):format(shown(a), shown(b)), 0)
         end
         spelled[name] = k
         headers[k] = v
@@ -2649,10 +2660,11 @@ local function check_start(cfg)
                 error("cors must be true, an origin or a list of origins", 0)
             end
             if not is_origin(origin) then
-                error("cors entry is not an origin (scheme://host[:port]): " .. vim.inspect(origin), 0)
+                error(('cors entry is not an origin (scheme://host[:port]): "%s"'):format(shown(origin)), 0)
             end
             if not as_browser_sends(origin) then
-                error("cors entry is not an origin as a browser sends it (lower case, no default port): " .. origin, 0)
+                local why = "cors entry is not an origin as a browser sends it (lower case, no default port): "
+                error(why .. shown(origin), 0)
             end
         end
     end
@@ -2743,12 +2755,12 @@ local function check_start(cfg)
     end
     if type(asset_root) == "string" then
         no_nul("asset_root", asset_root)
-        -- Named escaped, beside the error's name (asset_dir). A root inside
+        -- Named marked, beside the error's name (asset_dir). A root inside
         -- a credential directory had that same silent 404 on every request.
         local real, what, cause = asset_dir(asset_root)
         if not real then
             error(
-                ("asset_root is %s: %s%s"):format(what, vim.inspect(asset_root), cause and (" (" .. cause .. ")") or ""),
+                ('asset_root is %s: "%s"%s'):format(what, shown(asset_root), cause and (" (" .. cause .. ")") or ""),
                 0
             )
         end
@@ -2763,11 +2775,14 @@ local function check_start(cfg)
     no_nul("root", root)
     local root_real = uv.fs_realpath(root)
     if not root_real then
-        error("Invalid root: " .. root, 0)
+        error("Invalid root: " .. shown(root), 0)
     end
+    -- libuv's text repeats the path raw after the error's name, so the
+    -- name alone is kept, as asset_dir keeps it.
     local is_dir, dir_err = root_directory(root_real)
     if not is_dir then
-        error("root must be a directory: " .. root .. (dir_err and (" (" .. tostring(dir_err) .. ")") or ""), 0)
+        local cause = dir_err and (" (" .. tostring(dir_err):match("^[^:]*") .. ")") or ""
+        error("root must be a directory: " .. shown(root) .. cause, 0)
     end
 
     return {
@@ -3186,20 +3201,23 @@ function S.update_target(inst, new_root, new_index)
         return false
     end
     -- A root that does not resolve was named while the old one was served.
+    -- libuv's text repeats the path raw after the error's name, which
+    -- alone is kept, and the root is shown marked and cut.
     local root_real, real_err = uv.fs_realpath(new_root)
     if not root_real then
-        error(("update_target: root %s does not resolve (%s)"):format(new_root, tostring(real_err)), 2)
+        local cause = tostring(real_err):match("^[^:]*")
+        error(("update_target: root %s does not resolve (%s)"):format(shown(new_root), cause), 2)
     end
     local is_dir, dir_err = root_directory(root_real)
     if not is_dir then
-        local cause = dir_err and (" (" .. tostring(dir_err) .. ")") or ""
-        error(("update_target: root %s is not a directory%s"):format(new_root, cause), 2)
+        local cause = dir_err and (" (" .. tostring(dir_err):match("^[^:]*") .. ")") or ""
+        error(("update_target: root %s is not a directory%s"):format(shown(new_root), cause), 2)
     end
     local index, index_err = absolute_index(new_index)
     if index_err then
         error(
             ("update_target: index %s is relative and the working directory is unknown (%s)"):format(
-                new_index,
+                shown(new_index),
                 tostring(index_err)
             ),
             2

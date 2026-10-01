@@ -757,11 +757,11 @@ H.case("Section 8: a retarget the server refuses is a notice, not a raise", func
     local note = notes[1] or {}
     eq(
         note.msg,
-        ("LiveServer %d could not retarget: update_target: root %s does not resolve (ENOENT: stubbed)"):format(
+        ("LiveServer %d could not retarget: update_target: root %s does not resolve (ENOENT)"):format(
             inst.port,
             unresolved
         ),
-        "naming what failed, then the server's cause"
+        "naming what failed, then the server's cause by its error's name"
     )
     eq(note.level, vim.log.levels.ERROR, "as an error")
     eq(inst.root, served, "and the server keeps its root")

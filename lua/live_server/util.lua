@@ -594,13 +594,16 @@ end
 -- same on every run; a section of another type is its own check's to
 -- refuse. A key nobody reads was dropped without a word, so a misspelled
 -- token or protected_paths served with nothing gated. Read with pairs,
--- which reads no computed field, so each option is still read once.
+-- which reads no computed field, so each option is still read once. A
+-- key that is no name is shown escaped, marked and cut: vim.inspect left
+-- a C1 or a bidi control raw.
 function U.unread_key(given, known, prefix)
     local names = {}
     prefix = prefix or ""
     for k, v in pairs(given) do
         local sub = known[k]
-        local name = prefix .. ((type(k) == "string" and k:find("^[%a_][%w_]*$")) and k or vim.inspect(k))
+        local name = prefix
+            .. ((type(k) == "string" and k:find("^[%a_][%w_]*$")) and k or U.marked(vim.inspect(k), 300))
         if not sub then
             table.insert(names, name)
         elseif type(sub) == "table" and type(v) == "table" then
