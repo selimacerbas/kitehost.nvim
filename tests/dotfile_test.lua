@@ -568,9 +568,13 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
         end, 5)
         return seen
     end
+    -- A root holding a child of its own name: the root's change reads as
+    -- the child's, which a change naming a directory would drop, and the
+    -- chmod then sent nothing (measured); it reloads naming either.
     local rows = {
         { "site", "a chmod of the root reloads, naming /" },
         { ".drafts", "and of a root named .drafts" },
+        { "site", "and of a root holding a directory named as itself, naming / or site", true },
     }
     if not own_event_seen() then
         for _, row in ipairs(rows) do
@@ -581,6 +585,15 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
     for _, row in ipairs(rows) do
         local site = H.tmpdir() .. "/" .. row[1]
         vim.fn.mkdir(site, "p")
+        local want = "/"
+        if row[3] then
+            vim.fn.mkdir(site .. "/" .. row[1], "p")
+            want = function(obj)
+                return obj.path == "/" or obj.path == row[1]
+            end
+            -- FSEvents replays a fixture made just before the watcher starts.
+            vim.wait(1000)
+        end
         local base = serve(site, { live = { enabled = true, debounce = 20, inject_script = false } })
         local port = tonumber(base:match(":(%d+)$"))
         local c = assert(H.raw_connect(port))
@@ -592,13 +605,13 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
         local mark = #table.concat(c.chunks)
         assert(uv.fs_chmod(site, 448))
         local got = c:read(2000, function(b)
-            return reloads_for(b, mark, "/")
+            return reloads_for(b, mark, want)
         end)
         local named = {}
         for _, obj in ipairs(reloads(got, mark)) do
             named[#named + 1] = tostring(obj.path)
         end
-        ok(reloads_for(got, mark, "/"), ("%s (named: %s)"):format(row[2], table.concat(named, " ")))
+        ok(reloads_for(got, mark, want), ("%s (named: %s)"):format(row[2], table.concat(named, " ")))
     end
 end)
 
@@ -611,6 +624,8 @@ H.case("Section 7c: a change naming a directory below the root sends no reload",
     local site = H.tmpdir()
     vim.fn.mkdir(site .. "/sub", "p")
     H.write_file(site .. "/sub/page.html", "<html><body>sub</body></html>")
+    -- A child named as the root, whose change reads as the root's own.
+    vim.fn.mkdir(site .. "/" .. util.basename(site), "p")
     local real_new = uv.new_fs_event
     H.defer(function()
         uv.new_fs_event = real_new
@@ -685,6 +700,12 @@ H.case("Section 7c: a change naming a directory below the root sends no reload",
     )
     taken = fed(nil, { change = true })
     ok(taken, "and a change the watcher could not name is kept")
+    local own = util.basename(inst.root_real)
+    taken, paths = fed(own, { change = true })
+    ok(
+        taken,
+        ("and a change naming %s, the root's own name and a child directory's, is kept (named: %s)"):format(own, paths)
+    )
 end)
 
 -- The listing read an entry's own name, so a plain-named link to a dot name

@@ -877,7 +877,10 @@ local function schedule_reload(inst, changed_path, events)
     -- .liveignore'd file under it reloaded through that name. A change of
     -- a directory but the root names no file; one lstat cannot read is
     -- kept, as a file's would be.
-    if events and events.change and not events.rename and rel and rel ~= "" and rel ~= "/" then
+    local changed_dir = events and events.change and not events.rename and rel and rel ~= "" and rel ~= "/"
+    -- Beside a child named as the root, changed_rel reads the root's own
+    -- change as the child's, so that one name is kept.
+    if changed_dir and rel ~= util.basename(inst.root_real) then
         local st = uv.fs_lstat(util.joinpath(inst.root_real, rel))
         if st and st.type == "directory" then
             return
