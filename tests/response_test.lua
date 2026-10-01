@@ -736,30 +736,32 @@ H.case("Section 9: a listing names nothing behind /__live/", function()
     vim.fn.mkdir(site .. "/__live", "p")
     H.write_file(site .. "/__live/other.txt", "USERFILE")
     H.write_file(site .. "/plain.txt", "plain")
-    for _, l in ipairs({
-        { "__live" .. sep .. "other.txt", "/lo.txt", "/__live/other.txt" },
-        { "__live", "/dl", "/__live", { dir = true } },
-    }) do
-        local made, err = uv.fs_symlink(l[1], site .. l[2], l[4])
-        local why = unresolved(made, err, site .. l[2], site .. l[3])
-        if why then
-            for _, row in ipairs({
-                "the root listing names plain.txt",
-                "and not the __live directory",
-                "nor a link to a file in it",
-                "nor a link to it",
-            }) do
-                H.skip(row .. " (" .. why .. ")")
-            end
-            return
-        end
+    -- The first two rows need no link, so a link that does not resolve
+    -- skips its own row alone.
+    local links = {
+        {
+            target = "__live" .. sep .. "other.txt",
+            name = "/lo.txt",
+            want = "/__live/other.txt",
+            row = "nor a link to a file in it",
+        },
+        { target = "__live", name = "/dl", want = "/__live", flags = { dir = true }, row = "nor a link to it" },
+    }
+    for _, l in ipairs(links) do
+        local made, err = uv.fs_symlink(l.target, site .. l.name, l.flags)
+        l.why = unresolved(made, err, site .. l.name, site .. l.want)
     end
     local inst = serve({ root = site, features = { dirlist = { enabled = true } } })
     local listing = raw(inst.port, get("/", inst.port)).body
     ok(listing:find('href="/plain.txt"', 1, true) ~= nil, "the root listing names plain.txt")
     ok(not listing:find('href="/__live/"', 1, true), "and not the __live directory")
-    ok(not listing:find('href="/lo.txt"', 1, true), "nor a link to a file in it")
-    ok(not listing:find('href="/dl', 1, true), "nor a link to it")
+    for _, l in ipairs(links) do
+        if l.why then
+            H.skip(l.row .. " (" .. l.why .. ")")
+        else
+            ok(not listing:find('href="' .. l.name, 1, true), l.row)
+        end
+    end
 end)
 
 -- An index.html linking into the directory behind /__live/ made its
