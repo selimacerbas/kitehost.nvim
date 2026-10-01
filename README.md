@@ -3,7 +3,7 @@
 A tiny, zero-dependency **local web server** for Neovim, written in pure Lua with `vim.uv`.
 Start a server on any file or folder, auto-reload the browser on save, and quickly reopen existing ports.
 
-Before 2.0.0 this plugin was live-server.nvim: [Upgrading from live-server.nvim](#upgrading-from-live-servernvim) maps every name it had then.
+Before 2.0.0 this plugin was live-server.nvim: [Upgrading from live-server.nvim](#upgrading-from-live-servernvim) maps the names it had then.
 
 * **Pure Lua**: no npm, no Python, no binaries.
 * **Local by default**: binds to `127.0.0.1`; set `host = "0.0.0.0"` for network access, with a `token`, after reading [SECURITY.md](SECURITY.md).
@@ -69,7 +69,7 @@ return {
 
 ## Upgrading from live-server.nvim
 
-Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still installs it, since GitHub redirects the repository's former name, and the former modules and commands still work, each warning once a session and naming its replacement; they are removed in 3.0.0. The notices, the notification title, the statusline and the help take the new name now. On Neovim 0.8 or 0.9, which 2.0.0 no longer runs on, pin v1.5.0: v1.5.0 has only the names before 2.0.0: pinned there, a spec keeps `require("live_server")` and the `:LiveServer*` commands.
+Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still installs it, since GitHub redirects the repository's former name, and the former modules and commands still work, each warning once a session and naming its replacement; they are removed in 3.0.0. Everything else in the table takes the new name now. On Neovim 0.8 or 0.9, which 2.0.0 no longer runs on, pin v1.5.0, which has only the names before 2.0.0: a spec pinned there keeps `require("live_server")` and the `:LiveServer*` commands.
 
 | What | live-server.nvim | kitehost.nvim |
 | --- | --- | --- |
@@ -94,7 +94,7 @@ Before 2.0.0 this plugin was live-server.nvim. Through 2.x the former spec still
 | `:LiveServerStatus` | `:KiteHost status` |
 | `:LiveServerToggleLive` | `:KiteHost toggle-live` |
 
-Through 2.x the plugin ships two top-level modules, `kitehost` and `live_server`, and lazy.nvim finds the module an `opts` table goes to by the spec's name. A spec that relies on `opts` and is named after neither repository (a `name` or `dir` of your own, or a fork under another name) sets `main = "kitehost"`: lazy.nvim cannot choose between the two modules for it and reports `Lua module not found for config of <name>`. `"selimacerbas/kitehost.nvim"`, the former spec, a fork that keeps the name kitehost.nvim and a spec with its own `config` function need none.
+Through 2.x the plugin ships two top-level modules, `kitehost` and `live_server`, and lazy.nvim finds the module an `opts` table goes to by the spec's name. A spec that relies on `opts` or `config = true` and is named after neither repository (a `name` or `dir` of your own, or a fork under another name) sets `main = "kitehost"`: lazy.nvim cannot choose between the two modules for it and reports `Lua module not found for config of <name>`. `"selimacerbas/kitehost.nvim"`, the former spec, a fork that keeps the name kitehost.nvim and a spec with its own `config` function need none.
 
 ---
 
@@ -242,7 +242,7 @@ All under the which-key group **`<leader>l`**:
 | `<leader>lS` | Stop one (pick port)           |
 | `<leader>lA` | Stop all                       |
 
-> We register only the **group label** in `init`, and return actual mappings in `keys`, the recommended pattern for Folke's ecosystem to avoid conflicts and enable lazy-loading on keypress.
+> We register only the **group label** in `init`, and return actual mappings in `keys`, the pattern lazy.nvim recommends to avoid conflicts and enable lazy-loading on keypress.
 
 ---
 

@@ -162,7 +162,10 @@ H.section("Section 1: below the floor")
 H.ok(documented ~= "", "the README's command table lists the commands: " .. documented)
 local source_err = source_plugin()
 local message = require(MODULE .. ".floor").message
-H.ok(vim.startswith(message, "kitehost: "), "the floor text starts kitehost:, as every notice does: " .. message)
+H.ok(
+    vim.startswith(message, "kitehost: "),
+    "the floor text starts kitehost:, as every notice but a deprecation warning does: " .. message
+)
 H.ok(message:find("0.10", 1, true) ~= nil, "the floor text names the floor")
 H.ok(
     message:find("on Neovim 0.8 or 0.9 pin the plugin to v1.5.0", 1, true) ~= nil,

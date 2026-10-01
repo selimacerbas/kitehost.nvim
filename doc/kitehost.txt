@@ -636,9 +636,10 @@ Before 2.0.0 this plugin was live-server.nvim. The names it had then keep
 working through 2.x, each after a warning once a session, and go in
 3.0.0: a command runs its subcommand, and a module is the very table its
 new name returns. Below Neovim 0.10 a former module answers as its new
-name does: the entry module is the stub, and the two plugin-author
-modules raise the floor text; a former command answers with the floor
-notice, as |:KiteHost| does.
+name does: the entry module answers every call with an empty string,
+and the two plugin-author modules raise the message that Neovim 0.10 is
+required; a former command answers with that message, as |:KiteHost|
+does.
 
                                                 *live-server.nvim*
 live-server.nvim        |kitehost.nvim|. A lazy.nvim spec names
