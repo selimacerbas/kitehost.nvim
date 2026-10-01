@@ -1871,11 +1871,12 @@ H.case("Section 8f: update_target checks its root and its index as start does", 
     local fifo_why
     if vim.fn.executable("mkfifo") ~= 1 then
         fifo_why = "mkfifo is not on PATH"
-    elseif vim.system({ "mkfifo", fifo }):wait().code ~= 0 then
-        fifo_why = "mkfifo failed"
     else
+        local made = vim.system({ "mkfifo", fifo }):wait()
         local st = uv.fs_stat(fifo)
-        if not st or st.type ~= "fifo" then
+        if made.code ~= 0 then
+            fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. vim.trim(tostring(made.stderr))
+        elseif not st or st.type ~= "fifo" then
             fifo_why = "no FIFO this Neovim can stat; Windows has none"
         end
     end

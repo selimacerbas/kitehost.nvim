@@ -591,7 +591,7 @@ H.case("Section 8: a /__live/ name that is no route is 404", function()
         local made = vim.system({ "mkfifo", site .. "/__live/x" }):wait()
         local st = uv.fs_stat(site .. "/__live/x")
         if made.code ~= 0 then
-            fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. tostring(made.stderr)
+            fifo_why = "mkfifo exited " .. tostring(made.code) .. ": " .. vim.trim(tostring(made.stderr))
         elseif not st or st.type ~= "fifo" then
             fifo_why = "no FIFO this Neovim can stat; Windows has none"
         else
