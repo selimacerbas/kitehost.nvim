@@ -3192,6 +3192,8 @@ local function bind_probed(host, port)
     local wildcard = shadows and wildcard_of(bound.ip)
     if wildcard then
         local probed, mode = wildcard, ""
+        -- IPv6-only, so an IPv6 bind's probe never meets an IPv4 listener,
+        -- of which that bind shadows nothing.
         local free, why, why_name = address_free(wildcard, bound.port, wildcard == "::")
         if free and windows then
             probed, mode = "::", " dual-stack"
@@ -3231,11 +3233,11 @@ end
 -- option, a failed bind or listen, a port in use, a reload timer it cannot
 -- make, a heartbeat whose timer cannot be armed, or a wildcard bind whose
 -- URL's loopback address another socket holds or start cannot check, or
--- a loopback bind whose wildcard of its family the same holds for, and
--- on Windows either one beside a :: in the mode its bind does not meet.
--- A root whose watcher cannot start is served with live reload off and
--- one warning. A caller reads S.features.start_raises before it relies on
--- that.
+-- a loopback bind whose wildcard of its family the same holds for; on
+-- Windows a loopback or a :: bind also refuses a :: held in the mode its
+-- own bind does not meet. A root whose watcher cannot start is served
+-- with live reload off and one warning. A caller reads
+-- S.features.start_raises before it relies on that.
 function S.start(cfg)
     local checked = check_start(cfg)
     local host = checked.host

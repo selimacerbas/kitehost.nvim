@@ -463,7 +463,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
                 not started
                     and res:find("Failed to bind ::1%1:", 1, true) == 1
                     and res:find("EADDRNOTAVAIL", 1, true) ~= nil,
-                'host = "::1%1" passes the check and the bind refuses it, naming EADDRNOTAVAIL: ' .. res
+                'host = "::1%1" is taken by the check and refused by the bind, naming EADDRNOTAVAIL: ' .. res
             )
         else
             ok(started, 'host = "::1%1" starts, its digit zone naming no interface here: ' .. res)
@@ -1188,7 +1188,7 @@ H.case("a loopback bind raises when a wildcard listener holds its port", functio
             local here = ("%s:%d"):format(specific, got.port)
             -- macOS and Windows bind beside the listener and the probe
             -- refuses; Linux refuses the bind itself, with its own cause.
-            -- Any EADDRINUSE passed outside Linux, leaving the probe
+            -- Outside Linux any EADDRINUSE was taken, leaving the probe
             -- unpinned.
             local shadow = ("another socket holds a wildcard on port %d, which this address would shadow"):format(
                 got.port

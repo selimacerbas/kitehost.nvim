@@ -602,10 +602,11 @@ H.case("Section 7b: a change to the root itself reloads, naming /", function()
     end
 end)
 
--- Only Windows sends a change naming a directory whose entry changed: the
--- macOS watcher reports each change here as a rename (measured), and the
--- per-directory one names the file. So the callback the server hands its
--- root watcher is fed such a change as Windows sends it.
+-- Windows sends a change naming the directory beside each write in it
+-- (measured on the hosted runner), where the macOS watcher reports each
+-- change here as a rename (measured) and the per-directory one names the
+-- file written. So the callback the server hands its root watcher is fed
+-- such a change as Windows sends it.
 H.case("Section 7c: a change naming a directory below the root sends no reload", function()
     local site = H.tmpdir()
     vim.fn.mkdir(site .. "/sub", "p")
