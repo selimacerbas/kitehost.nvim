@@ -735,10 +735,13 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     local aliased = H.tmpdir()
     vim.fn.mkdir(aliased .. "/pub", "p")
     H.write_file(aliased .. "/pub/page.txt", "PUB")
-    local named_link, named_err = vim.uv.fs_symlink(aliased .. "/pub", aliased .. "/__Live")
+    -- A link that does not resolve is refused as a missing name is, so its
+    -- rows run only on one that resolves; Windows makes a link to a
+    -- directory that resolves only when told so (measured).
+    local named_link, named_err = vim.uv.fs_symlink(aliased .. "/pub", aliased .. "/__Live", { dir = true })
     local into, into_err = vim.uv.fs_symlink(reserved .. "/__Live/x.txt", reserved .. "/into.txt")
     local hard, hard_err = vim.uv.fs_link(reserved .. "/__Live/x.txt", reserved .. "/hard.txt")
-    if named_link and into then
+    if named_link and vim.uv.fs_stat(aliased .. "/__Live/page.txt") then
         local alias = server.start({ port = 0, root = aliased })
         H.defer(function()
             server.stop(alias)
@@ -748,6 +751,12 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
             "a link named __Live to a directory in the root is not served"
         )
         ok(get(alias.port, "/pub/page.txt").status == 200, "and that directory is served by its own name")
+    else
+        local why = " (" .. tostring(named_err or "the link does not resolve") .. ")"
+        H.skip("a link named __Live to a directory in the root is not served" .. why)
+        H.skip("and that directory is served by its own name" .. why)
+    end
+    if into and vim.uv.fs_stat(reserved .. "/into.txt") then
         ok(get(held.port, "/into.txt").status == 404, "a link elsewhere in the root into the entry is not served")
         -- A preflight through that link is refused as a GET is, where one
         -- on a served file is answered.
@@ -771,8 +780,10 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
             "where a preflight on a served file is answered"
         )
     else
-        H.skip("no symbolic link could be made: " .. tostring(named_err or into_err))
-        H.skip("a preflight through a link into the entry is 404 (no symbolic link)")
+        local why = " (" .. tostring(into_err or "the link does not resolve") .. ")"
+        H.skip("a link elsewhere in the root into the entry is not served" .. why)
+        H.skip("a preflight through that link is 404 with no origin line" .. why)
+        H.skip("where a preflight on a served file is answered" .. why)
     end
     states("or a link of that name to anything", "the reserved entry's link")
     states("nor a file a link elsewhere in the root resolves into it", "a link elsewhere into the entry")
