@@ -1630,7 +1630,8 @@ end
 -- to, and absolute: a missing directory, a file or another type answered
 -- every request 404 without a word, and a relative path followed the
 -- working directory at each request. The real path, or nil and a warning
--- once per server naming the answer, cut to 300 bytes and marked. nil is
+-- naming the answer, cut to 300 bytes and marked, once until a request's
+-- root resolves again (the asset route re-arms it). nil is
 -- no root yet, the caller's to say, and never reaches here. Absolute is
 -- read per OS: a drive letter or a leading backslash is a relative name
 -- on macOS and Linux, which followed the working directory there.
@@ -1673,9 +1674,9 @@ end
 -- moved away, a link in its place) was followed with no word, and so
 -- was a link given as the root and repointed, since the kept path was
 -- what the check resolved. The string given, made absolute at start,
--- must still resolve to the path kept; otherwise nil and a warning once
--- per server, naming the string, under the kind a function's faults
--- share.
+-- must still resolve to the path kept; otherwise nil and a warning,
+-- naming the string, under the kind a function's faults share, once
+-- until a request's root resolves again.
 local function kept_root(inst, given, kept)
     local fault
     local now, now_err = uv.fs_realpath(given)
@@ -1977,6 +1978,12 @@ local function handle_request(conn, req)
             end
         elseif aroot then
             aroot_real = kept_root(inst, inst.asset_given, aroot)
+        end
+        -- A fault that clears re-arms its warning: a root removed and
+        -- made again by a build spent the one warning, and a link put
+        -- there later answered 404 with no word.
+        if aroot_real then
+            inst.warned["asset-root"] = nil
         end
         local rel = qparam("p")
         rel = rel and util.url_decode(rel) or ""

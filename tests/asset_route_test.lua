@@ -15,7 +15,9 @@
 --     path, the root removed or a link given as the root and repointed
 --     is 404 and warned once; reads a function per request, a raise or
 --     an answer that is no absolute directory outside the credential
---     directories warned once, nil a silent 404 (Section 6)
+--     directories warned once, nil a silent 404; a request whose root
+--     resolves again re-arms the warning, so a later fault warns again
+--     (Section 6)
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/asset_route_test.lua"
 
@@ -633,6 +635,67 @@ do
         server.stop(inst)
         vim.fn.delete(link)
     end
+end
+-- A fault that clears spent the one warning: a build tool's rm -rf and
+-- mkdir warned, and a link put at the path later answered 404 with no
+-- word. A request whose root resolves again re-arms the warning.
+do
+    local site = tmpdir .. "/rebuilt"
+    local function build(text)
+        vim.fn.mkdir(site, "p")
+        write_file(site .. "/a.txt", text)
+    end
+    build("ONE")
+    notes = {}
+    inst = asset_server(site)
+    local url = ("http://127.0.0.1:%d/__live/asset?p=a.txt&t=%s"):format(inst.port, TOKEN)
+    local function warned(count)
+        H.wait_for(function()
+            return #notes >= count
+        end, 1000)
+        vim.wait(100)
+        return #notes
+    end
+    eq(http_get(url).status, 200, "a string root serves before its directory is removed")
+    vim.fn.delete(site, "rf")
+    eq(http_get(url).status, 404, "and is 404 while it is gone")
+    eq(warned(1), 1, "and warns once")
+    build("TWO")
+    local back = http_get(url)
+    eq(back.status == 200 and back.body or back.status, "TWO", "and serves again once it is made again")
+    vim.fn.delete(site, "rf")
+    vim.fn.mkdir(tmpdir .. "/other", "p")
+    write_file(tmpdir .. "/other/a.txt", "OTHER")
+    local made, made_err = uv.fs_symlink(tmpdir .. "/other", site, { dir = true, junction = true })
+    if made then
+        eq(http_get(url).status, 404, "and a link put there later is 404")
+        local count = warned(2)
+        H.ok(
+            count == 2 and notes[2].msg:find('resolves to "', 1, true) ~= nil,
+            "and warns again, naming where it resolves: " .. vim.inspect(notes, { newline = " ", indent = "" })
+        )
+    else
+        H.skip("and a link put there later is 404 (" .. tostring(made_err) .. ")")
+        H.skip("and warns again, naming where it resolves (" .. tostring(made_err) .. ")")
+    end
+    server.stop(inst)
+    vim.fn.delete(site)
+    vim.fn.delete(tmpdir .. "/other", "rf")
+    -- A function's faults share the kind and re-arm the same way.
+    notes = {}
+    local answer = "relative"
+    inst = asset_server(function()
+        return answer
+    end)
+    url = ("http://127.0.0.1:%d/__live/asset?p=pic.png&t=%s"):format(inst.port, TOKEN)
+    eq(http_get(url).status, 404, "a function answering a relative path is 404")
+    eq(warned(1), 1, "and warns once")
+    answer = tmpdir .. "/src"
+    eq(http_get(url).status, 200, "and serves once it answers a directory")
+    answer = "relative"
+    eq(http_get(url).status, 404, "and is 404 when it answers a relative path again")
+    eq(warned(2), 2, "and warns again")
+    server.stop(inst)
 end
 vim.notify = real_notify
 
