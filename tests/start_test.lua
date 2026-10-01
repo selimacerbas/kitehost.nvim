@@ -1997,6 +1997,15 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
             string.rep("a", 40) .. "(" .. string.rep("b", 40),
             string.rep("a", 400) .. string.rep("b", 100),
         },
+        -- A fault in the first 40 bytes of a longer pattern: the window
+        -- starts at byte 1 and is still named, since it is cut at its end.
+        {
+            "(" .. string.rep("a", 100),
+            1,
+            "a capture is not closed, bytes 1 to 41",
+            "(" .. string.rep("a", 40),
+            string.rep("a", 100),
+        },
         { "\194\155\194\155(", 5, "a capture is not closed", "????(", "\194\155\194\155" },
         { "\226\128\174/[", 5, "a set is not closed", "???/[", "\226\128\174/" },
     }) do
