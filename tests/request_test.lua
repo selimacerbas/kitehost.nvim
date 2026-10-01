@@ -806,6 +806,15 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     res = ask(port, ("GET %s HTTP/1.1\r\n\r\n"):format(target(9 * 1024)))
     eq(res[1] and res[1].status, 414, "and one with no Host is 414, never 400")
     eq(runs, 0, "and none of them reached a pattern")
+    -- The 414 comes once the head has arrived, the order the README
+    -- promises: a target over the cap and a header line with no blank
+    -- line after them get no byte, and the blank line brings the 414.
+    local c = assert(H.raw_connect(port))
+    assert(c:send(("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"):format(target(9 * 1024), port)))
+    eq(c:read(300), "", "a 9 KiB target whose head has not ended gets no byte")
+    assert(c:send("\r\n"))
+    res = H.responses((c:read(3000)))
+    eq(res[1] and res[1].status, 414, "and the head's blank line brings the 414")
     -- The cap counts the whole target, the query too: a short path whose
     -- query takes it past 8 KiB is refused, and at 8 KiB the query is
     -- read and the path matched.
