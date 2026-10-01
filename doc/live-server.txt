@@ -116,10 +116,10 @@ Options:
     `127.0.0.1`; a start refuses any other string. An IPv6 address may
     carry a `%zone` of letters, digits, `.`, `_` and `-`, not checked
     against the interfaces; on macOS a zoned link-local bind starts and
-    answers no request. On Windows write the zone as the interface's
-    number, since a name there such as `Loopback Pseudo-Interface 1`
-    holds spaces, and Windows refuses a zone on `::1` other than `%0` at
-    the bind (`EADDRNOTAVAIL`). `inst.host` carries no zone, nor does
+    answers no request. Windows reads a zone as the interface's number,
+    one starting with no digit as 0, so no interface name is resolved
+    there, and its bind refuses any number but 0 on `::1`
+    (`EADDRNOTAVAIL`). `inst.host` carries no zone, nor does
     any URL the plugin opens, |:LiveServerOpen| on a port no server of
     this plugin holds included. `"0.0.0.0"` serves every file under the
     root, except a dot path (unless `serve_dotfiles` is set) and an entry

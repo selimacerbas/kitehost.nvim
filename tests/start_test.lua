@@ -39,10 +39,10 @@
 -- served), a zoned host reports the address it bound (the loopback's own
 -- name skipped where it is no zone the host takes), a zone of digits on
 -- ::1 is bound plain on macOS and Linux and refused at the bind on
--- Windows, which takes no zone on ::1 but %0, a table naming every key start
--- reads starts, START_KEYS names the keys check_start and S.start read in
--- the source and no other, and each option is read from the caller's
--- table once.
+-- Windows, which reads a zone as a number and binds ::1 with 0 alone, a
+-- table naming every key start reads starts, START_KEYS names the keys
+-- check_start and S.start read in the source and no other, and each
+-- option is read from the caller's table once.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/start_test.lua"
 
@@ -426,7 +426,7 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
     if loopback then
         table.insert(accepted, "::1")
     else
-        H.skip('host = "::1" and "::1%1" start (no IPv6 loopback on this machine)')
+        H.skip('host = "::1" starts (no IPv6 loopback on this machine)')
     end
     if zone then
         table.insert(accepted, "::1%" .. zone)
@@ -448,11 +448,16 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             eq(res.host, "::1", ("host = %s reports the address it bound"):format(vim.inspect(host)))
         end
     end
-    -- Windows reads a zone of digits as the interface's number and its
-    -- bind refuses every zone on ::1 but %0, the loopback's own number
+    -- Windows reads a zone as a number, one starting with no digit as 0,
+    -- and its bind refuses every number on ::1 but 0, the loopback's own
     -- included (EADDRNOTAVAIL, measured on the hosted runner); macOS and
     -- Linux read a digit as no interface's name and bind plain ::1.
-    if loopback then
+    if not loopback then
+        H.skip(
+            'host = "::1%1" starts on macOS and Linux and is refused by the bind on Windows'
+                .. " (no IPv6 loopback on this machine)"
+        )
+    else
         local started, inst = pcall(server.start, { port = 0, root = root, host = "::1%1" })
         local res = started and "started" or tostring(inst)
         if started then
