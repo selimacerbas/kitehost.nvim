@@ -24,9 +24,10 @@
 -- pending window; the directories under the root a scan cannot watch or
 -- read are dropped with one warning per scan. Every notice goes out
 -- marked. update_target refuses a root that does not resolve or is no
--- directory, and an argument of the wrong type, and changes nothing,
--- each value it repeats marked and cut at 300 bytes and an error by its
--- name; a relative index names the file it named when it was set.
+-- directory, an argument of the wrong type and a root or an index
+-- holding a NUL byte, and changes nothing, each value it repeats marked
+-- and cut at 300 bytes and an error by its name; a relative index names
+-- the file it named when it was set.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/lifecycle_test.lua"
 
