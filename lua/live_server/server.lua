@@ -2496,14 +2496,17 @@ end
 --     on a 26-byte path, and eight after a wildcard 175 ms on 8 KiB, so
 --     two are taken.
 --   * A balanced match (%bxy) scans to the path's end wherever it cannot
---     balance, a scan neither rule above counts: unanchored, %b() cost
+--     balance, a scan no rule above counts: unanchored, %b() cost
 --     30 ms on 8 KiB of ( and .?.?%b() 132 ms. No path rule needs one, so
 --     it is refused; a frontier (%f) reads two bytes and is taken.
 --   * Every try reads as much of the pattern as matches, so its length
 --     multiplies the cost: a wildcard, eight ? items and a 1000-byte tail
---     took 14 s. 256 bytes are taken; the costliest shape the rules then
---     take, a wildcard and two ? items before a tail filling them, costs
---     about 60 ms.
+--     took 14 s. 256 bytes are taken. The costliest shape found that the
+--     rules then take, two ? items before 32 captures and a tail of .
+--     filling the 256 bytes, cost up to 87 ms (65 ms on 0.10.0), so about
+--     90 ms a pattern for one tokenless request, which reads it once
+--     (dir_form), or twice for a frontier that tells "/" from the end of a
+--     path naming a directory.
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
     .. " so a request path costs the square of its length"

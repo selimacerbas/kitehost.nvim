@@ -827,10 +827,10 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     -- before a literal tail filling the pattern's 256 bytes, tries 2^2
     -- ways at every split of 8 KiB, each as long as the tail: about 50 ms
     -- of CPU time on either binary, a reading moving with the machine's
-    -- load (33 to 59 ms measured); the costliest shape found, a lazy
-    -- wildcard with captures in its tail, 78 ms. Its calls
-    -- are timed by os.clock, so the row reads their work and not the
-    -- machine's load beside it.
+    -- load (33 to 59 ms measured); the costliest shape found, two ? items
+    -- before 32 captures and a tail of . filling the 256 bytes, up to
+    -- 87 ms. Its calls are timed by os.clock, so the row reads their work
+    -- and not the machine's load beside it.
     local costly = "^/.*" .. ("a?"):rep(2) .. ("a"):rep(247) .. "b"
     local worst = serve({ token = "tok", protected_paths = { costly } })
     local spent, calls = 0, 0
