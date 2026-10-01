@@ -626,18 +626,20 @@ H.finish()]],
 
 H.section("Section 6: H.rtp proves the checkout is the copy require loads")
 -- H.rtp returns the directory it proved, canonical, and require's search
--- resolves live-server's server.lua under it: the checkout here,
--- markdown-preview's live-server dependency there.
+-- resolves kitehost's server.lua under it, by its name and, through 2.x,
+-- its former one: the checkout here, mdkite's kitehost dependency there.
 eq(H.canon(rtp_dir), rtp_dir, "H.rtp returns a canonical path")
 ok(vim.fn.isdirectory(rtp_dir) == 1, "H.rtp returns a directory")
-local resolved = vim.api.nvim_get_runtime_file("lua/live_server/server.lua", false)[1]
-ok(
-    resolved ~= nil and vim.startswith(H.canon(resolved), rtp_dir .. "/"),
-    "live-server's server.lua resolves under the directory H.rtp returns: " .. tostring(resolved)
-)
+for _, rel in ipairs({ "lua/kitehost/server.lua", "lua/live_server/server.lua" }) do
+    local resolved = vim.api.nvim_get_runtime_file(rel, false)[1]
+    ok(
+        resolved ~= nil and vim.startswith(H.canon(resolved), rtp_dir .. "/"),
+        rel .. " resolves under the directory H.rtp returns: " .. tostring(resolved)
+    )
+end
 
 -- A comma in the checkout's path splits its runtimepath entry and a copy on
--- the packpath answers instead (measured). markdown-preview runs this file
+-- the packpath answers instead (measured). mdkite runs this file
 -- against its own H.rtp, which proves its own entry file first, so both
 -- trees carry both plugins' entry files and the message is matched up to lua/.
 -- The child's H.rtp() sits on its line 2, which a refusal names.
@@ -657,9 +659,11 @@ else
         vim.fn.mkdir(dir .. "/tests", "p")
         assert(uv.fs_copyfile(helpers_path, dir .. "/tests/helpers.lua"))
         for _, rel in ipairs({
+            "lua/kitehost/server.lua",
+            "lua/kitehost/util.lua",
             "lua/live_server/server.lua",
             "lua/live_server/util.lua",
-            "lua/markdown_preview/init.lua",
+            "lua/mdkite/init.lua",
         }) do
             vim.fn.mkdir(vim.fs.dirname(dir .. "/" .. rel), "p")
             H.write_file(dir .. "/" .. rel, "return {}\n")
@@ -673,7 +677,7 @@ else
     local data = base .. "/data"
     local saved_data = vim.env.XDG_DATA_HOME
     vim.env.XDG_DATA_HOME = data
-    local installed = vim.fn.stdpath("data") .. "/site/pack/x/start/live-server"
+    local installed = vim.fn.stdpath("data") .. "/site/pack/x/start/kitehost"
     vim.env.XDG_DATA_HOME = saved_data
     checkout(installed)
     eq(
@@ -686,13 +690,13 @@ else
         1,
         rtp_cases[1]
     )
-    -- A live-server with a plain name for markdown-preview's H.rtp, which
-    -- finds it through LIVE_SERVER_RTP once the checkout's own proof passes.
-    local plain_ls = base .. "/plain-ls"
-    vim.fn.mkdir(plain_ls .. "/lua/live_server", "p")
-    H.write_file(plain_ls .. "/lua/live_server/server.lua", "return {}\n")
-    H.write_file(plain_ls .. "/lua/live_server/util.lua", "return {}\n")
-    H.write_file(plain_ls .. "/lua/live_server/floor.lua", "return {}\n")
+    -- A kitehost with a plain name for mdkite's H.rtp, which finds it
+    -- through KITEHOST_RTP once the checkout's own proof holds.
+    local plain_kitehost = base .. "/plain-kitehost"
+    vim.fn.mkdir(plain_kitehost .. "/lua/kitehost", "p")
+    H.write_file(plain_kitehost .. "/lua/kitehost/server.lua", "return {}\n")
+    H.write_file(plain_kitehost .. "/lua/kitehost/util.lua", "return {}\n")
+    H.write_file(plain_kitehost .. "/lua/kitehost/floor.lua", "return {}\n")
     -- A brace group with a comma makes building the search path raise E220
     -- here (measured), which the refusal names in place of a raw traceback.
     -- The hosted Windows runner drops the entry instead, a glob that matches
@@ -711,7 +715,7 @@ else
     local brace_code, brace_out = child_exit(
         'H.rtp()\nH.write_line("the checkout loaded")\nH.ok(true, "loaded")\nH.finish()',
         "",
-        { helpers = braced .. "/tests/helpers.lua", env = { LIVE_SERVER_RTP = plain_ls } }
+        { helpers = braced .. "/tests/helpers.lua", env = { KITEHOST_RTP = plain_kitehost } }
     )
     if brace_out:find("E220", 1, true) then
         eq(
@@ -749,14 +753,14 @@ else
             child_exit(
                 [[
 local d = H.rtp()
-local f = vim.api.nvim_get_runtime_file("lua/live_server/server.lua", false)[1]
+local f = vim.api.nvim_get_runtime_file("lua/kitehost/server.lua", false)[1]
 H.ok(H.canon(d) == d, "canonical")
 H.ok(f ~= nil and vim.startswith(H.canon(f), d .. "/"), "server.lua under it")
 H.finish()]],
                 "Results: 2 passed, 0 failed, 0 skipped",
                 {
                     helpers = link .. "/tests/helpers.lua",
-                    env = { XDG_DATA_HOME = data, LIVE_SERVER_RTP = plain_ls },
+                    env = { XDG_DATA_HOME = data, KITEHOST_RTP = plain_kitehost },
                 }
             ),
             0,
@@ -810,8 +814,8 @@ eq(
 eq(H.canon("~/nope-canon-xyz"), H.canon(vim.fn.expand("~")) .. "/nope-canon-xyz", "a leading ~ is the home directory")
 -- normalize expands $VAR unless told not to, and a $ in a directory's name
 -- is a character: a message names the directory that exists
--- (markdown-preview's rtp_test override case). A file system that refuses
--- the name skips both, measured by the mkdir itself, as markdown-preview.nvim's
+-- (mdkite's rtp_test override case). A file system that refuses the name
+-- skips both, measured by the mkdir itself, as mdkite.nvim's
 -- rtp_test does.
 local odd_made, odd_err = uv.fs_mkdir(p .. "/odd$HOME-x", 493)
 if odd_made then

@@ -51,7 +51,7 @@ hooks: ## Install the commit-msg hook and a copy of the message policy into this
 parity: ## Compare the files shared with the sibling plugin (SIBLING=<its checkout>)
 	@sh tests/parity.sh "$(SIBLING)"
 
-# Tracked Lua files only, so an untracked directory (a live-server-rtp/
+# Tracked Lua files only, so an untracked directory (a kitehost-rtp/
 # checkout, node_modules/) never enters. StyLua exits 0 when it is handed no
 # file, so an empty list fails here instead.
 fmt: ## Format every tracked Lua file with the pinned StyLua

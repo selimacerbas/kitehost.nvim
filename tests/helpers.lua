@@ -277,12 +277,14 @@ local RTP_SYNTAX =
 -- The checkout goes first on the runtimepath, by the name the helper was
 -- loaded through, and proves it is the copy require loads; the root it
 -- returns is H.root, canonical, and the refusals name canonical paths.
--- markdown-preview.nvim's copy of this file is one source with this one
--- outside these own lines, indentation aside: its H.rtp proves its own
--- modules and then finds live-server as a dependency.
+-- mdkite.nvim's copy of this file is one source with this one outside
+-- these own lines, indentation aside: its H.rtp proves its own modules
+-- and then finds kitehost as a dependency. The suites load the kitehost
+-- modules, and through 2.x their former names are files here too, each
+-- handing back its module, so a copy elsewhere answers for neither.
 function H.rtp()
     vim.opt.runtimepath:prepend(root_entry)
-    for _, modname in ipairs({ "live_server.server", "live_server.util" }) do
+    for _, modname in ipairs({ "kitehost.server", "kitehost.util", "live_server.server", "live_server.util" }) do
         local refusal = unproven(H.root, modname, "the checkout", RTP_SYNTAX)
         if refusal then
             error(refusal, 2)

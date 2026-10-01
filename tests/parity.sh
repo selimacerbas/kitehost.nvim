@@ -1,14 +1,14 @@
 #!/bin/sh
-# The files live-server.nvim and markdown-preview.nvim share, compared with
-# the sibling checkout's copy. live-server's copy is the source: a change
-# lands there first and is copied. The list below is the one statement of
+# The files kitehost.nvim and mdkite.nvim share, compared with the sibling
+# checkout's copy. kitehost's copy is the source: a change lands there
+# first and is copied. The list below is the one statement of
 # what is shared. A Lua file is compared exactly once each line's leading
 # indentation is stripped, since StyLua indents with tabs in one
 # repository and spaces in the other (diff -w also ignored a space inside a
 # string or a pattern), after the lines
 # from a "-- parity: own lines begin" line to its "-- parity: own lines end"
-# line are dropped (helpers.lua's H.rtp and markdown-preview's floor tag,
-# markdown-preview's lazy.lua section of parse_test.lua); every other file
+# line are dropped (helpers.lua's H.rtp and mdkite's floor tag, mdkite's
+# lazy.lua section of parse_test.lua); every other file
 # byte for byte.
 #
 # Usage: sh tests/parity.sh <sibling checkout>. Exit 0 is in parity, 1
