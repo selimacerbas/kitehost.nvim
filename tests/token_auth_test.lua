@@ -565,9 +565,10 @@ local outside_index = vim.fs.joinpath(H.tmpdir(), "outside.html")
 H.write_file(outside_index, "<html>outside the root</html>")
 local ws = H.tmpdir()
 local loop = vim.fs.joinpath(ws, "loop")
-local llinked, llink_err = uv.fs_symlink(ws, loop)
-local looped = llinked and uv.fs_stat(loop) ~= nil
-local loop_skip = " (" .. tostring(llink_err or "the link does not resolve") .. ")"
+local llinked, llink_err = uv.fs_symlink(ws, loop, { dir = true })
+local loop_why = unresolved(llinked, llink_err, loop, ws)
+local looped = not loop_why
+local loop_skip = loop_why and (" (" .. loop_why .. ")")
 local function ws_server(protected)
     return server.start({
         port = 0,
@@ -622,9 +623,10 @@ server.stop(gated_ws)
 -- from the gate by name: a default_index spelled through a link to the
 -- root (macOS's /var names /private/var) is read as realpath names it.
 local via_root = vim.fs.joinpath(H.tmpdir(), "L")
-local vlinked, vlink_err = uv.fs_symlink(tmpdir, via_root)
+local vlinked, vlink_err = uv.fs_symlink(tmpdir, via_root, { dir = true })
+local via_why = unresolved(vlinked, vlink_err, via_root, tmpdir)
 local spelled
-if vlinked and uv.fs_stat(via_root) then
+if not via_why then
     spelled = vim.fs.joinpath(via_root, "index.html")
 elseif uv.fs_realpath(f1) ~= f1 then
     spelled = f1
@@ -647,7 +649,7 @@ if spelled then
     eq(http_get(("http://127.0.0.1:%d/?t=%s"):format(own.port, TOKEN)).status, 200, "and 200 with it")
     server.stop(own)
 else
-    local why = " (" .. tostring(vlink_err or "no link resolves and the root is spelled as realpath names it") .. ")"
+    local why = " (" .. via_why .. "; and the root is spelled as realpath names it)"
     H.skip("a default_index spelled through a link to the root is 401 without the token" .. why)
     H.skip("and 200 with it" .. why)
 end
