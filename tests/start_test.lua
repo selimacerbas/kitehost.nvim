@@ -2087,10 +2087,10 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
     eq(http_get(base .. "/draft").status, 404, "and no path it does not hold")
     -- Each construct well-formed: a set with ] first, a negated set, an
     -- escape in a set, classes, a capture and its back-reference, a
-    -- position capture, %f, each quantifier, both anchors and an anchor
-    -- character inside the pattern, 32 captures, and a chain of 84 x*/
-    -- items, as many as 256 bytes hold. A %b is well-formed too, and its
-    -- cost refuses it (below).
+    -- position capture, %f, each quantifier but -, which the hyphen rule
+    -- refuses (below), both anchors and an anchor character inside the
+    -- pattern, 32 captures, and a chain of 84 x*/ items, as many as 256
+    -- bytes hold. A %b is well-formed too, and its cost refuses it (below).
     for _, pattern in ipairs({
         "[]x]",
         "/[^/]+%.md$",
@@ -2102,7 +2102,7 @@ H.case("start refuses a malformed pattern at its byte and takes a well-formed on
         "()x",
         "%f[%w]word",
         "^a*b",
-        "^%a-/d?",
+        "^/x%-?",
         "x$y^z",
         "%%",
         string.rep("()", 32),
@@ -2145,7 +2145,7 @@ H.case("start refuses a second unbounded quantifier that can run on", function()
         { "^%d+%d+x", 7, second },
         { "^a*b+c-d?", 5, second },
         { "^(.*)(.*)", 8, second },
-        { "^.*a.-b", 6, second },
+        { "^.*a.+b", 6, second },
         { "^/x.*%d+", 8, second },
         { "/[^/]*/.*", 9, second },
         -- A $ item is read as text: as a pattern of its own "$" is an
@@ -2264,13 +2264,24 @@ end)
 
 -- A - after an item repeats it, lazily, so ^/my-notes%.md$ asked for no
 -- hyphen: it gated /mynotes.md and served /my-notes.md without the token
--- (measured), and ^/draft-%d%d%.md$ served /draft-12.md so. After one
--- character, a letter, a digit, punctuation or a byte of a multi-byte
--- one, x- finds what x* finds, so such a - is refused and no rule is
--- lost; %- and a - after a set, a class or . are taken.
-H.case("start refuses a - after a single character, which finds no hyphen", function()
-    local hyphen = "a - after a character repeats it and finds no hyphen; write %- for a hyphen, or * to repeat it"
+-- (measured), and ^/draft-%d%d%.md$ served /draft-12.md so, as a class
+-- or a set before it did: ^/%d%d%d%d-%d%d%.md$ served /2024-01.md. After
+-- any item x- finds what x* finds, so a - used as a quantifier is
+-- refused anywhere and no rule is lost; %-, a - inside a set and one
+-- after a parenthesis or a quantifier, which are hyphens, are taken.
+H.case("start refuses a - used as a quantifier, which finds no hyphen", function()
+    local hyphen = "a - after an item repeats it and finds no hyphen:"
+        .. " write %- for a hyphen; a lazy repeat finds what * finds, write * to repeat"
     for _, c in ipairs({
+        { "^/%d%d%d%d-%d%d%.md$", 11 },
+        { "^/v%d-%d%.md$", 6 },
+        { "^/[a-z][a-z]-x$", 13 },
+        { "^/%w-x$", 5 },
+        { "^/[a-z]-x", 8 },
+        { "^/%d-x", 5 },
+        { "^/%a-1", 5 },
+        { "^/%a-x", 5 },
+        { "^/.-x", 4 },
         { "^/my-notes%.md$", 5 },
         { "my-notes", 3 },
         { "^/v2-0%.md$", 5 },
@@ -2295,12 +2306,11 @@ H.case("start refuses a - after a single character, which finds no hyphen", func
     end
     for _, pattern in ipairs({
         "^/my%-notes%.md$",
-        "^/[a-z]-x",
-        "^/%d-x",
-        "^/%a-1",
-        "^/%a-x",
-        "^/.-x",
         "^/a%-b",
+        "^/[%-a]x",
+        "^/my[-]notes%.md$",
+        "^/(my)-notes%.md$",
+        "^/a*-b$",
         "^/x%-*y",
         "/%.[^/]+%.%d+%.tmp$",
     }) do

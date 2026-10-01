@@ -2484,8 +2484,9 @@ end
 -- matches every pattern on the loop, read as LuaJIT's matcher reads it
 -- (a capture's parenthesis skipped, any element but a literal before an
 -- item no literal). Measured on an 8 KiB path unless named:
---   * A second unbounded quantifier (*, + or - after an item) splits a
---     path in more ways than its length: /.*/.*%.md$ cost 4.2 s of CPU
+--   * A second unbounded quantifier (* or + after an item; a - there is
+--     refused as a hyphen, below) splits a path in more ways than its
+--     length: /.*/.*%.md$ cost 4.2 s of CPU
 --     time on a 2 KiB path and 42.7 s on 4 KiB. It is taken when the
 --     character right before its item is a literal the item cannot
 --     match, which ends each of its runs there: /%.[^/]+%.%d+%.tmp$ cost
@@ -2513,12 +2514,13 @@ end
 --     literal tail filling the 256 bytes, costs at most about 105 ms for
 --     one read of an 8 KiB path, the figure the README states below its
 --     start-key table beside how many reads a request makes.
--- One rule here is no cost: a - after a single character is a name's
--- hyphen read as a lazy repetition, so ^/my-notes%.md$ and
--- ^/draft-%d%d%.md$ found no hyphen and served the file without the
--- token. x- finds what x* finds, so it is refused at the -, naming %-
--- and *, and no rule is lost; after a set, a class or . it is taken.
-local HYPHEN = "a - after a character repeats it and finds no hyphen; write %- for a hyphen, or * to repeat it"
+-- One rule here is no cost: a - after an item is a name's hyphen read
+-- as a lazy repetition, so ^/my-notes%.md$ and ^/%d%d%d%d-%d%d%.md$
+-- found no hyphen and served the file without the token. After any
+-- item, a class or a set too, x- finds what x* finds, so a - used as a
+-- quantifier is refused at the -, naming %- and *, and no rule is lost.
+local HYPHEN = "a - after an item repeats it and finds no hyphen:"
+    .. " write %- for a hyphen; a lazy repeat finds what * finds, write * to repeat"
 local SECOND = "a second unbounded quantifier makes a request path cost seconds of the editor's time"
 local UNANCHORED = "an unbounded quantifier in a pattern not anchored with ^ tries every start position,"
     .. " so a request path costs the square of its length; write ^.* in front to keep the same matches,"
@@ -2553,10 +2555,10 @@ local function pattern_cost(pat)
             -- A literal: one character but ".", or "%" and a character
             -- that is no letter or digit.
             local literal = (#item == 1 and item ~= ".") and item or (c == "%" and not d:find("%w") and d) or nil
-            if q == "-" and literal then
+            if q == "-" then
                 return stop, HYPHEN
             end
-            if q == "*" or q == "+" or q == "-" then
+            if q == "*" or q == "+" then
                 if seen and not (before and not item_matches(item, before)) then
                     return stop, SECOND
                 end
