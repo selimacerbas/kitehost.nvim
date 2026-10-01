@@ -825,9 +825,9 @@ H.case("Section 9: a target over 8 KiB is 414 before any check reads it", functi
     -- cap lets through; unanchored, which start refuses, it cost 300 to
     -- 535 ms. A costly shape the caps take, one wildcard and two ? items
     -- before a literal tail filling the pattern's 256 bytes, tries 2^2
-    -- ways at every split of 8 KiB, each as long as the tail: 43 to 58 ms
-    -- of CPU time on 0.12.5 and 33 to 40 on 0.10.0; the costliest shape
-    -- found, a lazy wildcard with captures in its tail, 78 ms. Its calls
+    -- ways at every split of 8 KiB, each as long as the tail: 33 to 58 ms
+    -- of CPU time on either binary, by load; the costliest shape found, a
+    -- lazy wildcard with captures in its tail, 78 ms. Its calls
     -- are timed by os.clock, so the row reads their work and not the
     -- machine's load beside it.
     local costly = "^/.*" .. ("a?"):rep(2) .. ("a"):rep(247) .. "b"
