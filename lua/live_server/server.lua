@@ -2578,9 +2578,9 @@ local function check_start(cfg)
             no_nul("protected_paths pattern", pat)
             local at, why = pattern_fault(pat)
             if at then
-                local shown, lo, hi = fault_window(pat, at)
+                local text, lo, hi = fault_window(pat, at)
                 local span = (lo > 1 or hi < #pat) and (", bytes %d to %d"):format(lo, hi) or ""
-                error(("protected_paths pattern is malformed at byte %d (%s)%s: %s"):format(at, why, span, shown), 0)
+                error(("protected_paths pattern is malformed at byte %d (%s)%s: %s"):format(at, why, span, text), 0)
             end
         end
     end
