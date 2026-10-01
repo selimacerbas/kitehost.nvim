@@ -337,14 +337,17 @@ a plugin rely on: the |live-server-options|, the `:LiveServer*`
 commands, the functions below and |live-server-server-api|; a release
 that breaks any of it is a major release, while the wording of a notice,
 the statusline's text and anything these do not name may change in any
-release. A new option comes with a `server.features` flag
-(|live-server-server-api|), which a configuration shared across installs
-checks before it sets the option, since `setup()` refuses an option it
-does not read; an option is removed only in a major release. The options
-added in the release that followed v1.5.0 are the exception:
+release. A new option, or a value an option newly takes, comes with a
+`server.features` flag (|live-server-server-api|), which a configuration
+shared across installs checks before it sets it, since `setup()` refuses
+an option it does not read and `setup()` or a start refuses a value it
+does not take; an option is removed only in a major release. The
+options added in the release that followed v1.5.0 are the exception:
 `allowed_hosts` comes with `host_check` and `serve_dotfiles` with no
 flag; v1.5.0 ignored an option it did not read, so a configuration may
-set them there.
+set them there, and one that needs them to take effect checks
+`server.features.start_raises`, which that release added and v1.5.0
+lacks.
 
 live_server.setup({opts})                       *live_server.setup()*
     Merge {opts} with defaults and apply configuration.
@@ -393,14 +396,17 @@ that SemVer covers, as the README's "Server-level API (for plugin
 authors)" section lists it: the calls and what they answer, the `start`
 keys, the two instance fields, the capability flags, the HTTP routes with
 their gating and refusals, and the event framing. A release that breaks
-any of it is a major release. A new `start` key comes with a
-`server.features` flag, which a plugin checks before it sets the key,
-since `start` refuses a key it does not read; a key is removed only in a
-major release. The keys added in the release that followed v1.5.0 are
-the exception: `allowed_hosts` comes with `host_check`, and
-`serve_dotfiles`, `header_timeout_ms`, `max_connections` and
-`sse_heartbeat_ms` with no flag; v1.5.0 ignored a key it did not read,
-so a plugin may set them there.
+any of it is a major release. A new `start` key, or a value a key newly
+takes, comes with a `server.features` flag, which a plugin checks before
+it sets it, since `start` refuses a key it does not read and a value
+it does not take; a key is removed only in a major release. The keys
+added in the release that followed v1.5.0 are the exception:
+`allowed_hosts` comes with `host_check`, and `serve_dotfiles`,
+`header_timeout_ms`, `max_connections` and `sse_heartbeat_ms` with no
+flag; v1.5.0 ignored a key it did not read, so a plugin may set them
+there, and a plugin that needs them to take effect, or needs the dot
+rule (a dot path 404 by default), checks `server.features.start_raises`,
+which that release added and v1.5.0 lacks.
 Everything else in these two modules is internal and may change in any
 release: every other field of the instance table (read
 `server.connected_client_count(inst)`, never the event-stream list
@@ -415,7 +421,9 @@ naming `HTTP/1.2` to `HTTP/1.9` is answered, the 64 KiB cap on a
 request head, and the 8 KiB cap on a request target (a longer one,
 query included, is 414), which bounds the path every `protected_paths`
 pattern is matched against and so the time a request without the token
-costs the editor.
+costs the editor, and it may refuse at start a `protected_paths` pattern
+an earlier release took, where that pattern's cost on a request path is
+the reason.
 
 Below Neovim 0.10 `live_server.server` and `live_server.util` raise on
 every `require`, so a plugin that also runs on an older Neovim loads them
