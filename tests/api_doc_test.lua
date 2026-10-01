@@ -30,20 +30,31 @@
 --   the root route sending no sandbox, the listing naming a gated file, a
 --   headers origin line on the root route, no origin line on the event
 --   stream or an asset, another Access-Control header on an asset and a
---   served file and not on the client or a 404, a rebound page with the
---   Host check off, /.well-known/, strict-origin replacing a weaker
---   policy, the started-on dot file, the reserved __live entry, a
---   pattern's spelling and a hard link. The other clauses are read, not
---   checked: that header on a listing or the event stream, a kept
---   no-referrer, the inject endpoint's rules, what a cors list admits,
---   what a program, a browser or a DNS server does later (the start
---   probe, a file swapped between the check and the open, an
---   allowed_hosts name's records, the opener's arguments, the history)
---   and what the editor does (auto_start moving the root).
+--   served file and not on the client, a 404 or the cors preflight, a
+--   rebound page with the Host check off, /.well-known/, strict-origin
+--   replacing a weaker policy, the started-on dot file, the reserved
+--   __live entry (a link of that name into the root and a link elsewhere
+--   into it refused, a hard link elsewhere served), a pattern's spelling
+--   and a hard link; setup() refusing the two connection keys is checked
+--   by a call. The other clauses are read, not checked: that header on a
+--   listing or the event stream, a kept no-referrer, the inject
+--   endpoint's rules (a page under an allowed_hosts name among them),
+--   what a cors list admits, the event stream naming a changed file, the
+--   connection pool's defaults and who holds its places, the plain HTTP,
+--   a request spelling the entry's name in another case, the cost a
+--   pattern spends on the editor's loop, what a program, a browser or a
+--   DNS server does later (the start probe, a file swapped between the
+--   check and the open, a directory put at the root's path or at
+--   asset_root's or one of its parents', an allowed_hosts name's
+--   records, the opener's arguments, the history) and what the editor
+--   does (auto_start moving the root).
 -- Section 12: the README's request order, where a request can check it:
---   the 400 for a first byte, a method, a header name and a value, and
---   the namespace's 404 before the method check. The order of the other
---   checks is read, not checked.
+--   the 400 for a first byte, a method, a header name and a value, the
+--   414 for a target over 8 KiB (its query counted) before the Host check
+--   and any pattern, the namespace's 404 before the method check, and the
+--   404 for a method other than GET, a preflight included, through a link
+--   into the reserved entry. The order of the other checks is read, not
+--   checked.
 -- Sections 10 to 12 hold phrase rows, labelled ":help says", ":help
 --   names the", "SECURITY.md states" or "the README states", beside rows
 --   that check the server: a reworded claim reds a phrase row, a reversed
@@ -615,6 +626,28 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
         "reaches the files and listings the root route serves, the event stream and the asset route",
         "the other Access-Control headers"
     )
+    -- The cors preflight answers with its own Access-Control fields alone.
+    local preflighted = server.start({
+        port = 0,
+        root = root,
+        cors = true,
+        headers = { ["Access-Control-Allow-Credentials"] = "true" },
+    })
+    H.defer(function()
+        server.stop(preflighted)
+    end)
+    local pre = H.raw_request(
+        preflighted.port,
+        "OPTIONS /secret.txt HTTP/1.1\r\nHost: 127.0.0.1\r\n" .. origin .. "Access-Control-Request-Method: GET\r\n\r\n"
+    )
+    pre = pre and H.response(pre) or { status = 0, headers = {} }
+    ok(
+        pre.status == 204
+            and pre.headers["access-control-allow-origin"] == "*"
+            and pre.headers["access-control-allow-credentials"] == nil,
+        "the cors preflight carries an origin line and not the headers Access-Control-Allow-Credentials"
+    )
+    states("the `cors` preflight's answer", "what the other Access-Control headers do not reach")
 
     -- With the Host check off, a page under a name that rebinds to this
     -- machine is answered as the server's own origin; with it on, 421.
@@ -695,6 +728,41 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
     local reached = get(held.port, "/__live/asset?p=__Live/x.txt")
     ok(reached.status == 200 and reached.body == "RESERVED", "the asset route serves the directory")
     states("and a `__live` directory too", "the asset route's reach")
+    -- A link of that name to a directory in the root and a link elsewhere
+    -- into the entry are refused; a hard link elsewhere to a file in it is
+    -- another name, which the rule cannot see, and is served.
+    local aliased = H.tmpdir()
+    vim.fn.mkdir(aliased .. "/pub", "p")
+    H.write_file(aliased .. "/pub/page.txt", "PUB")
+    local named_link = vim.uv.fs_symlink(aliased .. "/pub", aliased .. "/__Live")
+    local into = vim.uv.fs_symlink(reserved .. "/__Live/x.txt", reserved .. "/into.txt")
+    local hard, hard_err = vim.uv.fs_link(reserved .. "/__Live/x.txt", reserved .. "/hard.txt")
+    if named_link and into then
+        local alias = server.start({ port = 0, root = aliased })
+        H.defer(function()
+            server.stop(alias)
+        end)
+        ok(
+            get(alias.port, "/__Live/page.txt").status == 404,
+            "a link named __Live to a directory in the root is not served"
+        )
+        ok(get(alias.port, "/pub/page.txt").status == 200, "and that directory is served by its own name")
+        ok(get(held.port, "/into.txt").status == 404, "a link elsewhere in the root into the entry is not served")
+    else
+        H.skip("no symbolic link could be made")
+    end
+    states("or a link of that name to anything", "the reserved entry's link")
+    states("nor a file a link elsewhere in the root resolves into it", "a link elsewhere into the entry")
+    if hard then
+        local twin = get(held.port, "/hard.txt")
+        ok(twin.status == 200 and twin.body == "RESERVED", "a hard link elsewhere to a file in the entry is served")
+    else
+        H.skip("no hard link could be made: " .. tostring(hard_err))
+    end
+    states(
+        "a hard link elsewhere in the root to a file in it is a separate name, which it serves",
+        "the hard link into the entry"
+    )
 
     -- A pattern matches the name as the disk spells it; a hard link is
     -- another name.
@@ -722,6 +790,15 @@ H.case("Section 11: SECURITY.md states what the server serves, as it serves it",
         H.skip("no hard link could be made: " .. tostring(link_err))
     end
     states("a hard link to a protected file under another name is not gated", "the hard link")
+
+    -- setup() refuses the two connection keys, so every server the
+    -- commands open runs with the defaults.
+    local live_server = require("live_server")
+    for _, key in ipairs({ "max_connections", "header_timeout_ms" }) do
+        local took, why = pcall(live_server.setup, { [key] = 1 })
+        ok(not took and tostring(why) == "setup does not read the key " .. key, ("setup() refuses %s"):format(key))
+    end
+    states("`setup()` refuses both keys", "the connection keys")
 end)
 
 -- The README's request order is part of the promise, so the checks a
@@ -764,6 +841,34 @@ H.case("Section 12: the README's request order holds as the server answers", fun
     ok(send("GET /a.txt HTTP/1.1", "X-A: a\0b\r\n").status == 400, "a NUL in a value is 400")
     says("a CR or a NUL in a header value", "the 400 for a value")
 
+    -- A target over 8 KiB, its query counted, is 414 once the request line
+    -- is read, before any field: a Host the check refuses gets no 421 and
+    -- no pattern runs. One byte less is read and gated as usual.
+    local gated = server.start({ port = 0, root = root, token = "tok", protected_paths = { "^/a" } })
+    H.defer(function()
+        server.stop(gated)
+    end)
+    local real_find, runs = string.find, 0
+    local function counted(target, host)
+        string.find = function(s, pat, ...)
+            runs = runs + (pat == "^/a" and 1 or 0)
+            return real_find(s, pat, ...)
+        end
+        local sent, data =
+            pcall(H.raw_request, gated.port, ("GET %s HTTP/1.1\r\nHost: %s\r\n\r\n"):format(target, host))
+        string.find = real_find
+        return sent and data and H.response(data) or { status = 0, headers = {}, body = "" }
+    end
+    local long = "/" .. ("a"):rep(8192)
+    local over = counted(long, "127.0.0.1")
+    ok(over.status == 414 and over.body == "URI Too Long", "an 8193-byte target is 414")
+    ok(runs == 0, "and runs no pattern")
+    ok(counted(long, "rebind.example").status == 414, "a Host the check refuses does not make it 421")
+    local queried = counted("/" .. ("a"):rep(4096) .. "?" .. ("q"):rep(5000), "127.0.0.1")
+    ok(queried.status == 414 and runs == 0, "a 4 KiB path with a 5 KiB query is 414")
+    ok(counted(long:sub(1, 8192), "127.0.0.1").status == 401 and runs > 0, "an 8192-byte target is read and gated")
+    says("a target longer than 8 KiB (8192 bytes), its query included, is 414", "the 414 for a long target")
+
     -- A method other than GET on a name in the namespace that is no route
     -- is 404 before the method check, so a preflight there gets no origin
     -- line; the root route's preflight still answers.
@@ -780,6 +885,27 @@ H.case("Section 12: the README's request order holds as the server answers", fun
     local root_pre = send("OPTIONS /a.txt HTTP/1.1", asked)
     ok(root_pre.status == 204 and root_pre.headers["access-control-allow-origin"] == "*", "the root route's is 204")
     says("is 404 before the method check", "the namespace's 404 for another method")
+
+    -- So is a method other than GET on a path whose file resolves into the
+    -- entry through a link elsewhere in the root, a preflight included,
+    -- where any other path answers 405 or the preflight.
+    vim.fn.mkdir(root .. "/__live", "p")
+    H.write_file(root .. "/__live/other.txt", "OTHER")
+    if vim.uv.fs_symlink(root .. "/__live/other.txt", root .. "/link.txt") then
+        local through = send("OPTIONS /link.txt HTTP/1.1", asked)
+        ok(
+            through.status == 404 and through.headers["access-control-allow-origin"] == nil,
+            "a preflight through a link into the entry is 404 with no origin line"
+        )
+        ok(send("POST /link.txt HTTP/1.1").status == 404, "a POST through it is 404")
+        ok(send("POST /a.txt HTTP/1.1").status == 405, "and a POST elsewhere 405")
+    else
+        H.skip("no symbolic link could be made")
+    end
+    says(
+        "or a path whose file resolves into an entry named `__live` at the root through a link elsewhere in the root",
+        "the 404 for another method through a link"
+    )
 end)
 
 H.finish()
