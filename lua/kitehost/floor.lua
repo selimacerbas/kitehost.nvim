@@ -4,7 +4,7 @@
 -- that sources a Lua plugin file (0.5 on), so it calls nothing newer. The
 -- feature is tested beside the version: a 0.10.0-dev build from before
 -- 2023-06-03 answers has("nvim-0.10") without vim.uv. The version goes
--- first, as in markdown-preview.nvim's floor module, where a feature test
+-- first, as in mdkite.nvim's floor module, where a feature test
 -- indexes vim.fs, which Neovim before 0.8 lacks.
 return {
     ok = vim.fn.has("nvim-0.10") == 1 and vim.uv ~= nil,

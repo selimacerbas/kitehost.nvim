@@ -1,5 +1,5 @@
 -- tests/contract_test.lua
--- The calls the two known consumers make, held as rows: markdown-preview's
+-- The calls the two known consumers make, held as rows: mdkite's
 -- start, its raw-TCP inject and its page's stream, and gh-markdown-preview's
 -- tokenless server, its back channel, its page's hello and its read of
 -- inst.sse_clients, the capability flags a caller detects, the text a
@@ -59,7 +59,7 @@ local function frame(c, event)
     return payload
 end
 
-H.case("Section 1: markdown-preview's server, page and raw sender", function()
+H.case("Section 1: mdkite's server, page and raw sender", function()
     local token = util.random_token(16)
     local inst = server.start({
         port = 0,
@@ -79,10 +79,10 @@ H.case("Section 1: markdown-preview's server, page and raw sender", function()
         server.stop(inst)
     end)
     local port = inst.port
-    ok(type(port) == "number" and port > 0, "start with markdown-preview's options reports the bound port")
+    ok(type(port) == "number" and port > 0, "start with mdkite's options reports the bound port")
     ok(
         server.features and server.features.asset_route == true,
-        "features.asset_route is declared, which markdown-preview reads before every start"
+        "features.asset_route is declared, which mdkite reads before every start"
     )
     local base = ("http://127.0.0.1:%d"):format(port)
     local r = H.http_get(base .. "/")
@@ -239,7 +239,7 @@ H.case("Section 3: the capability flags a caller reads", function()
     end
 end)
 
--- markdown-preview names a taken port by luv's text inside the refusal.
+-- mdkite names a taken port by luv's text inside the refusal.
 H.case("Section 4: a taken port's refusal carries luv's text", function()
     local taken = "EADDRINUSE: address already in use"
     -- A start's refusal beside a listener, or nil and why it cannot run.

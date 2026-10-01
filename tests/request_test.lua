@@ -212,7 +212,7 @@ H.case("Section 2: one request per connection, read to the end of its head", fun
     c:close()
     eq(res[1] and res[1].status, 400, "a head of bare CR line ends cut off by a FIN is answered 400")
     eq(eof, true, "and that connection is closed")
-    -- markdown-preview's lock check connects and closes without a byte.
+    -- mdkite's lock check connects and closes without a byte.
     c = assert(H.raw_connect(port))
     assert(c:half_close())
     data, eof = c:read(2000)
@@ -343,12 +343,12 @@ H.case("Section 4: HTTP/1.1 names its host, once", function()
             ("two %s lines are 400 naming %s (got %s)"):format(name, name, tostring(r and r.status))
         )
     end
-    -- markdown-preview's remote.lua sends exactly this: a portless Host.
+    -- mdkite's remote.lua sends exactly this: a portless Host.
     res = ask(
         port,
         "GET /__live/inject?event=scroll&data=%7B%7D HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
     )
-    eq(res[1] and res[1].status, 200, "markdown-preview's remote.lua request is served")
+    eq(res[1] and res[1].status, 200, "mdkite's remote.lua request is served")
     res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: a\rb\r\n\r\n")
     eq(res[1] and res[1].status, 400, "a bare CR inside a header value is 400")
     res = ask(port, "GET /style.css HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: a\0b\r\n\r\n")

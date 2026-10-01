@@ -2,7 +2,7 @@
 -- /__live/inject broadcasts to every open tab, so a page on another site
 -- (another port of the same host counts) must not reach it. A browser says
 -- which page sent a request in Sec-Fetch-Site and, on a cors request,
--- Origin; clients that send neither, such as curl and markdown-preview's
+-- Origin; clients that send neither, such as curl and mdkite's
 -- raw sender, keep working on a loopback bind. A browser marks nothing it
 -- sends to a plain-http LAN address, so there, without a token, only a
 -- request the browser marks as this origin fires events.

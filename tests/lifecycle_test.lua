@@ -1820,7 +1820,7 @@ H.case("Section 8: a stopped server's update_target and enable_live open nothing
 end)
 
 -- update_target set the root to a path realpath could not resolve while
--- the server went on serving the old one, and markdown-preview pcalls the
+-- the server went on serving the old one, and mdkite pcalls the
 -- call, so its retarget failed with no word. It raises at the caller and
 -- changes nothing.
 H.case("Section 8d: update_target refuses a root that does not resolve", function()
@@ -2148,7 +2148,7 @@ end)
 -- failed start counted as success, a nil handle was kept as the watcher,
 -- the per-directory fallback never ran and is_live_enabled reported live
 -- reload on with nothing watching. A start whose root cannot be watched
--- serves with live reload off and one warning (markdown-preview reloads
+-- serves with live reload off and one warning (mdkite reloads
 -- through S.reload, so a refusal cost it the preview); enable_live and
 -- update_target turn it off and warn, and a watcher that starts again
 -- re-arms the warning. A per-directory watch warns once per scan, naming

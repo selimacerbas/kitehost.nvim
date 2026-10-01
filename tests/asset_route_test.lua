@@ -151,7 +151,7 @@ else
     H.skip("an image name linking to .env is 404 (" .. tostring(alias_err or alias_st_err) .. ")")
 end
 -- A deny list, not the root route's dot rule: a document may keep its
--- images in a dot directory (.images); markdown-preview sends every relative
+-- images in a dot directory (.images); mdkite sends every relative
 -- image here, so the names a document uses stay served: another dot
 -- directory, a space, a non-ASCII name, a name that starts like a key file.
 eq(http_get(base .. "/__live/asset?p=.images/pic.png&t=" .. TOKEN).status, 200, "an image under a dot directory is 200")

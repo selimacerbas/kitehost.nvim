@@ -1514,7 +1514,7 @@ end
 -- Whether a request no browser marked may fire events. Browsers mark every
 -- request to a loopback address, localhost or *.localhost, so an unmarked
 -- one on a loopback bind under such a name came from a program on this
--- machine (curl, markdown-preview's raw sender). A page on any site reaches
+-- machine (curl, mdkite's raw sender). A page on any site reaches
 -- a LAN address, or a name of the user's own, over plain http unmarked, so
 -- there only the token, checked before dispatch, tells it apart.
 local function unmarked_ok(inst, req)
@@ -2282,7 +2282,7 @@ local function on_read(conn, err, chunk)
             return
         end
         -- A head cut off by the client's FIN still gets an answer; a connect
-        -- that sent nothing (markdown-preview's lock check) closes silently.
+        -- that sent nothing (mdkite's lock check) closes silently.
         if not err and not conn.handled and conn.buf ~= "" then
             conn.handled = true
             conn.buf = ""

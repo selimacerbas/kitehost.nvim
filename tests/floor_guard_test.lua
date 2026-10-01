@@ -369,8 +369,9 @@ H.eq(table.concat(former_loaded, ", "), "", "the plugin file and its modules loa
 H.eq(defined(), documented, "every documented command is defined on a supported Neovim, and no other")
 local hooked, hooks = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostExit", event = "VimLeavePre" })
 H.eq(hooked and #hooks or 0, 1, "the exit hook sits once in the KiteHostExit group, a second source included")
--- stop_all notifies at exit, after the ruling and with no newline, where
--- its line fused with the runner's next one (a CI ::endgroup:: marker).
+-- stop_all notifies at exit, after the Results line and with no newline,
+-- where its line fused with the runner's next one (a CI ::endgroup::
+-- marker).
 if hooked then
     vim.api.nvim_clear_autocmds({ group = "KiteHostExit" })
 end
