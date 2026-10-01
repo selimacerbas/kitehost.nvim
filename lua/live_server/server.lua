@@ -1517,14 +1517,27 @@ end
 -- backtracking pattern spends on a long path; MAX_TARGET bounds the path.
 -- Every pattern is read, so the answer does not hang on the list's order.
 -- A 401 alone reads like a bad token, so the first pattern that raises is
--- named once per instance (warn_once).
-local function needs_auth(inst, p)
+-- named once per instance (warn_once). dir: p names a directory, refused
+-- when a pattern matches it with or without its slash, and each pattern
+-- is read once, in its form for that (dir_form), on p with the slash; one
+-- with no such form is read on both.
+local function needs_auth(inst, p, dir)
     if p == "/__live/events" or p == "/__live/inject" or p == "/__live/asset" then
         return true
     end
     local needed = false
-    for _, pat in ipairs(inst.protected_paths) do
-        local read, hit = pcall(string.find, p, pat)
+    local slashed = dir and p .. "/"
+    for k, pat in ipairs(inst.protected_paths) do
+        local form = dir and inst.protected_dirs[k]
+        local read, hit
+        if form then
+            read, hit = pcall(string.find, slashed, form)
+        else
+            read, hit = pcall(string.find, p, pat)
+            if read and not hit and dir then
+                read, hit = pcall(string.find, slashed, pat)
+            end
+        end
         if not read then
             warn_once(
                 inst,
@@ -1884,8 +1897,8 @@ local function handle_request(conn, req)
     -- pattern twice for one answer. A link or a case variant is another
     -- name and is still read.
     local carries_token
-    local answered = {}
-    local function authorized(p)
+    local answered = { [false] = {}, [true] = {} }
+    local function authorized(p, dir)
         if not inst.token then
             return true
         end
@@ -1896,10 +1909,11 @@ local function handle_request(conn, req)
         if carries_token then
             return true
         end
-        if answered[p] == nil then
-            answered[p] = not needs_auth(inst, p)
+        local kept = answered[dir == true]
+        if kept[p] == nil then
+            kept[p] = not needs_auth(inst, p, dir)
         end
-        return answered[p]
+        return kept[p]
     end
     -- The injected client is answered before the gate: it holds no secret
     -- and its tag carries no token, so a pattern that matched it (%.js$,
@@ -1916,9 +1930,10 @@ local function handle_request(conn, req)
         )
     end
     -- A path that names a directory is read with its slash too, as the
-    -- directory's own read below is: ^/secret/ answered 401 for an existing
-    -- /secret/ and 404 for a missing one, which told the two apart.
-    if not authorized(path_only) or (names_dir and path_only ~= "/" and not authorized(path_only .. "/")) then
+    -- directory's own read below is, both spellings in one read (dir_form):
+    -- ^/secret/ answered 401 for an existing /secret/ and 404 for a missing
+    -- one, which told the two apart.
+    if not authorized(path_only, names_dir and path_only ~= "/") then
         return send_response(sock, 401, { ["Content-Type"] = "text/plain" }, "Unauthorized")
     end
 
@@ -1946,7 +1961,7 @@ local function handle_request(conn, req)
         -- A directory is named with its slash, as the request that lists
         -- it is, so ^/secret/ gates the listing too; the name without it
         -- stays read, as the request path's check reads /secret.
-        if not authorized(rel) or (kind == "dir" and rel ~= "/" and not authorized(rel .. "/")) then
+        if not authorized(rel, kind == "dir" and rel ~= "/") then
             return 401
         end
         -- The entry behind the namespace is refused by both names: the
@@ -2552,6 +2567,40 @@ local function pattern_cost(pat)
     end
 end
 
+-- A path naming a directory is refused when a pattern matches its name
+-- with or without the slash, and reading both spellings spent the loop's
+-- time twice. This is the form of a pattern that answers for both in one
+-- read, on the name with the slash. A match without the slash is one with
+-- it too, since the slash only adds a byte after it, except at the end:
+-- an end anchor, which the form takes the slash as optional before, and
+-- a frontier whose set holds one of "/" and the path's end (read as "\0")
+-- but not the other (%f[%z], %f[^/]), which tells the two apart there;
+-- for that pattern the form is nil and the gate reads both spellings.
+-- Taken patterns hold no %b, which this walk would misread.
+local function dir_form(pat)
+    local i, n = 1, #pat
+    while i <= n do
+        local c, d = pat:sub(i, i), pat:sub(i + 1, i + 1)
+        if c == "[" then
+            i = set_end(pat, i)
+        elseif c == "%" and d == "f" then
+            local e = set_end(pat, i + 2)
+            local set = "^" .. pat:sub(i + 2, e - 1)
+            if (("\0"):find(set) ~= nil) ~= (("/"):find(set) ~= nil) then
+                return nil
+            end
+            i = e
+        elseif c == "%" then
+            i = i + 2
+        elseif c == "$" and i == n then
+            return pat:sub(1, n - 1) .. "/?$"
+        else
+            i = i + 1
+        end
+    end
+    return pat
+end
+
 -- A malformed pattern's bytes around its fault, at most 40 each side, and
 -- the first and last byte shown. The refusal named a byte of the pattern
 -- and showed it marked and cut at 300 bytes, so a fault past the cut was
@@ -2949,6 +2998,11 @@ local function check_start(cfg)
         -- user's own) holed or emptied after start dropped the gate, and
         -- index_names changed after start named an index never checked.
         protected_paths = vim.list_extend({}, protected or {}),
+        -- Each pattern's form for a path naming a directory, false where
+        -- none reads both spellings at once (dir_form).
+        protected_dirs = vim.tbl_map(function(pat)
+            return dir_form(pat) or false
+        end, protected or {}),
         index_names = index_names and vim.list_extend({}, index_names) or { "index.html", "index.htm" },
         serve_dotfiles = dotfiles == true,
         headers = headers,
@@ -3179,6 +3233,7 @@ function S.start(cfg)
         -- auth
         token = checked.token, -- nil = no auth; string = required on protected paths
         protected_paths = checked.protected_paths,
+        protected_dirs = checked.protected_dirs,
         serve_dotfiles = checked.serve_dotfiles,
 
         -- /__live/asset root: a directory, or a function returning one.

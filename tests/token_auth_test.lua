@@ -798,6 +798,16 @@ H.case("a directory the gate refuses serves no index", function()
     local raw =
         H.response(assert(H.raw_request(port, ("GET /nosuch/. HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n"):format(port))))
     eq(raw.status, 401, "and /nosuch/. sent raw is 401 as well")
+    -- Such a path is read once, on its name with the slash, by a form of
+    -- each pattern that matches wherever the pattern matches either
+    -- spelling: an end anchor takes the slash as optional there, and a
+    -- pattern whose frontier tells the path's end from a slash (%f[%z]) is
+    -- read on both.
+    local anchored = gated({ "^/gone$", "^/void%f[%z]", "^/held/$" })
+    eq(http_get(anchored .. "/gone/").status, 401, "/gone/ under ^/gone$ is 401, though no such directory exists")
+    eq(http_get(anchored .. "/void/").status, 401, "and /void/ under ^/void%f[%z]")
+    eq(http_get(anchored .. "/held/").status, 401, "and /held/ under ^/held/$")
+    eq(http_get(anchored .. "/gonex/").status, 404, "while /gonex/ under ^/gone$ is 404")
 end)
 
 -- The server read the caller's own table, which init.lua hands from the
@@ -1002,6 +1012,7 @@ end)
 H.case("a request reads each pattern once for each name it reaches", function()
     local site = H.tmpdir()
     H.write_file(vim.fs.joinpath(site, "page.html"), "<html>page</html>")
+    vim.fn.mkdir(vim.fs.joinpath(site, "docs"), "p")
     local patterns = { "^/one/", "^/two$", "^/%f[%w]three" }
     local real_find, runs = string.find, {}
     H.defer(function()
@@ -1039,6 +1050,14 @@ H.case("a request reads each pattern once for each name it reaches", function()
         end
     end
     reads("/page.html", 200, 1, "a file asked by its own name")
+    -- A path naming a directory is refused when a pattern matches its
+    -- name with or without the slash, which read every pattern on both;
+    -- it is read once, on the name with the slash. A directory asked
+    -- without its slash is read by that name, then as a directory.
+    reads("/docs/", 200, 1, "a directory asked with its slash")
+    reads("/nosuch/", 404, 1, "a missing directory asked with its slash")
+    reads("/" .. ("a"):rep(8 * 1024 - 2) .. "/", 404, 1, "an 8 KiB path ending in a slash")
+    reads("/docs", 200, 2, "a directory asked without its slash")
     local alias = vim.fs.joinpath(site, "alias.html")
     local linked, link_err = uv.fs_symlink("page.html", alias)
     if linked and uv.fs_stat(alias) then
