@@ -457,6 +457,9 @@ H.case("start refuses a bad option, naming it, before any socket opens", functio
             'host = "::1%1" starts on macOS and Linux and is refused by the bind on Windows'
                 .. " (no IPv6 loopback on this machine)"
         )
+        if not is_win then
+            H.skip('host = "::1%1" reports the address it bound (no IPv6 loopback on this machine)')
+        end
     else
         local started, inst = pcall(server.start, { port = 0, root = root, host = "::1%1" })
         local res = started and "started" or tostring(inst)
@@ -1070,7 +1073,7 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     -- Windows probes :: dual-stack beside a 0.0.0.0 bind too.
     local wild_made = sysname == "Windows_NT" and 3 or 2
     eq(free_made, wild_made, ("its own socket and the probes (%s)"):format(sysname))
-    eq(free_open, 1, "and the probe is closed")
+    eq(free_open, 1, "and the probes are closed")
     eq(status, 200, "the URL's address reaches this server")
 
     -- Each refuses naming the address it could not check and the cause.
@@ -1112,7 +1115,7 @@ H.case("a wildcard bind raises unless its URL's address is free", function()
     server.wildcard_loopback = real_rule
     ok(absent_started, "a probe of an address this machine lacks serves: " .. absent_res)
     eq(absent_made, wild_made, ("its own socket and the probes (%s)"):format(sysname))
-    eq(absent_open, 1, "keeping its one socket, the probe closed")
+    eq(absent_open, 1, "keeping its one socket, the probes closed")
     refuses(
         "a probe of an address bind cannot read raises",
         names("[127.0.0.1]"),
@@ -1932,7 +1935,7 @@ H.case("a wildcard bind serves where its loopback address is absent", function()
     target, answer = "::1", absent
     local started, res, open = start_counted("::")
     ok(started, "a :: start serves where ::1 is absent: " .. res)
-    eq(open, 1, "and leaves its one socket, the probe closed")
+    eq(open, 1, "and leaves its one socket, the probes closed")
 
     answer = { "EMFILE: stubbed", "EMFILE" }
     started, res, open = start_counted("::")
