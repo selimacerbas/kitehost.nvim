@@ -158,7 +158,7 @@ node_modules
 dist
 ```
 
-A line starting with `/` is anchored at the served root: `/dist` skips `dist/` and not `sub/dist/`. A line's text between its stars is found in the changed path in order, with no backtracking. A rule line holding a NUL byte matches no path and is skipped, with one warning naming the first such line; a comment holding one stays a comment. A dot path such as `.git/` needs no line: a change under one pushes no reload unless `serve_dotfiles` is set.
+A line starting with `/` is anchored at the served root: `/dist` skips `dist/` and not `sub/dist/`. A line's text between its stars is found in the changed path in order, with no backtracking. A rule line holding a NUL byte matches no path and is skipped, with one warning naming the first such line; a comment holding one stays a comment. A UTF-8 byte order mark ahead of the first line, which some editors save, is dropped. A dot path such as `.git/` needs no line: a change under one pushes no reload unless `serve_dotfiles` is set.
 
 ### CORS
 

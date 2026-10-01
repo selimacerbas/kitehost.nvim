@@ -116,6 +116,7 @@ All notable changes to this project; versions follow SemVer, which covers what a
 - A changed path holding a tab or a line break no longer yields a reload payload the page cannot parse, which turned a stylesheet swap into a full page reload.
 - A save of a page and a stylesheet within one debounce window reloads the page, which a stylesheet swap left stale; a stylesheet saved by Neovim's own `:w` or by a temp-and-rename save is still swapped in place.
 - A `.liveignore` that is not a regular file is ignored with a warning; a FIFO there hung the editor, as a FIFO root did, and a root must now be a directory.
+- A `.liveignore` saved with a UTF-8 byte order mark reads its first rule: the mark is dropped, where v1.5.0 kept it as that rule's first bytes, so the rule matched no path.
 - A relative `default_index`, on macOS and Linux a `C:/` or `\` spelling among them, is joined to the working directory at start, and a relative `update_target` index at the call, so a later `:cd` no longer changes the file either names.
 - A directory listing builds its links from the path, each segment encoded, never from the query, so a listing opened with `?t=` links by path alone.
 - A directory listing's title and heading show the path decoded and escaped once, without the query. v1.5.0 showed the request target as sent: `/a%26b/`, the spelling of its own link to a directory named `a&b`, read `Index of /a%26b/`; a typed `/a&b/`, escaped twice, read `Index of /a&amp;b/`; and a query, a `?t=` token included, showed too.
