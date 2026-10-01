@@ -146,22 +146,26 @@ Options:
     needs `token`. A pattern is read as LuaJIT's `string.find` reads it,
     so one holding none of `^$*+?.([%-` is plain text (`/draft)` gates
     every path holding `/draft)`). A `-` repeats the item before it, so
-    a start refuses one between two letters or digits, which finds no
+    a start refuses one after a single character (a letter, a digit,
+    punctuation, a byte of a multi-byte character), which finds no
     hyphen: write a name's hyphen as `%-`, or escape the name with
-    `vim.pesc()`. A request without the token is matched against every
-    pattern on the editor's loop, so a start refuses a pattern over 256
-    bytes, one holding a balanced match (`%b`) or more than two `?`
-    items, and an unbounded quantifier (`*`, `+`, `-`) in a pattern that
-    starts neither with `^` nor with a literal its item cannot match, or
-    a second one unless the character right before its item is a literal
-    that item cannot match, a capture's parenthesis aside: write
-    `^/.*%.md$`, not `/.*%.md$`. A pattern `P` gates what `^.*P` gates,
-    since a leading `.*` takes any prefix, so `^.*` in front keeps a
-    refused pattern's matches, where a bare `^` keeps only the paths it
-    matched at their first byte, and a `.*` at its end adds nothing
-    (`/secret/.*` is `^.*/secret/`). The paragraph below the README's
-    start-key table states the rules and the cost they leave; a request
-    carrying the token runs no pattern.
+    `vim.pesc()`, and a repetition as `*`, which finds the same paths;
+    after a set, a class or `.`, a `-` is taken. A request without the
+    token is matched against every pattern on the editor's loop, so a
+    start refuses a pattern over 256 bytes, one holding a balanced match
+    (`%b`) or more than two `?` items, and an unbounded quantifier (`*`,
+    `+`, `-`) in a pattern that starts neither with `^` nor with a
+    literal its item cannot match, or a second one unless the character
+    right before its item is a literal that item cannot match, a
+    capture's parenthesis aside: write `^/.*%.md$`, not `/.*%.md$`. A
+    pattern `P` gates what `^.*P` gates, since a leading `.*` takes any
+    prefix, so `^.*` in front keeps a refused pattern's matches, where a
+    bare `^` keeps only the paths it matched at their first byte; a `.*`
+    the pattern starts or ends with adds nothing and, kept, makes that
+    rewrite a second unbounded quantifier, so drop it (`.*%.md$` is
+    `^.*%.md$`, `/secret/.*` is `^.*/secret/`). The paragraph below the
+    README's start-key table states the rules and the cost they leave; a
+    request carrying the token runs no pattern.
 
 `asset_root` is not a setup option: a plugin that calls
 `require("live_server.server").start()` passes it, and the token then
