@@ -369,7 +369,14 @@ function M.open_existing()
             return
         end
         local s = M.state.servers[tonumber(port)]
-        util.open_browser(browser_url(s and s.host or M.opts.host, tonumber(port), s and s.token))
+        -- A port with no instance is opened at the configured host as an
+        -- instance reports its own, the zone left out: a % in a URL
+        -- starts an escape, and the zoned host was opened as given.
+        local host = s and s.host or M.opts.host
+        if not s and type(host) == "string" then
+            host = host:match("^[^%%]*")
+        end
+        util.open_browser(browser_url(host, tonumber(port), s and s.token))
         M.state.opened_ports[tonumber(port)] = true
     end)
 end

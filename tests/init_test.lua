@@ -1,7 +1,9 @@
 -- tests/init_test.lua
 -- The setup() layer: the options it hands server.start and the URL it
--- opens and prints. The pickers, the browser and vim.notify are stubbed, so
--- a start runs with no UI and the opened URL and the notices are recorded.
+-- opens and prints, a configured zone left out of it on a port with no
+-- instance (Section 9). The pickers, the browser and vim.notify are
+-- stubbed, so a start runs with no UI and the opened URL and the notices
+-- are recorded.
 -- SETUP_KEYS names the keys the module's source reads and no other
 -- (Section 7b).
 --
@@ -831,6 +833,11 @@ H.case("Section 9: an IPv6 host is bracketed in the opened URL", function()
         { "[2001:db8::1]", "http://[2001:db8::1]:8123/" },
         { "::ffff:127.0.0.1", "http://127.0.0.1:8123/" },
         { "::FFFF:10.0.0.7", "http://10.0.0.7:8123/" },
+        -- A zone in a URL is a % that starts an escape, and an instance's
+        -- host is the address it bound, the zone left out; a port with
+        -- no instance is opened the same way.
+        { "fe80::1%lo0", "http://[fe80::1]:8123/" },
+        { "::1%1", "http://[::1]:8123/" },
     }) do
         package.loaded["live_server"] = nil
         local ls = require("live_server")
