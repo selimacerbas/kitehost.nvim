@@ -395,16 +395,15 @@ else
 end
 local alias = vim.fs.joinpath(tmpdir, "alias.md")
 local linked, link_err = uv.fs_symlink("content.md", alias)
-if linked and uv.fs_stat(alias) then
+local alias_why = unresolved(linked, link_err, alias, f2)
+if not alias_why then
     eq(
         http_get(("http://127.0.0.1:%d/alias.md"):format(port)).status,
         401,
         "a link to content.md without the token is 401"
     )
 else
-    H.skip(
-        "a link to content.md without the token is 401 (" .. tostring(link_err or "the link does not resolve") .. ")"
-    )
+    H.skip("a link to content.md without the token is 401 (" .. alias_why .. ")")
 end
 -- A root that ends in a separator ("/", a drive root) lost the name's
 -- leading slash, so a pattern anchored at ^/ never matched the file served.
@@ -419,7 +418,7 @@ local at_root = server.start({
     live = { enabled = false, inject_script = false },
     features = { dirlist = { enabled = false } },
 })
-if linked and uv.fs_stat(alias) then
+if not alias_why then
     local via = (slashed:gsub("content%.md$", "alias.md"))
     eq(
         http_get(("http://127.0.0.1:%d%s"):format(at_root.port, via)).status,
@@ -427,7 +426,7 @@ if linked and uv.fs_stat(alias) then
         "a link to content.md under root / is 401"
     )
 else
-    H.skip("a link to content.md under root / is 401 (" .. tostring(link_err or "the link does not resolve") .. ")")
+    H.skip("a link to content.md under root / is 401 (" .. alias_why .. ")")
 end
 server.stop(at_root)
 -- The listing names a directory's files: a link to a protected directory
@@ -496,13 +495,14 @@ H.write_file(outside, "outside the root")
 vim.fn.mkdir(vim.fs.joinpath(tmpdir, "sub"), "p")
 local sub_index = vim.fs.joinpath(tmpdir, "sub", "index.html")
 local olinked, olink_err = uv.fs_symlink(outside, sub_index)
+local olink_why = unresolved(olinked, olink_err, sub_index, outside)
 local function lists_sub(res)
     return res.status == 200
         and res.body:find("Index of /sub/", 1, true) ~= nil
         and not res.body:find(">index.html</a>", 1, true)
         and not res.body:find("outside the root", 1, true)
 end
-if olinked and uv.fs_stat(sub_index) then
+if not olink_why then
     local res = http_get(("http://127.0.0.1:%d/sub/"):format(listed.port))
     ok(lists_sub(res), ("an index linked out of the root leaves /sub/ its listing (got %d)"):format(res.status))
     res = http_get(("http://127.0.0.1:%d/sub/?t=%s"):format(listed.port, TOKEN))
@@ -519,7 +519,7 @@ if olinked and uv.fs_stat(sub_index) then
     ok(lists_sub(res), ("and the same listing with show_hidden and serve_dotfiles (got %d)"):format(res.status))
     server.stop(shows_all)
 else
-    local why = " (" .. tostring(olink_err or "the link does not resolve") .. ")"
+    local why = " (" .. olink_why .. ")"
     H.skip("an index linked out of the root leaves /sub/ its listing" .. why)
     H.skip("and the same listing with the token" .. why)
     H.skip("and the same listing with show_hidden and serve_dotfiles" .. why)
@@ -704,7 +704,8 @@ server.stop(fall)
 -- the candidate's resolution and the gate each refuse it, 404 at / too.
 local root_index = vim.fs.joinpath(ws, "index.html")
 local rlinked, rlink_err = uv.fs_symlink(outside_index, root_index)
-local root_linked = rlinked and uv.fs_stat(root_index) ~= nil
+local rlink_why = unresolved(rlinked, rlink_err, root_index, outside_index)
+local root_linked = not rlink_why
 local bare_ws = server.start({
     port = 0,
     root = ws,
@@ -721,7 +722,7 @@ if root_linked then
     )
     eq(http_get(("http://127.0.0.1:%d/?t=%s"):format(bare_ws.port, TOKEN)).status, 404, "and 404 with the token")
 else
-    local why = " (" .. tostring(rlink_err or "the link does not resolve") .. ")"
+    local why = " (" .. rlink_why .. ")"
     H.skip("the root's index linked out of the root is 404" .. why)
     H.skip("and 404 with the token" .. why)
 end
@@ -1123,10 +1124,11 @@ H.case("a request reads each pattern once for each name it reaches", function()
     reads("/docs", 200, 2, "a directory asked without its slash")
     local alias = vim.fs.joinpath(site, "alias.html")
     local linked, link_err = uv.fs_symlink("page.html", alias)
-    if linked and uv.fs_stat(alias) then
+    local why = unresolved(linked, link_err, alias, vim.fs.joinpath(site, "page.html"))
+    if not why then
         reads("/alias.html", 200, 2, "a link to it, read by its name and the file's")
     else
-        H.skip("a link to it is read by both names (" .. tostring(link_err or "the link does not resolve") .. ")")
+        H.skip("a link to it is read by both names (" .. why .. ")")
     end
     if H.fs_folds_case then
         reads("/PAGE.HTML", 200, 2, "a case variant, read by its spelling and the disk's")

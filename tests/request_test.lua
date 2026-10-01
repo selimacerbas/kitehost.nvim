@@ -18,6 +18,25 @@ H.rtp()
 local server = require("live_server.server")
 local eq, ok = H.eq, H.ok
 
+-- Windows takes a / in a link's target unconverted, leaving the link
+-- dangling (measured on the hosted runner): a target here carries the
+-- platform's separator. A row through a link runs only where the link
+-- resolves to the name it is about; unresolved says why it does not, the
+-- reason the row is skipped with.
+local sep = package.config:sub(1, 1)
+local function unresolved(made, made_err, name, want)
+    if not made then
+        return "no link: " .. tostring(made_err)
+    end
+    local real, err = vim.uv.fs_realpath(name)
+    if not real then
+        return "the link does not resolve: " .. tostring(err)
+    end
+    if not H.same_path(real, want) then
+        return ("the link resolves to %s, not %s"):format(real, want)
+    end
+end
+
 local root = H.tmpdir()
 H.write_file(root .. "/index.html", "<html><body>hi</body></html>")
 H.write_file(root .. "/style.css", "body{color:red}")
@@ -476,11 +495,14 @@ H.case("Section 6: a directory's index resolves inside the root", function()
     H.write_file(base .. "/site/index.html", "<html><body>in</body></html>")
     H.write_file(base .. "/site/both/index.htm", "<html><body>beside the link</body></html>")
     local link = base .. "/site/sub/index.html"
-    local linked, link_err = uv.fs_symlink("../../outside/secret.html", link)
+    local outward = table.concat({ "..", "..", "outside", "secret.html" }, sep)
+    local secret = base .. "/outside/secret.html"
+    local linked, link_err = uv.fs_symlink(outward, link)
     local both = base .. "/site/both/index.html"
-    local blinked, blink_err = uv.fs_symlink("../../outside/secret.html", both)
-    if not (linked and blinked and uv.fs_stat(link) and uv.fs_stat(both)) then
-        local why = " (" .. tostring(link_err or blink_err or "the link does not resolve") .. ")"
+    local blinked, blink_err = uv.fs_symlink(outward, both)
+    local link_why = unresolved(linked, link_err, link, secret) or unresolved(blinked, blink_err, both, secret)
+    if link_why then
+        local why = " (" .. link_why .. ")"
         H.skip("/sub/ whose index links outside the root is 404" .. why)
         H.skip("and its body is not the outside file" .. why)
         H.skip("the link asked for by name stays 404" .. why)

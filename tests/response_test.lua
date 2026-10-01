@@ -467,12 +467,12 @@ H.case("Section 6: a 404 names the request, never the filesystem path", function
     -- so each fixture is measured and its checks skipped where it is not.
     H.write_file(root .. "/.env", "S")
     local linked, link_err = uv.fs_symlink(".env", root .. "/link.txt")
-    local link_st, link_st_err = uv.fs_stat(root .. "/link.txt")
-    if linked and link_st then
+    local link_why = unresolved(linked, link_err, root .. "/link.txt", root .. "/.env")
+    if not link_why then
         names_request("/link.txt?t=secret", "/link.txt", "a link to a dot name")
     else
         for _ = 1, 3 do
-            H.skip("a link to a dot name's 404 (" .. tostring(link_err or link_st_err) .. ")")
+            H.skip("a link to a dot name's 404 (" .. link_why .. ")")
         end
     end
     local pipe = assert(uv.new_pipe(false))
@@ -895,8 +895,9 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
         H.write_file(site .. "/plain.txt", "plain")
         local target = c[2] and (site .. "/" .. c[2]) or outside
         local made, made_err = uv.fs_symlink(target, site .. "/__Live", { dir = true, junction = true })
+        local why = unresolved(made, made_err, site .. "/__Live", target)
         local inst = serve({ root = site, cors = true, features = { dirlist = { enabled = true } } })
-        if made and uv.fs_stat(site .. "/__Live") then
+        if not why then
             for _, path in ipairs({ "/__Live/x.txt", "/__LIVE/x.txt", "/__live/x.txt", "/__Live/", "/__Live" }) do
                 local r = raw(inst.port, get(path, inst.port))
                 local label = ("%s through a link to %s"):format(path, c[1])
@@ -935,7 +936,7 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
                 )
             end
         else
-            H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], tostring(made_err)))
+            H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], why))
         end
     end
     -- Each resolves to a name the disk rule lets through: plain.txt, or the
@@ -949,8 +950,9 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
         local target = site .. "/" .. c[2]
         local flags = c[3] and { dir = true, junction = true } or nil
         local made, made_err = uv.fs_symlink(target, site .. "/__Live", flags)
+        local why = unresolved(made, made_err, site .. "/__Live", target)
         local inst = serve({ root = site, cors = true, features = { dirlist = { enabled = true } } })
-        if made and uv.fs_stat(site .. "/__Live") then
+        if not why then
             for _, path in ipairs(c[4]) do
                 local r = raw(inst.port, get(path, inst.port))
                 local label = ("%s through a link to %s"):format(path, c[1])
@@ -964,7 +966,7 @@ H.case("Section 13: a link named __live at the root is refused whatever it resol
                 ("plain.txt is served by its own name beside a link to %s (got %d)"):format(c[1], r.status)
             )
         else
-            H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], tostring(made_err)))
+            H.skip(("a link named __Live to %s is refused (%s)"):format(c[1], why))
         end
     end
 end)
