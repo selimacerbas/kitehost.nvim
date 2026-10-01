@@ -3,10 +3,11 @@
 -- (level 0 leaves the position out) rather than at the first use of vim.uv.
 -- A failed load leaves require's sentinel behind, which answers a retry with
 -- "loop or previous error", so the entry is cleared first and every require
--- reads the text.
+-- reads the text; so is the former name's, whose alias raises this text.
 local floor = require("kitehost.floor")
 if not floor.ok then
     package.loaded["kitehost.util"] = nil
+    package.loaded["live_server.util"] = nil
     error(floor.message, 0)
 end
 
@@ -22,6 +23,13 @@ function U.notify(msg, opts, level)
         return
     end
     vim.notify(msg, lvl, { title = "live-server.nvim" })
+end
+
+-- A name from before 2.0.0 warns once a session and goes in 3.0.0. The
+-- plugin is named, or Neovim reads 3.0.0 as its own version: 0.12.5 said
+-- nothing and 0.10.0 named Nvim (measured). No traceback: one notice.
+function U.deprecated(old, new)
+    vim.deprecate(old, new, "3.0.0", "kitehost.nvim", false)
 end
 
 function U.joinpath(...)

@@ -3,10 +3,11 @@
 -- (level 0 leaves the position out) rather than at the first use of vim.uv.
 -- A failed load leaves require's sentinel behind, which answers a retry with
 -- "loop or previous error", so the entry is cleared first and every require
--- reads the text.
+-- reads the text; so is the former name's, whose alias raises this text.
 local floor = require("kitehost.floor")
 if not floor.ok then
     package.loaded["kitehost.server"] = nil
+    package.loaded["live_server.server"] = nil
     error(floor.message, 0)
 end
 

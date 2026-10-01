@@ -10,9 +10,11 @@ local H = dofile(vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub
 H.isolate()
 H.rtp()
 local plugin_file = H.root .. "/plugin/kitehost.lua"
--- The plugin's entry module, the prefix its commands share and the features
--- its floor module tests beside the version.
+-- The plugin's entry module, its name before 2.0.0 (an alias through 2.x),
+-- the prefix its commands share and the features its floor module tests
+-- beside the version.
 local MODULE = "kitehost"
+local FORMER = "live_server"
 local COMMAND_PREFIX = "LiveServer"
 local FEATURES = { "uv" }
 
@@ -40,14 +42,15 @@ local function defined()
     return table.concat(names, " ")
 end
 
--- A loaded module of this plugin or of live-server besides the entry module
--- and the floor module is code that needs 0.10.
+-- A loaded module of this plugin under either name besides the entry
+-- module, its alias, which hands back the entry module's stub, and the
+-- floor module is code that needs 0.10.
 local function loaded_below()
     local found = {}
     for name in pairs(package.loaded) do
         local plugin = name == MODULE or vim.startswith(name, MODULE .. ".")
-        local ls = name == "live_server" or vim.startswith(name, "live_server.")
-        if (plugin or ls) and name ~= MODULE and name ~= MODULE .. ".floor" then
+        local former = name == FORMER or vim.startswith(name, FORMER .. ".")
+        if (plugin or former) and name ~= MODULE and name ~= FORMER and name ~= MODULE .. ".floor" then
             table.insert(found, name)
         end
     end
@@ -232,8 +235,9 @@ H.ok(all_errors, "every refusal is an ERROR")
 -- The plugin-author API loads these two directly, so each refuses at load
 -- with the floor text, and again on a retry. util goes first: server
 -- requires util, so a server without its own guard still raises util's text
--- once, and only its second require shows the sentinel it left.
-for _, modname in ipairs({ MODULE .. ".util", MODULE .. ".server" }) do
+-- once, and only its second require shows the sentinel it left. A plugin
+-- written before 2.0.0 loads them by the former names, which refuse alike.
+for _, modname in ipairs({ MODULE .. ".util", MODULE .. ".server", FORMER .. ".util", FORMER .. ".server" }) do
     for attempt = 1, 2 do
         local loaded, err = pcall(require, modname)
         H.eq(
@@ -243,6 +247,20 @@ for _, modname in ipairs({ MODULE .. ".util", MODULE .. ".server" }) do
         )
     end
 end
+-- A config still calling require("live_server").setup() meets the stub
+-- through the former name, and the floor text is its one notice: the
+-- deprecation waits for a Neovim the plugin runs on.
+package.loaded[MODULE] = nil
+notices, refusals = {}, {}
+local former_ok, former = pcall(function()
+    return require(FORMER).setup({})
+end)
+turn_loop()
+H.eq(former_ok and tostring(former) or ("raised " .. tostring(former)), "", "the former name answers with the stub")
+H.ok(rawequal(package.loaded[FORMER], package.loaded[MODULE]), "the former name is the entry module's own stub")
+H.eq(#notices == 1 and notices[1].msg or #notices, message, "the former name's one notice is the floor text")
+H.eq(#refusals, 0, "the former name sends nothing through vim.notify")
+H.eq(loaded_below(), "", "the former name loads no module but the entry and floor modules")
 -- notify_once arrived in 0.7 and a Lua plugin file is sourced from 0.5 on,
 -- so without it each guard shows the text through vim.notify, once.
 vim.notify_once = nil
@@ -292,10 +310,12 @@ for _, name in ipairs(names) do
 end
 -- The stub and the floor module's verdict go with every other module of
 -- the plugin, and so does the sentinel require leaves for a module that
--- raised while loading.
+-- raised while loading, under either name.
 for name in pairs(package.loaded) do
-    if name == MODULE or vim.startswith(name, MODULE .. ".") then
-        package.loaded[name] = nil
+    for _, prefix in ipairs({ MODULE, FORMER }) do
+        if name == prefix or vim.startswith(name, prefix .. ".") then
+            package.loaded[name] = nil
+        end
     end
 end
 H.eq(outcome(pcall(floor_ok_without, nil)), true, "the floor admits this Neovim")
@@ -325,6 +345,14 @@ H.ok(
     type(package.loaded[MODULE .. ".server"]) == "table" and module_ok and type(module.state) == "table",
     "the plugin's own modules load on a supported Neovim" .. (module_ok and "" or (": " .. tostring(module)))
 )
+-- A former name loaded here would warn every user at startup.
+local former_loaded = {}
+for name in pairs(package.loaded) do
+    if name == FORMER or vim.startswith(name, FORMER .. ".") then
+        table.insert(former_loaded, name)
+    end
+end
+H.eq(table.concat(former_loaded, ", "), "", "the plugin file and its modules load no former name")
 H.eq(defined(), documented, "every documented command is defined on a supported Neovim, and no other")
 local hooked, hooks = pcall(vim.api.nvim_get_autocmds, { group = "KiteHostExit", event = "VimLeavePre" })
 H.eq(hooked and #hooks or 0, 1, "the exit hook sits once in the KiteHostExit group, a second source included")
