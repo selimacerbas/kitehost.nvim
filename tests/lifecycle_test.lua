@@ -36,6 +36,7 @@ H.isolate()
 H.rtp()
 
 local server = require("live_server.server")
+local util = require("live_server.util")
 local eq, ok = H.eq, H.ok
 local uv = vim.uv
 local is_win = vim.fn.has("win32") == 1
@@ -2313,7 +2314,9 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     )
 
     -- The per-directory watchers inotify needs, run here by reading the
-    -- system as Linux.
+    -- system as Linux. The scan names each directory with util.joinpath,
+    -- a \ on Windows, so the stubs' keys and the warnings' text are built
+    -- with it too.
     uv.os_uname = function()
         return { sysname = "Linux" }
     end
@@ -2325,7 +2328,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     local real_tree = assert(uv.fs_realpath(tree))
     mark = #notes
     before = counts()
-    stub("start", real_tree .. "/a")
+    stub("start", util.joinpath(real_tree, "a"))
     local per = serve({ root = tree, live = live })
     unstub()
     eq(counts().fs_event - before.fs_event, 2, "a directory that cannot be watched is dropped, the rest kept")
@@ -2334,7 +2337,10 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     ok(
         #warned == 1
             and warned[1]
-                == ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(per.port, real_tree .. "/a"),
+                == ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(
+                    per.port,
+                    util.joinpath(real_tree, "a")
+                ),
         "and warns once, naming the directory and the cause: " .. vim.inspect(warned)
     )
     -- A directory's warning spent the kind the root's used too, so live
@@ -2356,7 +2362,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     -- and no word.
     mark = #notes
     uv.fs_scandir = function(dir, ...)
-        if dir == real_tree .. "/b" then
+        if dir == util.joinpath(real_tree, "b") then
             return nil, "EACCES: stubbed", "EACCES"
         end
         return real_scandir(dir, ...)
@@ -2369,7 +2375,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
             and warned[1]
                 == ("live-server: port %d cannot watch the directories under %s (EACCES: stubbed)"):format(
                     unread.port,
-                    real_tree .. "/b"
+                    util.joinpath(real_tree, "b")
                 ),
         "a directory that cannot be read warns once, naming it and the cause: " .. vim.inspect(warned)
     )
@@ -2383,7 +2389,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     local real_three = assert(uv.fs_realpath(three))
     mark = #notes
     before = counts()
-    stub("start", { [real_three .. "/a"] = true, [real_three .. "/b"] = true })
+    stub("start", { [util.joinpath(real_three, "a")] = true, [util.joinpath(real_three, "b")] = true })
     local two_of = serve({ root = three, live = live })
     unstub()
     eq(counts().fs_event - before.fs_event, 2, "two of three directories that cannot be watched leave two watchers")
@@ -2392,7 +2398,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     local function counted(first)
         return ("live-server: port %d cannot watch %s and 1 more under %s (ENOSPC: stubbed)"):format(
             two_of.port,
-            real_three .. "/" .. first,
+            util.joinpath(real_three, first),
             real_three
         )
     end
@@ -2402,7 +2408,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     )
     -- A second scan that misses is heard again, as its own notice.
     mark = #notes
-    stub("start", { [real_three .. "/a"] = true, [real_three .. "/b"] = true })
+    stub("start", { [util.joinpath(real_three, "a")] = true, [util.joinpath(real_three, "b")] = true })
     eq(server.update_target(two_of, three, nil), true, "a rescan that misses them again answers true")
     unstub()
     warned = warnings(mark)
@@ -2415,7 +2421,7 @@ H.case("Section 9: a watcher that cannot start warns, never reports live", funct
     -- which spent the notice a real miss needed.
     mark = #notes
     before = counts()
-    stub("start", real_three .. "/c", "ENOENT")
+    stub("start", util.joinpath(real_three, "c"), "ENOENT")
     local gone = serve({ root = three, live = live })
     unstub()
     eq(counts().fs_event - before.fs_event, 3, "a directory gone since the scan is skipped, the rest watched")
@@ -2450,7 +2456,6 @@ end)
 -- one line. The watch notice and the notify_on_reload notice marked
 -- nothing; each is marked whole now, as report_raise's line is.
 H.case("Section 9c: every notice goes out marked", function()
-    local util = require("live_server.util")
     local real_new = uv.new_fs_event
     local real_uname = uv.os_uname
     local real_scandir_next = uv.fs_scandir_next
@@ -2532,7 +2537,10 @@ H.case("Section 9c: every notice goes out marked", function()
     local watch = notes[mark + 1] and notes[mark + 1].msg or ""
     eq(
         watch,
-        ("live-server: port %d cannot watch %s/d?[31m?????e (ENOSPC: stubbed)"):format(inst.port, real_tree),
+        ("live-server: port %d cannot watch %s (ENOSPC: stubbed)"):format(
+            inst.port,
+            util.joinpath(real_tree, "d?[31m?????e")
+        ),
         "a watch notice naming a crafted directory arrives marked"
     )
     local clean_watch, why = clean(watch)
